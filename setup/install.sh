@@ -184,7 +184,8 @@ http://packages.ros.org/ros2/ubuntu \$(. /etc/os-release && echo \$UBUNTU_CODENA
         return
     fi
     run bash -c "source /opt/ros/$ROS_DISTRO_WANT/setup.bash && \
-        cd '$WS' && rosdep install --from-paths src --ignore-src -y 2>/dev/null || true"
+        cd '$WS' && rosdep install --from-paths src --ignore-src -y \
+          --skip-keys micro_ros_agent 2>/dev/null || true"
     run bash -c "source /opt/ros/$ROS_DISTRO_WANT/setup.bash && \
         cd '$WS' && colcon build --symlink-install --parallel-workers \$(nproc)"
     ok "workspace built"

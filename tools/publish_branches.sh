@@ -96,9 +96,16 @@ RUN pip3 install --no-cache-dir platformio
 WORKDIR /ws
 COPY gps_localize_ws/src ./src
 COPY firmware /firmware
+# micro_ros_agent is built from source in /uros_ws, so rosdep can never
+# resolve it as a system package - skip that key rather than let it fail the
+# whole install. The agent workspace is sourced so colcon can still find it.
 RUN . /opt/ros/humble/setup.sh \
+    && . /uros_ws/install/local_setup.sh \
+    && apt-get update \
     && rosdep install --from-paths src --ignore-src -y \
-    && colcon build --symlink-install
+        --skip-keys micro_ros_agent \
+    && colcon build --symlink-install \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
