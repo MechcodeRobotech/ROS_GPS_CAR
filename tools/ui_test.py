@@ -29,8 +29,11 @@ CDP_PORT = 9351
 PROFILE = os.path.join(os.environ.get("TEMP", "/tmp"), "gpsloc_uitest_profile")
 
 BROWSERS = [
-    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    # Windows entries are intentional: this list is tried in order and the
+    # first browser that exists is used, so the same file works on both
+    # platforms.  qc: allow-windows-path
+    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",  # qc: allow-windows-path
+    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",  # qc: allow-windows-path
     "/usr/bin/microsoft-edge", "/usr/bin/google-chrome", "/usr/bin/chromium-browser",
 ]
 

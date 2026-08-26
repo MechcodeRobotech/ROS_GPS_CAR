@@ -247,7 +247,12 @@ def check_firmware_headers(main_cpp):
     section('firmware config split')
     config_h = read(FW / 'config' / 'config.h')
     included = re.findall(r'#include "([a-z0-9_]+\.h)"', config_h)
-    on_disk = sorted(p.name for p in (FW / 'config').glob('*.h') if p.name != 'config.h')
+    # network_secrets.h holds the real Wi-Fi credentials and is gitignored;
+    # network_secrets.example.h is its committed template. Neither is included
+    # by config.h - network.h pulls the secrets in - so they are not part of
+    # this contract and must not make it fail.
+    on_disk = sorted(p.name for p in (FW / 'config').glob('*.h')
+                     if p.name != 'config.h' and not p.name.startswith('network_secrets'))
     check(sorted(included) == on_disk,
           'config.h includes exactly the headers on disk (%d)' % len(on_disk))
     for header in included:

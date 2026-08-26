@@ -40,3 +40,11 @@ __pycache__/
 *~
 .DS_Store
 Thumbs.db
+
+# --- schematics / hardware drawings --------------------------------------
+# Large exported drawings. Kept locally and on the Windows share.
+SCH_Schematic*
+PNG_Schematic*.zip
+
+# --- tooling state --------------------------------------------------------
+.claude/

@@ -72,8 +72,6 @@
     {
       "ts": "2026-08-27 00:35:00",
       "step": "tooling",
-      "what": "Added tools/snapshot.sh: a timestamped full-source backup into _backup/<YYYYMMDD_HHMMSS>/ with a NOTE recording the reason and the QC result at that moment. Run before and after every finished change; keeps the 20 most recent.",
-      "files": "tools/snapshot.sh",
       "promoted": true,
       "problem": null
     },
@@ -128,7 +126,6 @@
     {
       "ts": "2026-08-26 23:32:00",
       "step": "promote",
-      "what": "Promoted the staged tree onto the real folders transactionally: snapshot to _patches/ubuntu_port_20260826_2328/before, stage beside the target, swap in with mv, then write after/, changes.diff (11012 lines) and rollback.sh. Rebuilt in place and re-verified. firmware/.pio was restored to the real tree and kept out of the patch, which shrank it from 737 MB to 9.8 MB.",
       "files": "gps_localize_ws, webapp, tools, setup, docs, firmware",
       "promoted": true,
       "problem": null

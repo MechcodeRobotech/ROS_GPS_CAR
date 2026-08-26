@@ -232,7 +232,10 @@ def check_06_yaml_valid(root: Path, files: list[Path]) -> Result:
 
 
 WINDOWSISMS = [
-    (re.compile(r"[A-Za-z]:\\\\|[A-Za-z]:/(?!/)"), "drive letter path"),
+    # A drive letter is a SINGLE character with nothing word-like before it.
+    # Without the word boundary this also matched things like the docker
+    # volume mapping "gps_localize_data:/root/..." , which is not a path.
+    (re.compile(r"\b[A-Za-z]:[\\/](?!/)"), "drive letter path"),
     (re.compile(r"\bCOM\d\b"), "COM port - use /dev/ttyUSB* or /dev/serial/by-id/*"),
     (re.compile(r"\bcp(?:874|1252|437)\b"), "Windows codepage - use utf-8"),
     (re.compile(r"os\.startfile|winreg|pywin32|win32api"), "Windows-only API"),
@@ -245,12 +248,21 @@ def check_07_no_windows_paths(root: Path, files: list[Path]) -> Result:
     for f in text_files(files):
         if is_self(f):
             continue
+        # Markdown is prose. Documentation legitimately shows the Windows way of
+        # doing something next to the Linux way, and that is not a port defect.
+        if f.suffix == ".md":
+            continue
         src = read_text(f)
         if src is None:
             continue
         for i, line in enumerate(src.splitlines(), 1):
             stripped = line.lstrip()
             if stripped.startswith(("#", "//", "*", "<!--", "rem ", "REM ")):
+                continue
+            # Explicit opt-out for genuinely cross-platform code: a list that
+            # carries Windows and POSIX paths side by side and picks whichever
+            # exists is correct, not a leftover.
+            if "qc: allow-windows-path" in line:
                 continue
             for pattern, why in WINDOWSISMS:
                 if pattern.search(line):
