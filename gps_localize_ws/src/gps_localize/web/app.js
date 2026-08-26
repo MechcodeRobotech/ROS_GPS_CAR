@@ -1057,6 +1057,14 @@
     ctx.font = '11px system-ui, sans-serif';
     ctx.fillStyle = cssVar('--txt', '#e6e9ef');
     ctx.fillText(Math.round(((heading % 360) + 360) % 360) + '\u00B0', cx, cy + r + 12);
+    // Position uncertainty, if the EKF has anything to say. A map dot that
+    // looks equally confident while coasting blind is a lie to the driver.
+    if (t.pos_sigma_m !== undefined && t.pos_sigma_m !== null && t.pos_anchored) {
+      ctx.font = '9px system-ui, sans-serif';
+      ctx.fillStyle = t.pos_sigma_m > 3 ? cssVar('--warn', '#d79b3c')
+                                        : cssVar('--mut', '#8b95a3');
+      ctx.fillText('\u00B1' + t.pos_sigma_m.toFixed(1) + ' m', cx, cy + r + 48);
+    }
     if (t.heading_ref_name) {
       ctx.font = '9px system-ui, sans-serif';
       ctx.fillStyle = cssVar('--mut', '#8b95a3');

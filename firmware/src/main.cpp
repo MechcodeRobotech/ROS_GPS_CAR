@@ -47,6 +47,7 @@
 #include <imu_bno085.h>
 #include <motor_model.h>
 #include <state_estimator.h>
+#include <pose_ekf.h>
 #include <drive_controller.h>
 #include <safety_manager.h>
 #include <power_monitor.h>
@@ -91,7 +92,7 @@ static std_msgs__msg__Bool            in_estop;
 static std_msgs__msg__Float32MultiArray in_config;
 
 //--- static payload buffers (never freed, never grown) ---
-#define TELEMETRY_LEN 42
+#define TELEMETRY_LEN 44
 static float telemetry_buf[TELEMETRY_LEN];
 #define CONFIG_MAX_LEN 12
 static float config_buf[CONFIG_MAX_LEN];
@@ -113,6 +114,7 @@ static CompassQMC5883 compass;
 static ImuBno085     imu(BNO085_RESET_PIN);
 static Preferences   prefs;               // NVS: keeps the compass calibration over a reboot
 static StateEstimator estimator;
+static PoseEkf       pose_ekf;   // GPS-corrected position; see pose_ekf.h
 static DriveController drive;
 static SafetyManager  safety;
 static MotorModel     model_left, model_right;   // wheel speed from volts + amps
@@ -135,6 +137,46 @@ static IPAddress agent_ip = AGENT_IP;        // re-resolved by name on every rec
 static uint8_t   agent_retries = 0;
 
 //============================ forward decls ================================//
+/** How much the fused speed is trusted, as a variance [(m/s)^2]. The estimator
+ *  does not publish one, so this is a conservative constant: it only sets how
+ *  fast position uncertainty grows along the direction of travel. */
+#define SPEED_TRUST_VAR 0.02f
+
+/** Heading trust as a variance [deg^2], from which source the estimator is
+ *  currently locked to. A gyro-only heading is far less trustworthy than one
+ *  referenced to GPS course, and that difference belongs in the covariance. */
+static float headingTrustVar() {
+  switch (estimator.headingRef()) {
+    case StateEstimator::REF_GPS:     return 9.0f;    // 3 deg
+    case StateEstimator::REF_MAG:     return 25.0f;   // 5 deg
+    case StateEstimator::REF_IMU_MAG: return 64.0f;   // 8 deg
+    default:                          return 400.0f;  // relative only, 20 deg
+  }
+}
+
+/** Local ENU from lat/lon, anchored at the first good fix.
+ *
+ *  The EKF works in metres, but the receiver reports degrees. An
+ *  equirectangular projection about a nearby datum is accurate to well under a
+ *  centimetre over the hundreds of metres this robot covers, and costs two
+ *  multiplies - a full geodetic conversion would be precision nobody can use
+ *  on a 2 m fix.
+ */
+static double datum_lat = 0.0, datum_lon = 0.0;
+static bool   datum_set = false;
+static float  fix_east = 0.0f, fix_north = 0.0f;
+
+static void fixToLocal(double lat, double lon) {
+  if (!datum_set) {
+    datum_lat = lat;
+    datum_lon = lon;
+    datum_set = true;
+  }
+  const double clat = cos(datum_lat * 0.017453292519943295);
+  fix_east  = (float)((lon - datum_lon) * 111320.0 * clat);
+  fix_north = (float)((lat - datum_lat) * 110540.0);
+}
+
 static bool createEntities();
 static bool destroyEntities();
 static void controlCallback(rcl_timer_t *timer, int64_t last_call_time);
@@ -389,8 +431,10 @@ static void config_cb(const void *msgin) {
 //============================== publishing =================================//
 static void publishOdom() {
   fillStamp(msg_odom.header.stamp);
-  msg_odom.pose.pose.position.x = (double)estimator.x();
-  msg_odom.pose.pose.position.y = (double)estimator.y();
+  // Prefer the GPS-corrected position; fall back to dead reckoning until the
+  // first fix anchors the filter.
+  msg_odom.pose.pose.position.x = (double)(pose_ekf.hasFix() ? pose_ekf.x() : estimator.x());
+  msg_odom.pose.pose.position.y = (double)(pose_ekf.hasFix() ? pose_ekf.y() : estimator.y());
   msg_odom.pose.pose.position.z = 0.0;
 
   const double half = 0.5 * (double)estimator.headingEnuRad();
@@ -466,8 +510,8 @@ static void publishTelemetry(RunState state) {
   t[24] = (float)safety.flags();
   t[25] = (float)(ESP.getFreeHeap() / 1024);
   t[26] = (float)loop_us;
-  t[27] = estimator.x();
-  t[28] = estimator.y();
+  t[27] = pose_ekf.hasFix() ? pose_ekf.x() : estimator.x();
+  t[28] = pose_ekf.hasFix() ? pose_ekf.y() : estimator.y();
   t[29] = compass.headingDeg();
   t[30] = (float)estimator.headingRef();     // 0 relative, 1 compass, 2 GPS, 3 IMU mag
   t[31] = compass.ok() ? 1.0f : (compass.disturbed() ? 2.0f : 0.0f);
@@ -488,6 +532,8 @@ static void publishTelemetry(RunState state) {
   t[39] = power.fanCurrent();
   t[40] = power.esp32RailVoltage();                      // ESP32 +5 V rail health
   t[41] = power.packValid() ? 1.0f : 0.0f;          // 0 = rail unpowered, pack unknown
+  t[42] = pose_ekf.positionSigma();                 // 1-sigma position uncertainty [m]
+  t[43] = pose_ekf.hasFix() ? 1.0f : 0.0f;          // has the EKF ever been anchored
   RCSOFTCHECK(rcl_publish(&pub_telemetry, &msg_telemetry, NULL));
 }
 
@@ -561,6 +607,25 @@ static void controlCallback(rcl_timer_t *timer, int64_t) {
     est_in.model_mps = drive.modelSpeedMps();
   }
   estimator.update(est_in);
+
+  // Position: predict at the control rate from the fused heading and speed,
+  // then correct whenever a fix arrives. Without this, x/y is open-loop dead
+  // reckoning and a small heading error becomes metres of drift.
+  pose_ekf.predict(dt, estimator.speed(), estimator.headingDeg(),
+                   SPEED_TRUST_VAR, headingTrustVar());
+
+  // Correct on each NEW fix. gps.fresh() alone would re-apply the same fix a
+  // hundred times a second and make the filter far more confident than the
+  // data justifies, so only a changed timestamp counts as a measurement.
+  if (gps_ok && gps.fixQuality() > 0) {
+    static uint32_t last_fix_ms = 0;
+    const uint32_t fix_ms = gps.lastFixMs();
+    if (fix_ms != last_fix_ms) {
+      last_fix_ms = fix_ms;
+      fixToLocal(gps.latitude(), gps.longitude());
+      pose_ekf.updateGps(fix_east, fix_north, gps.hdop(), gps.fixQuality());
+    }
+  }
 
   //------------------------------- safety ------------------------------//
   SafetyManager::Inputs si;

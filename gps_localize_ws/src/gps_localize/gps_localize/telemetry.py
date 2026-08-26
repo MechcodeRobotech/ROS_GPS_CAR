@@ -6,7 +6,7 @@ snapshot per tick. The firmware fills it in src/main.cpp::publishTelemetry -
 KEEP BOTH SIDES IN SYNC.
 """
 
-TELEMETRY_LEN = 42
+TELEMETRY_LEN = 44
 
 # index -> key used everywhere on the ROS/web side
 FIELDS = (
@@ -56,6 +56,11 @@ FIELDS = (
     'pack_valid',         # 41 1 = pack voltage is measurable; 0 = motor rail
                           #    unpowered (mushroom switch or relay open), so
                           #    the pack voltage is unknown, not low
+    'pos_sigma_m',        # 42 1-sigma position uncertainty from the EKF [m].
+                          #    Grows while coasting without GPS, shrinks on a
+                          #    fix - show it, so the map dot is honest.
+    'pos_anchored',       # 43 1 = the EKF has had at least one fix; 0 = the
+                          #    position is still open-loop dead reckoning
 )
 
 # must match publishTelemetry() in firmware/src/main.cpp
