@@ -54,6 +54,14 @@
   ],
   "log": [
     {
+      "ts": "2026-08-27 04:05:00",
+      "step": "priority",
+      "what": "New standing priority from you: finish everything on THIS Ubuntu first, leave cross-platform work until after. Windows tasks stay in the plan but move behind the Ubuntu ones. Your Windows run found a real bug already - the viewer reported 'No module named configstore' when the actual problem was a missing pyyaml, because a broad except swallowed it. Fixed and verified by reproducing it here.",
+      "files": "tools/plan_state.json",
+      "promoted": true,
+      "problem": null
+    },
+    {
       "ts": "2026-08-27 03:35:00",
       "step": "T10,T12",
       "what": "Traced the sudo block to the snap build of VS Code, not to Claude Code: the first process in the chain with NoNewPrivs=1 was the snap, its parent systemd --user had 0, and Seccomp was 0 throughout. Reinstalling VS Code from the .deb cleared it. Then ran the real installer, which built the workspace and installed the systemd unit - verified the service is enabled, active, owns port 8080 in its own cgroup, and serves 19 topics. Docker installed.",
@@ -1201,8 +1209,85 @@
       "state": "DONE",
       "files": "webapp/viewer_server.py",
       "test": "QC endpoint parity check passes",
-      "result": "PASS - viewer serves both endpoints, parity holds",
-      "ts": "2026-08-27 03:20:00"
+      "result": "PASS - viewer serves both endpoints",
+      "ts": "2026-08-27 04:05:00"
+    },
+    {
+      "id": "T90",
+      "phase": "W",
+      "title": "Viewer reported a misleading missing module",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "webapp/viewer_server.py",
+      "test": "hiding pyyaml gives the real name + pip command",
+      "result": "PASS - reproduced, fixed, both paths verified",
+      "ts": "2026-08-27 04:05:00"
+    },
+    {
+      "id": "T91",
+      "phase": "X",
+      "title": "Docker image builds end to end",
+      "needs": "PC",
+      "state": "IN PROGRESS",
+      "files": "tools/publish_branches.sh",
+      "test": "docker compose build succeeds",
+      "result": "3 causes ruled out; now on micro_ros_setup + apt fix",
+      "ts": ""
+    },
+    {
+      "id": "T92",
+      "phase": "X",
+      "title": "Docker stack runs and serves, agent reachable",
+      "needs": "PC",
+      "state": "TODO",
+      "files": "-",
+      "test": "compose up -> healthy, ros2 topic list inside the container",
+      "result": "",
+      "ts": ""
+    },
+    {
+      "id": "T93",
+      "phase": "X",
+      "title": "Project CLAUDE.md rule + doc-drift QC",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "CLAUDE.md, tools/qc.py",
+      "test": "superseded values appear in no doc",
+      "result": "PASS - swept 6 stale docs, now enforced",
+      "ts": "2026-08-27 04:05:00"
+    },
+    {
+      "id": "T94",
+      "phase": "X",
+      "title": "docs/architecture.md rewritten from the code",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "docs/architecture.md",
+      "test": "every claim traceable to a file:line",
+      "result": "PASS",
+      "ts": "2026-08-27 04:05:00"
+    },
+    {
+      "id": "T95",
+      "phase": "W",
+      "title": "Handoff prompt for a Claude session on Windows",
+      "needs": "PC",
+      "state": "TODO",
+      "files": "WINDOWS_TASK.md on the share",
+      "test": "a Windows session can act on it without more context",
+      "result": "",
+      "ts": ""
+    },
+    {
+      "id": "T96",
+      "phase": "X",
+      "title": "ROS 2 vs raw UDP: write the trade-off down",
+      "needs": "PC",
+      "state": "TODO",
+      "files": "docs/architecture.md",
+      "test": "the decision and its reasoning are recorded",
+      "result": "",
+      "ts": ""
     }
   ]
 }
