@@ -54,6 +54,14 @@
   ],
   "log": [
     {
+      "ts": "2026-08-27 06:35:00",
+      "step": "T20-T24",
+      "what": "Position EKF landed. GPS now corrects position instead of it being open-loop dead reckoning. Measurement variance comes from the receiver's own hdop and fix quality, so an RTK receiver improves the result with no code change, and outlier gating stops a multipath jump yanking the estimate - while still giving in after five rejections so it cannot sit stale and confident. Seven tests measured against known truth; two failed first and both were my tests rather than the filter, which is recorded in the file. 139 host tests pass.",
+      "files": "firmware/src/estimator/pose_ekf.h, test_pose_ekf.cpp",
+      "promoted": true,
+      "problem": null
+    },
+    {
       "ts": "2026-08-27 06:05:00",
       "step": "T14",
       "what": "Built the simulation harness the EKF depends on. SimWorld integrates a true pose from commanded wheel speeds and synthesises each sensor from it with realistic error - GPS at 1 Hz with 2 m noise and dropouts, IMU with a drifting gyro bias, compass with a hard-iron offset, INA226 values consistent with the PWM. Because the truth is known, the eight new tests measure error rather than assert behaviour. Checked they can actually fail by tightening two bounds to absurd values and confirming both broke; that also measured current heading accuracy at 0.375 degrees after 20 s of driving with bias. 132 host tests pass.",
@@ -661,55 +669,55 @@
       "phase": "C",
       "title": "pose_ekf.h: 4-state EKF, predict at 100 Hz",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "firmware/lib/estimator/pose_ekf.h",
       "test": "unit tests on the predict step",
-      "result": "",
-      "ts": ""
+      "result": "PASS - 3-state EKF (x, y, heading), speed as input",
+      "ts": "2026-08-27 06:35:00"
     },
     {
       "id": "T21",
       "phase": "C",
       "title": "GPS update using the receiver's own accuracy",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "pose_ekf.h",
       "test": "straight line error < 0.5 m in sim",
-      "result": "",
-      "ts": ""
+      "result": "PASS - variance from hdop + fix quality, RTK-ready",
+      "ts": "2026-08-27 06:35:00"
     },
     {
       "id": "T22",
       "phase": "C",
       "title": "Mahalanobis outlier rejection",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "pose_ekf.h",
       "test": "injected 10 m jump is rejected",
-      "result": "",
-      "ts": ""
+      "result": "PASS - Mahalanobis gate, gives in after 5 rejections",
+      "ts": "2026-08-27 06:35:00"
     },
     {
       "id": "T23",
       "phase": "C",
       "title": "Coast on prediction when GPS is stale",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "pose_ekf.h, state_estimator.h",
       "test": "30 s dropout: drift < 2 m, covariance grows",
-      "result": "",
-      "ts": ""
+      "result": "PASS - coasts, covariance grows honestly",
+      "ts": "2026-08-27 06:35:00"
     },
     {
       "id": "T24",
       "phase": "C",
       "title": "Per-sensor degradation",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "state_estimator.h",
       "test": "each sensor failed in turn, still navigating",
-      "result": "",
-      "ts": ""
+      "result": "PASS - covered by the fusion suite, each sensor lost in turn",
+      "ts": "2026-08-27 06:35:00"
     },
     {
       "id": "T25",
@@ -719,7 +727,7 @@
       "state": "TODO",
       "files": "firmware + telemetry.py + web/app.js",
       "test": "QC check 11 passes",
-      "result": "",
+      "result": "next: publish covariance + EKF health in telemetry, all 3 sides together",
       "ts": ""
     },
     {
