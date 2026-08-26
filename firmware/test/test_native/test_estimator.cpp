@@ -167,7 +167,10 @@ void test_speed_falls_back_to_model_without_gps(void) {
     StateEstimator est = make(4);
     StateEstimator::Inputs in = base_inputs();
     in.gps_ok = false; in.model_mps = 0.30f;
-    run(est, in, 500);
+    // model_tau_s is 2.5 s, so 500 cycles at dt=0.01 is only 2 time constants
+    // and a first-order lag has reached 86.5% - 0.259, outside the +-0.03 the
+    // assertion allows. Run 4 time constants, where it is at 98.2%.
+    run(est, in, 1000);
     TEST_ASSERT_FLOAT_WITHIN(0.03f, 0.30f, est.speed());
     TEST_ASSERT_EQUAL(StateEstimator::SPEED_IMU_MODEL, est.speedSource());
 }

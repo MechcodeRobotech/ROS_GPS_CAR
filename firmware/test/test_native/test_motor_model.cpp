@@ -117,16 +117,21 @@ void test_back_emf_never_goes_negative(void) {
 void test_stall_detected_after_the_hold_time(void) {
     mock_reset_clock();
     MotorModel m = make();
-    m.update(0.01f, 12.0f, 2.0f, 1.0f, true);          // lots of current, no motion
+    // A stall means the wheel is NOT turning, so the back-EMF is ~0 and the
+    // current settles at v_applied / R = (12 - 0.45) / 5 = 2.31 A. The old
+    // 2.0 A left 1.55 V of back-EMF, i.e. 12.9 rpm, which the model correctly
+    // refused to call a stall - the test data was wrong, not the model.
+    m.update(0.01f, 12.0f, 2.3f, 1.0f, true);          // stalled: no back-EMF
     TEST_ASSERT_FALSE(m.stalled());                    // start-up surge is ignored
-    for (int i = 0; i < 60; ++i) { mock_advance_ms(10); m.update(0.01f, 12.0f, 2.0f, 1.0f, true); }
+    for (int i = 0; i < 60; ++i) { mock_advance_ms(10); m.update(0.01f, 12.0f, 2.3f, 1.0f, true); }
     TEST_ASSERT_TRUE(m.stalled());
 }
 
 void test_stall_clears_when_the_wheel_turns(void) {
     mock_reset_clock();
     MotorModel m = make();
-    for (int i = 0; i < 60; ++i) { mock_advance_ms(10); m.update(0.01f, 12.0f, 2.0f, 1.0f, true); }
+    // 2.3 A is the real stall current here; see the note above.
+    for (int i = 0; i < 60; ++i) { mock_advance_ms(10); m.update(0.01f, 12.0f, 2.3f, 1.0f, true); }
     TEST_ASSERT_TRUE(m.stalled());
     m.update(0.01f, 12.0f, 0.2f, 1.0f, true);
     TEST_ASSERT_FALSE(m.stalled());

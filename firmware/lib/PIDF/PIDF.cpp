@@ -69,7 +69,17 @@ float PIDF::compute_with_error(float error) {
     if (fabsf(error) <= error_tolerance) {
       Integral  = 0.0f;
       LastError = error;
-      if (d_init) { Dfilt = 0.0f; } else { Dfilt *= 0.9f; }
+      // Sitting inside the deadband IS a known derivative - it is zero. Seed
+      // the filter with that and mark it initialised.
+      //
+      // Leaving d_init true here meant the next sample outside the deadband
+      // took the "first sample" path and set Dfilt straight to the raw
+      // derivative, so the very first D kick after a setpoint step passed
+      // through completely unfiltered - the one spike the filter exists to
+      // suppress. On the heading loop that is a jolt at the start of every
+      // move.
+      Dfilt  = d_init ? 0.0f : (Dfilt * 0.9f);
+      d_init = false;
       return 0.0f;
     }
   }

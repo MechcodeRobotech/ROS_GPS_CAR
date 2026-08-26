@@ -38,6 +38,11 @@ static inline float wrapPif(float a) {
   return x - (float)M_PI;
 }
 
+// Below this the speed estimate is treated as standing still, provided the
+// sources agree. See the note where it is applied: gating on the sources too
+// is what stops it trapping the filter at zero.
+#define SPEED_CREEP_FLOOR_MPS 0.01f
+
 class StateEstimator {
 public:
   struct Config {
@@ -129,7 +134,22 @@ public:
     }
     if (v >  cfg_.max_speed_mps) v =  cfg_.max_speed_mps;
     if (v < -cfg_.max_speed_mps) v = -cfg_.max_speed_mps;
-    if (fabsf(v) < 0.01f) v = 0.0f;      // kill sensor-noise creep when standing still
+
+    // Kill sensor-noise creep when standing still - but only when the SOURCES
+    // also say we are stopped.
+    //
+    // Applied unconditionally this traps the filter at zero forever. Starting
+    // from rest the first correction is k*(ref - 0) with k = dt/(tau+dt), which
+    // for tau 1.5 s at 100 Hz is 0.0066 - so a 0.40 m/s reference moves the
+    // estimate by 0.0027, below the 0.01 floor, and it is zeroed. The next
+    // cycle starts from zero again and the estimate can never climb out. The
+    // robot would have reported 0 m/s whenever acceleration was too small to
+    // clear the floor on its own, which is exactly the low-speed creep the
+    // waypoint controller cares about.
+    const float reference = in.gps_ok ? in.gps_speed : in.model_mps;
+    if (fabsf(v) < SPEED_CREEP_FLOOR_MPS && fabsf(reference) < SPEED_CREEP_FLOOR_MPS) {
+      v = 0.0f;
+    }
     speed_ = v;
 
     //----------------------------- heading -----------------------------//
