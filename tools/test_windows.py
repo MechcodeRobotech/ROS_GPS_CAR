@@ -300,9 +300,23 @@ def check_docker(bring_up: bool):
         return
     rc, out = run([docker, "info"], timeout=60)
     if rc != 0:
-        record("Docker available", SKIP, "installed but not running - start Docker Desktop")
+        # These are different problems with different fixes, and calling a
+        # permission problem "not running" sends people to restart a daemon
+        # that was fine all along.
+        low = out.lower()
+        if "permission denied" in low or "connect to the docker daemon socket" in low:
+            record("Docker available", SKIP,
+                   "running, but this user cannot reach the socket",
+                   ["sudo usermod -aG docker $USER, then log out and back in",
+                    "the group is only applied to new login sessions"])
+        else:
+            record("Docker available", SKIP,
+                   "installed but the daemon is not responding",
+                   ["Windows/macOS: start Docker Desktop and wait for the whale",
+                    "Linux: sudo systemctl start docker"])
         return
-    record("Docker available", PASS)
+    record("Docker available", PASS, out.split("Server Version:")[-1].strip().splitlines()[0]
+           if "Server Version:" in out else "")
 
     compose = ROOT / "docker-compose.yml"
     win = ROOT / "docker-compose.windows.yml"
