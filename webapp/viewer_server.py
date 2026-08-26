@@ -238,6 +238,8 @@ class Viewer:
         route('GET', '/api/state', lambda body, query: (200, {'ok': True, 'state': self.snapshot()}))
         route('GET', '/api/logs', lambda body, query: (200, {'ok': True, 'logs': list(self.logs)}))
         route('POST', '/api/heartbeat', lambda body, query: (200, {'ok': True, 'state': 'VIEWER', 'estop': False}))
+        route('GET', '/api/topics', self.topics_list)
+        route('GET', '/api/topic', self.topic_echo)
         route('GET', '/api/config', self.config_get)
         route('POST', '/api/config', self.config_set)
         route('POST', '/api/config/reset', self.config_reset)
@@ -359,6 +361,49 @@ class Viewer:
                      'turn_dps': round(self.manual_turn, 1)}
 
     # -------------------------------------------------------------- config
+    # --------------------------- ROS graph -------------------------------
+    # The viewer has no ROS, so it answers with the topics the robot WOULD
+    # publish, clearly flagged as simulated. That keeps the topics page usable
+    # as a demo and keeps the endpoint set identical to the robot server -
+    # which QC checks, because a page that works against the robot must not
+    # 404 here.
+
+    DEMO_TOPICS = [
+        ('/gps_localize/odom', 'nav_msgs/msg/Odometry', 1, 1),
+        ('/gps_localize/imu/data', 'sensor_msgs/msg/Imu', 1, 0),
+        ('/gps_localize/gps/fix', 'sensor_msgs/msg/NavSatFix', 1, 1),
+        ('/gps_localize/telemetry', 'std_msgs/msg/Float32MultiArray', 1, 1),
+        ('/gps_localize/cmd_move', 'geometry_msgs/msg/Twist', 1, 1),
+        ('/gps_localize/cmd_manual', 'geometry_msgs/msg/Twist', 1, 1),
+        ('/gps_localize/cmd_vel', 'geometry_msgs/msg/Twist', 0, 1),
+        ('/gps_localize/heartbeat', 'std_msgs/msg/Int32', 1, 1),
+        ('/gps_localize/estop', 'std_msgs/msg/Bool', 1, 1),
+        ('/gps_localize/config/pid', 'std_msgs/msg/Float32MultiArray', 1, 1),
+        ('/gps_localize/log', 'std_msgs/msg/String', 1, 1),
+        ('/gps_localize/safety', 'std_msgs/msg/Int32', 1, 1),
+    ]
+
+    def topics_list(self, _body, _query):
+        topics = [{'name': n, 'types': [t], 'publishers': p, 'subscribers': sc,
+                   'hz': None, 'watched': False, 'simulated': True}
+                  for n, t, p, sc in self.DEMO_TOPICS]
+        return 200, {'ok': True, 'topics': topics, 'count': len(topics),
+                     'simulated': True,
+                     'note': 'viewer has no ROS - this is the topic list the '
+                             'robot would publish'}
+
+    def topic_echo(self, _body, query):
+        name = (query or {}).get('name', '').strip()
+        if not name:
+            return 400, {'ok': False, 'error': 'name is required'}
+        match = next((t for t in self.DEMO_TOPICS if t[0] == name), None)
+        if match is None:
+            return 404, {'ok': False, 'error': 'no such topic: %s' % name}
+        return 200, {'ok': True, 'name': name, 'type': match[1], 'value': None,
+                     'simulated': True,
+                     'note': 'viewer has no ROS, so there is no live value. '
+                             'Open the robot address to see real data.'}
+
     def config_get(self, _body, query):
         group = query.get('group')
         if group:

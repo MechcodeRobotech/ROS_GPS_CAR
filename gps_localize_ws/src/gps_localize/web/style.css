@@ -622,3 +622,62 @@ footer {
 /* no accidental text selection or double-tap zoom while driving */
 .jog, .btn, .tab { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
 button { touch-action: manipulation; }
+
+/* ------------------------------- topics ---------------------------------
+   The ROS graph, shown in the browser because there is no ros2 CLI on
+   Windows and the graph is not reachable from the host inside Docker. Built
+   only from the existing tokens, so it follows the theme like everything
+   else. */
+.tablewrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-top: var(--sp-2);
+}
+table.topics {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-2);
+}
+table.topics th,
+table.topics td {
+  text-align: left;
+  padding: var(--sp-1) var(--sp-2);
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  white-space: nowrap;
+}
+table.topics th {
+  color: var(--mut);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  background: var(--card);
+}
+table.topics tr:last-child td { border-bottom: none; }
+.topicrow td:first-child { font-family: ui-monospace, Menlo, Consolas, monospace; }
+.topicvalue {
+  margin: 0;
+  padding: var(--sp-2);
+  background: var(--sunk);
+  border-radius: 6px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: var(--fs-1);
+  color: var(--txt);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 40vh;
+  overflow: auto;
+}
+.chk {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  color: var(--mut);
+  font-size: var(--fs-2);
+}
+#topicsFilter {
+  flex: 1 1 12ch;
+  min-width: 12ch;
+}
+.mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
+.mut { color: var(--mut); }

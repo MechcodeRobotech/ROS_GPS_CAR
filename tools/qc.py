@@ -104,7 +104,7 @@ def check_web_assets(app_js, html, css):
         got = html.count(marker)
         check(got == want, 'index.html contains %s exactly %d time(s) (found %d)'
               % (marker, want, got))
-    for tab in ('dash', 'map', 'wp', 'cfg', 'log'):
+    for tab in ('dash', 'map', 'wp', 'cfg', 'topics', 'log'):
         check(html.count('id="tab-%s"' % tab) == 1, 'exactly one #tab-%s section' % tab)
     ids_html = set(re.findall(r'id="([A-Za-z0-9_]+)"', html))
     ids_js = set(re.findall(r"\$\('([A-Za-z0-9_]+)'\)", app_js))
@@ -404,6 +404,30 @@ def check_branch_publisher():
             check(b in declared, 'branch %s has a subset defined' % b)
 
 
+
+def check_js_syntax():
+    """Parse the browser JavaScript.
+
+    Nothing else here would notice a broken app.js: Python compiles, the
+    firmware builds, QC passes, and the page is simply dead when opened. A
+    real parse is the only way to catch it before the robot is in a field.
+    """
+    section('web UI: javascript parses')
+    try:
+        import esprima
+    except ImportError:
+        notes.append('esprima not installed, app.js not parsed '
+                     '(pip install --user esprima)')
+        print('  info   esprima not installed, skipped')
+        return
+    for js in sorted(WEB.glob('*.js')):
+        try:
+            esprima.parseScript(read(js), tolerant=False)
+            check(True, '%s parses' % js.name)
+        except Exception as exc:
+            check(False, '%s: %s' % (js.name, str(exc).splitlines()[0]))
+
+
 def main():
     main_cpp = read(FW / 'src' / 'main.cpp')
     telemetry_py = read(PKG / 'gps_localize' / 'telemetry.py')
@@ -416,6 +440,7 @@ def main():
     check_config_selectors(main_cpp, telemetry_py, web_py)
     check_topics(main_cpp, py_all)
     check_endpoints(read(WEB / 'app.js'), web_py, viewer_py)
+    check_js_syntax()
     check_web_assets(read(WEB / 'app.js'), read(WEB / 'index.html'), read(WEB / 'style.css'))
     check_design_system(read(WEB / 'style.css'), read(WEB / 'index.html'))
     check_yaml(py_all)

@@ -54,6 +54,7 @@
   <button class="tab" data-tab="map">แผนที่<small>Map</small></button>
   <button class="tab" data-tab="wp">จุดหมาย<small>Waypoints</small></button>
   <button class="tab" data-tab="cfg">ตั้งค่า<small>Settings</small></button>
+  <button class="tab" data-tab="topics">หัวข้อ ROS<small>Topics</small></button>
   <button class="tab" data-tab="log">บันทึก<small>Log</small></button>
 </nav>
 
@@ -315,6 +316,32 @@
 </section>
 
 <!-- ============================== LOG =============================== -->
+<section id="tab-topics" class="tabpage">
+  <div class="card">
+    <h3>หัวข้อ ROS ทั้งหมด / All ROS topics
+      <small>ไม่ต้องใช้ ros2 command · works from any browser, including Windows</small></h3>
+    <div class="row">
+      <button class="btn" id="topicsRefresh">รีเฟรช / Refresh</button>
+      <label class="chk"><input type="checkbox" id="topicsAuto" checked> อัปเดตอัตโนมัติ / auto</label>
+      <input type="search" id="topicsFilter" placeholder="กรอง / filter" aria-label="filter topics">
+      <span class="mut" id="topicsCount">—</span>
+    </div>
+    <div class="empty hidden" id="topicsEmpty">
+      <b>ยังไม่เห็นหัวข้อ / no topics visible</b>
+      ตรวจว่า ROS_DOMAIN_ID ตรงกัน และ agent ทำงานอยู่
+    </div>
+    <div class="tablewrap">
+      <table class="topics" id="topicsTable">
+        <thead><tr>
+          <th>หัวข้อ / topic</th><th>ชนิด / type</th>
+          <th>pub</th><th>sub</th><th>Hz</th><th></th>
+        </tr></thead>
+        <tbody id="topicsBody"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
 <section id="tab-log" class="tabpage">
   <div class="card">
     <h3>บันทึกเหตุการณ์ / Event log</h3>

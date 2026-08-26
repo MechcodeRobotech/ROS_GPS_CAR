@@ -876,6 +876,233 @@
     return value || fallback;
   }
 
+
+  /* Compass rose, top-right of the map.
+   *
+   * The robot marker already points where the robot is heading, but on a blank
+   * field that tells you nothing about WHICH WAY IS NORTH, and nothing about
+   * where the heading is coming from. This draws both:
+   *
+   *   outer ring + N/E/S/W   which way north is
+   *   solid needle           the fused heading, what the robot steers by
+   *   hollow needle          the raw QMC5883 compass, only when it is fitted
+   *                          and healthy, so you can see it disagree
+   *   caption                the numeric heading and its source
+   *
+   * When the two needles separate, the magnetometer is being pulled by
+   * something - which is exactly the moment you want to see it, not a number
+   * buried on another tab.
+   */
+
+  /* ------------------------------ topics -------------------------------
+   * The whole ROS graph, in the browser.
+   *
+   * There is no ros2 CLI on Windows, and inside Docker Desktop the graph is
+   * not visible from the host either, so without this the only way to see
+   * what the robot is publishing is to shell into the container. Clicking a
+   * topic subscribes to it on the robot and shows the live value; the
+   * subscription is dropped again once the page stops asking.
+   */
+  function setupTopics() {
+    var body = $('topicsBody');
+    if (!body) return;
+    var expanded = {};        // topic -> true while its value is open
+    var timer = null;
+
+    function render(list) {
+      var filter = ($('topicsFilter').value || '').toLowerCase();
+      var shown = list.filter(function (t) {
+        return !filter || t.name.toLowerCase().indexOf(filter) >= 0 ||
+               (t.types || []).join(' ').toLowerCase().indexOf(filter) >= 0;
+      });
+      $('topicsCount').textContent = shown.length + ' / ' + list.length;
+      $('topicsEmpty').classList.toggle('hidden', list.length > 0);
+
+      body.textContent = '';
+      shown.forEach(function (t) {
+        var tr = document.createElement('tr');
+        tr.className = 'topicrow';
+        tr.appendChild(cell(t.name, 'mono'));
+        tr.appendChild(cell((t.types || []).join(', ').replace(/\/msg\//g, '/'), 'mut'));
+        tr.appendChild(cell(t.publishers < 0 ? '?' : String(t.publishers)));
+        tr.appendChild(cell(t.subscribers < 0 ? '?' : String(t.subscribers)));
+        tr.appendChild(cell(t.hz === null || t.hz === undefined ? '—' : t.hz + ''));
+
+        var td = document.createElement('td');
+        var btn = document.createElement('button');
+        btn.className = 'btn small';
+        btn.textContent = expanded[t.name] ? 'ซ่อน / hide' : 'ดูค่า / watch';
+        btn.addEventListener('click', function () {
+          if (expanded[t.name]) { delete expanded[t.name]; } else { expanded[t.name] = true; }
+          refresh();
+        });
+        td.appendChild(btn);
+        tr.appendChild(td);
+        body.appendChild(tr);
+
+        if (expanded[t.name]) {
+          var vr = document.createElement('tr');
+          var vtd = document.createElement('td');
+          vtd.colSpan = 6;
+          var pre = document.createElement('pre');
+          pre.className = 'topicvalue';
+          pre.textContent = 'กำลังรอค่า / waiting…';
+          vtd.appendChild(pre);
+          vr.appendChild(vtd);
+          body.appendChild(vr);
+          watch(t.name, pre);
+        }
+      });
+    }
+
+    function cell(text, cls) {
+      var td = document.createElement('td');
+      if (cls) td.className = cls;
+      td.textContent = text;
+      return td;
+    }
+
+    function watch(name, pre) {
+      api('/api/topic?name=' + encodeURIComponent(name)).then(function (d) {
+        if (!d || !d.ok) {
+          pre.textContent = (d && d.error) || 'ไม่มีข้อมูล / no data';
+          return;
+        }
+        if (d.simulated) {
+          pre.textContent = d.note || 'simulated';
+          return;
+        }
+        if (d.value === null || d.value === undefined) {
+          pre.textContent = d.note || 'กำลังรอค่า / waiting…';
+          return;
+        }
+        var head = d.type + (d.hz ? '   ' + d.hz + ' Hz' : '') +
+                   (d.age_s !== null && d.age_s !== undefined ? '   ' + d.age_s + ' s ago' : '');
+        pre.textContent = head + '\n' + JSON.stringify(d.value, null, 2);
+      }).catch(function () { /* a dropped poll is not worth shouting about */ });
+    }
+
+    function refresh() {
+      api('/api/topics').then(function (d) {
+        if (d && d.ok) render(d.topics || []);
+      }).catch(function () { /* offline: leave the last list on screen */ });
+    }
+
+    $('topicsRefresh').addEventListener('click', refresh);
+    $('topicsFilter').addEventListener('input', refresh);
+    $('topicsAuto').addEventListener('change', schedule);
+
+    function schedule() {
+      if (timer) { clearInterval(timer); timer = null; }
+      if ($('topicsAuto').checked) timer = setInterval(function () {
+        if ($('tab-topics').classList.contains('active')) refresh();
+      }, 2000);
+    }
+
+    state.refreshTopics = refresh;
+    schedule();
+    refresh();
+  }
+
+  function drawCompass(ctx, canvas, snap) {
+    var t = (snap && snap.telemetry) || {};
+    var heading = t.heading_deg;
+    if (heading === undefined || heading === null) return;
+
+    var r = 40;
+    var cx = canvas.width - r - 22;
+    var cy = r + 22;
+
+    ctx.save();
+    ctx.globalAlpha = 0.92;
+
+    // dial
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = cssVar('--card', '#14181f');
+    ctx.fill();
+    ctx.strokeStyle = cssVar('--line', '#2a323d');
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // cardinal letters
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    var marks = [['N', 0], ['E', 90], ['S', 180], ['W', 270]];
+    for (var i = 0; i < marks.length; i++) {
+      var a = marks[i][1] * Math.PI / 180;
+      var lx = cx + Math.sin(a) * (r - 9);
+      var ly = cy - Math.cos(a) * (r - 9);
+      ctx.fillStyle = marks[i][0] === 'N' ? cssVar('--err', '#e0524a')
+                                         : cssVar('--mut', '#8b95a3');
+      ctx.fillText(marks[i][0], lx, ly);
+    }
+
+    // raw magnetometer, only when a healthy compass is actually fitted
+    if (t.mag_status === 1 && t.mag_heading_deg !== undefined &&
+        t.mag_heading_deg !== null) {
+      needle(ctx, cx, cy, r - 16, t.mag_heading_deg,
+             cssVar('--warn', '#d79b3c'), false);
+    }
+    // fused heading: what the robot actually steers by
+    needle(ctx, cx, cy, r - 12, heading, cssVar('--acc', '#4c8dff'), true);
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = cssVar('--txt', '#e6e9ef');
+    ctx.fill();
+
+    // numeric heading and where it comes from
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.fillStyle = cssVar('--txt', '#e6e9ef');
+    ctx.fillText(Math.round(((heading % 360) + 360) % 360) + '\u00B0', cx, cy + r + 12);
+    if (t.heading_ref_name) {
+      ctx.font = '9px system-ui, sans-serif';
+      ctx.fillStyle = cssVar('--mut', '#8b95a3');
+      ctx.fillText(t.heading_ref_name, cx, cy + r + 24);
+    }
+    if (t.mag_status === 2) {
+      ctx.font = '9px system-ui, sans-serif';
+      ctx.fillStyle = cssVar('--warn', '#d79b3c');
+      ctx.fillText('\u0E41\u0E21\u0E48\u0E40\u0E2B\u0E25\u0E47\u0E01\u0E23\u0E1A\u0E01\u0E27\u0E19', cx, cy + r + 36);
+    }
+    ctx.restore();
+  }
+
+  /** One needle at a compass bearing. Filled = the heading in use. */
+  function needle(ctx, cx, cy, len, deg, colour, filled) {
+    var a = (((deg % 360) + 360) % 360) * Math.PI / 180;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(a);
+    ctx.beginPath();
+    ctx.moveTo(0, -len);
+    ctx.lineTo(5, 6);
+    ctx.lineTo(0, 2);
+    ctx.lineTo(-5, 6);
+    ctx.closePath();
+    if (filled) {
+      ctx.fillStyle = colour;
+      ctx.fill();
+    } else {
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /** Read a CSS custom property so the map follows the page theme. */
+  function cssVar(name, fallback) {
+    try {
+      var v = getComputedStyle(document.documentElement).getPropertyValue(name);
+      return (v && v.trim()) || fallback;
+    } catch (e) {
+      return fallback;
+    }
+  }
+
   function drawMap() {
     var line = token('--line', '#2b3240');
     var muted = token('--mut', '#9aa6b8');
@@ -1042,6 +1269,9 @@
     ctx.moveTo(60, canvas.height - 18);
     ctx.lineTo(60 + step * view.scale, canvas.height - 18);
     ctx.stroke();
+  
+    // drawn last so the rose sits on top of the map content
+    drawCompass(ctx, canvas, snap);
   }
 
   /* ------------------------------- start pose tool (RViz 2D Pose Estimate) */
@@ -1615,6 +1845,7 @@
   setView(savedView);
   loadWaypoints();
   buildGroupTabs();
+  setupTopics();
   setConnection('connecting');
   connect();
   setInterval(heartbeat, 250);

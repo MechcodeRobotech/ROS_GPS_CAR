@@ -76,6 +76,9 @@ class WebServerNode(Node):
 
         # ------------------------------------------------------------ state
         self._lock = threading.Lock()
+        # Dynamic subscriptions created by the browser's topic viewer, keyed by
+        # topic name. Reaped once nobody is polling them.
+        self._echo = {}
         self.started_at = time.time()
         self.telemetry = {}
         self.telemetry_time = 0.0
@@ -238,6 +241,8 @@ class WebServerNode(Node):
         route = self.app.route
         route('GET', '/api/state', self.api_state)
         route('GET', '/api/logs', self.api_logs)
+        route('GET', '/api/topics', self.api_topics)
+        route('GET', '/api/topic', self.api_topic_echo)
         route('GET', '/api/config', self.api_config_get)
         route('POST', '/api/config', self.api_config_set)
         route('POST', '/api/config/reset', self.api_config_reset)
@@ -259,6 +264,134 @@ class WebServerNode(Node):
     def api_logs(self, _body, _query):
         with self._lock:
             return 200, {'ok': True, 'logs': list(self.logs)}
+
+
+    # --------------------------- ROS graph -------------------------------
+    # There is no ros2 CLI on a Windows or Docker Desktop machine, so the
+    # browser has to be able to show the whole graph: every topic, its type,
+    # how many nodes are on each end, the rate, and the live value.
+
+    def api_topics(self, _body, _query):
+        """Every topic in the graph, not just the ones this robot defines."""
+        try:
+            names_and_types = self.get_topic_names_and_types()
+        except Exception as exc:
+            return 500, {'ok': False, 'error': 'cannot read the ROS graph: %r' % exc}
+
+        out = []
+        now = time.time()
+        with self._lock:
+            rates = {name: self._topic_rate(name, now) for name, _ in names_and_types}
+        for name, types in sorted(names_and_types):
+            try:
+                pubs = self.count_publishers(name)
+                subs = self.count_subscribers(name)
+            except Exception:
+                pubs = subs = -1
+            out.append({
+                'name': name,
+                'types': list(types),
+                'publishers': pubs,
+                'subscribers': subs,
+                'hz': rates.get(name),
+                'watched': name in self._echo,
+            })
+        return 200, {'ok': True, 'topics': out, 'count': len(out)}
+
+    def _topic_rate(self, name, now):
+        """Measured rate, or None when nothing has been seen recently."""
+        st = self._echo.get(name)
+        if not st or len(st['stamps']) < 2:
+            return None
+        stamps = list(st['stamps'])
+        if now - stamps[-1] > 5.0:
+            return 0.0
+        span = stamps[-1] - stamps[0]
+        return round((len(stamps) - 1) / span, 2) if span > 0 else None
+
+    def api_topic_echo(self, _body, query):
+        """Latest message on one topic.
+
+        A subscription is created on first request and kept while the page
+        keeps asking. Anything not polled for a while is dropped again, so
+        opening the topics page does not leave subscriptions behind.
+        """
+        # httpd.py flattens the query string: {k: v[0]}, so these are plain
+        # strings, not parse_qs lists.
+        name = (query or {}).get('name', '').strip()
+        if not name:
+            return 400, {'ok': False, 'error': 'name is required'}
+
+        now = time.time()
+        self._reap_echo(now)
+
+        st = self._echo.get(name)
+        if st is None:
+            created, err = self._start_echo(name, now)
+            if not created:
+                return 404, {'ok': False, 'error': err}
+            return 200, {'ok': True, 'name': name, 'value': None,
+                         'note': 'just subscribed, ask again in a moment'}
+
+        st['last_poll'] = now
+        with self._lock:
+            value = st['value']
+            stamp = st['stamp']
+        return 200, {'ok': True, 'name': name, 'type': st['type'],
+                     'value': value,
+                     'age_s': round(now - stamp, 2) if stamp else None,
+                     'hz': self._topic_rate(name, now)}
+
+    def _start_echo(self, name, now):
+        try:
+            from rosidl_runtime_py.utilities import get_message
+        except ImportError:
+            return False, 'rosidl_runtime_py is not available'
+        try:
+            types = dict(self.get_topic_names_and_types()).get(name)
+        except Exception as exc:
+            return False, 'cannot read the ROS graph: %r' % exc
+        if not types:
+            return False, 'no such topic: %s' % name
+        type_name = types[0]
+        try:
+            msg_class = get_message(type_name)
+        except Exception as exc:
+            return False, 'cannot load %s: %r' % (type_name, exc)
+
+        st = {'type': type_name, 'value': None, 'stamp': 0.0,
+              'last_poll': now, 'stamps': deque(maxlen=20), 'sub': None}
+
+        def on_msg(msg, _name=name, _st=st):
+            try:
+                from rosidl_runtime_py.convert import message_to_ordereddict
+                value = json.loads(json.dumps(message_to_ordereddict(msg),
+                                              default=str))
+            except Exception as exc:
+                value = {'error': 'cannot convert: %r' % exc}
+            t = time.time()
+            with self._lock:
+                _st['value'] = value
+                _st['stamp'] = t
+                _st['stamps'].append(t)
+
+        try:
+            st['sub'] = self.create_subscription(msg_class, name, on_msg, 10)
+        except Exception as exc:
+            return False, 'cannot subscribe: %r' % exc
+        self._echo[name] = st
+        return True, ''
+
+    def _reap_echo(self, now, idle_s=60.0):
+        """Drop subscriptions nobody is looking at any more."""
+        for name in [n for n, st in self._echo.items()
+                     if now - st['last_poll'] > idle_s]:
+            st = self._echo.pop(name)
+            try:
+                if st['sub'] is not None:
+                    self.destroy_subscription(st['sub'])
+            except Exception:
+                pass
 
     def api_heartbeat(self, _body, _query):
         self.beats = (self.beats + 1) % 1000000

@@ -54,6 +54,22 @@
   ],
   "log": [
     {
+      "ts": "2026-08-27 03:20:00",
+      "step": "T86,T87,T89",
+      "what": "Topics tab and compass rose added. The tab lists every topic with type, publisher and subscriber counts and measured rate, filters, and expands any topic to show its live value - the robot subscribes on demand and drops it again when the page stops asking. The map gained a compass rose: north, a solid needle for the fused heading the robot steers by, a hollow one for the raw QMC5883 when a healthy compass is fitted, and the heading source underneath. When the needles separate the magnetometer is being disturbed, which is the moment you want to see it. The Windows viewer serves both endpoints with simulated data so the page never 404s there, which QC enforces. Also added a JavaScript parse check to QC - nothing else would have caught a broken app.js: Python compiles, firmware builds, QC passes, and the page is simply dead when opened.",
+      "files": "web_server.py, viewer_server.py, web/index.html, web/app.js, web/style.css, tools/qc.py",
+      "promoted": true,
+      "problem": null
+    },
+    {
+      "ts": "2026-08-27 03:10:00",
+      "step": "T85",
+      "what": "Topics API added so the whole ROS graph is visible from a browser. There is no ros2 CLI on Windows or inside Docker Desktop, so /api/topics lists every topic with its type, publisher and subscriber counts and measured rate, and /api/topic subscribes on demand and returns the live value. Subscriptions are reaped once nobody is polling, so opening the page does not leave them behind. Verified: 16 topics enumerated, live echo of std_msgs/String at a measured 5.0 Hz, unknown topic refused cleanly.",
+      "files": "web_server.py",
+      "promoted": true,
+      "problem": null
+    },
+    {
       "ts": "2026-08-27 02:05:00",
       "step": "T15-T19",
       "what": "All six failing host tests resolved by cause, not by adjusting expectations. Two were real firmware bugs: the estimator's anti-creep floor trapped the speed estimate at zero forever (the robot would have read 0 m/s at low speed, which is exactly what the waypoint controller relies on), and that same bug was why the GPS-course test failed - speed never exceeded align_min_mps. The PIDF deadband left d_init set, so the first D kick after a setpoint step went through unfiltered. Two were wrong test data: 2.0 A at 12 V through 5 ohm leaves 12.9 rpm of back-EMF and is not a stall, and the model-fallback test ran two time constants against a tolerance needing four. 124/124 pass.",
@@ -1054,6 +1070,116 @@
       "test": "wheels off ground, e-stop verified first",
       "result": "",
       "ts": ""
+    },
+    {
+      "id": "T80",
+      "phase": "W",
+      "title": "Windows test runner writing a report next to the project",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "tools/test_windows.py, test_windows.bat",
+      "test": "runs and reports; anything it cannot do is SKIP, never a pass",
+      "result": "PASS - verified on Linux, viewer served, skips honest",
+      "ts": "2026-08-27 03:10:00"
+    },
+    {
+      "id": "T81",
+      "phase": "W",
+      "title": "Windows firewall + LAN address setup script",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "setup/setup_windows.ps1",
+      "test": "opens TCP 8080 / UDP 8888, warns on a Public profile",
+      "result": "WRITTEN - needs a Windows box to run",
+      "ts": "2026-08-27 03:10:00"
+    },
+    {
+      "id": "T82",
+      "phase": "W",
+      "title": "Docker override so Windows works without host networking",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "docker-compose.windows.yml",
+      "test": "publishes 8080/tcp + 8888/udp, host networking off",
+      "result": "PASS - QC checks the override is present",
+      "ts": "2026-08-27 03:10:00"
+    },
+    {
+      "id": "T83",
+      "phase": "W",
+      "title": "docker branch carries firmware + PlatformIO in the image",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "tools/publish_branches.sh",
+      "test": "docker branch has firmware/ and a Dockerfile",
+      "result": "PASS - 37 firmware files on the branch",
+      "ts": "2026-08-27 03:10:00"
+    },
+    {
+      "id": "T84",
+      "phase": "W",
+      "title": "Split lib/ (reusable) from src/ (this robot)",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "firmware/lib, firmware/src, platformio.ini",
+      "test": "both builds + 124 tests pass; 4 new QC checks",
+      "result": "PASS - caught 2 breakages, now guarded",
+      "ts": "2026-08-27 03:10:00"
+    },
+    {
+      "id": "T85",
+      "phase": "W",
+      "title": "Topics API: every topic, type, rate, live value in the browser",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "web_server.py",
+      "test": "/api/topics lists all; /api/topic echoes live",
+      "result": "PASS - 16 topics, live echo at 5.0 Hz",
+      "ts": "2026-08-27 03:10:00"
+    },
+    {
+      "id": "T86",
+      "phase": "W",
+      "title": "Topics tab in the web UI",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "web/index.html, app.js, style.css",
+      "test": "every topic visible and echoable from a browser",
+      "result": "PASS - tab live, filter, watch, auto-refresh",
+      "ts": "2026-08-27 03:20:00"
+    },
+    {
+      "id": "T87",
+      "phase": "W",
+      "title": "Compass heading shown on the map",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "web/app.js, style.css",
+      "test": "heading arrow tracks the fused compass heading live",
+      "result": "PASS - compass rose with fused + raw needles",
+      "ts": "2026-08-27 03:20:00"
+    },
+    {
+      "id": "T88",
+      "phase": "W",
+      "title": "Sync scripts to and from the Windows share, with QC on the way back",
+      "needs": "PC",
+      "state": "TODO",
+      "files": "tools/sync_windows.sh",
+      "test": "round-trips; changes from Windows are QC'd before promotion",
+      "result": "",
+      "ts": ""
+    },
+    {
+      "id": "T89",
+      "phase": "W",
+      "title": "Windows viewer serves the topics endpoints too",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "webapp/viewer_server.py",
+      "test": "QC endpoint parity check passes",
+      "result": "PASS - viewer serves both endpoints, parity holds",
+      "ts": "2026-08-27 03:20:00"
     }
   ]
 }
