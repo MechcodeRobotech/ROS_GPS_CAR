@@ -108,7 +108,18 @@ RUN . /opt/ros/humble/setup.sh \
     && rm -rf /var/lib/apt/lists/*
 
 COPY docker-entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+    # docker exec does NOT run the entrypoint, so an interactive shell would
+    # have no ros2 on PATH - 'docker compose exec gps_localize ros2 topic list'
+    # failed with "executable file not found" even though ROS was installed.
+    # Sourcing from .bashrc fixes the interactive case without affecting how
+    # the service itself starts.
+    && printf '%s\n' \
+        'source /opt/ros/humble/setup.bash' \
+        'source /uros_ws/install/local_setup.bash' \
+        '[ -f /ws/install/setup.bash ] && source /ws/install/setup.bash' \
+        'export ROS_DOMAIN_ID=10' \
+        >> /root/.bashrc
 
 # Flashing needs the board's serial port; docker-compose passes /dev/ttyUSB0
 # through. Build the firmware with:

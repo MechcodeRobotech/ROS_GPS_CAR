@@ -515,6 +515,10 @@ def check_compose_merge():
           'base compose declares no devices (a missing one blocks container creation)')
     check('docker-compose.serial.yml' in body,
           'the serial port is available as an opt-in override')
+    # docker exec bypasses the entrypoint, so without this an interactive
+    # shell has no ros2 on PATH - which is how most people look at the graph.
+    check('/root/.bashrc' in body,
+          'interactive container shells source ROS (docker exec skips the entrypoint)')
     check('healthcheck' in merged, 'healthcheck survives the merge')
 
 
