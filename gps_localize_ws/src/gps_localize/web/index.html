@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0e1117">
+<title>GPS_Localize — แผงควบคุมหุ่นยนต์</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">◎</span>
+    <div>
+      <div class="title">GPS_Localize</div>
+      <div class="subtitle" id="stateLabel">กำลังเชื่อมต่อ… / connecting…</div>
+    </div>
+  </div>
+
+  <div class="pills">
+    <span class="pill" id="pillLink"><b>เชื่อมต่อ</b><span>—</span></span>
+    <span class="pill" id="pillEsp"><b>ESP32</b><span>—</span></span>
+    <span class="pill" id="pillGps"><b>GPS</b><span>—</span></span>
+    <span class="pill" id="pillBatt"><b>แบตเตอรี่</b><span>—</span></span>
+  </div>
+
+  <div class="estop-group">
+    <button id="btnEstop" class="btn estop">หยุดฉุกเฉิน<small>EMERGENCY STOP</small></button>
+    <button id="btnReset" class="btn reset">ปลดล็อก<small>RESET</small></button>
+  </div>
+</header>
+
+<div id="banner" class="banner hidden" role="status" aria-live="polite">
+  <span id="bannerText"></span>
+  <button class="btn hidden" id="bannerRetry">ลองใหม่ / Retry</button>
+</div>
+
+<div id="viewerBar" class="viewerbar hidden">
+  <b>โหมดดูอย่างเดียว — ควบคุมหุ่นยนต์ไม่ได้ / VIEW ONLY — this window cannot control the robot</b>
+  <span id="viewerNote"></span>
+  <span class="viewer-open">
+    <input id="robotIp" placeholder="192.168.1.50" inputmode="decimal" autocomplete="off" aria-label="ไอพีของหุ่นยนต์ / robot IP address">
+    <button id="btnOpenRobot" class="btn">เปิดหน้าหุ่นยนต์ / Open robot UI</button>
+  </span>
+</div>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="dash">หน้าหลัก<small>Dashboard</small></button>
+  <button class="tab" data-tab="map">แผนที่<small>Map</small></button>
+  <button class="tab" data-tab="wp">จุดหมาย<small>Waypoints</small></button>
+  <button class="tab" data-tab="cfg">ตั้งค่า<small>Settings</small></button>
+  <button class="tab" data-tab="log">บันทึก<small>Log</small></button>
+</nav>
+
+<!-- Simple hides the engineering numbers. Someone who just drives the robot
+     never needs PWM counts or free heap; someone tuning it does. -->
+<div class="viewswitch">
+  <span class="hint">มุมมอง / View</span>
+  <button class="chipbtn active" id="btnSimple">ง่าย · Simple</button>
+  <button class="chipbtn" id="btnAdvanced">ละเอียด · Advanced</button>
+  <button class="chipbtn help" id="btnHelp">? วิธีใช้ / Help</button>
+</div>
+
+<dialog id="helpDialog" class="helpdlg">
+  <h3>ใช้งานยังไง / How to use</h3>
+  <ol>
+    <li><b>ดูว่าปลอดภัยไหม</b> — แถบบนต้องเป็นสีเขียว: เชื่อมต่อ ปกติ · GPS มีดาวเทียม ·
+      แบตเตอรี่เกิน 10.8 V<br><small>Check the top bar is green before driving.</small></li>
+    <li><b>ลองขับเอง</b> — หน้าหลัก → “ขับเอง” กดลูกศรค้างไว้ ปล่อยแล้วหยุด
+      (คีย์บอร์ด W A S D · Space = หยุด)<br><small>Hold an arrow to drive, release to stop.</small></li>
+    <li><b>สั่งให้วิ่งเอง</b> — หน้า “แผนที่” คลิกจุดที่ต้องการ → “ไปที่นี่เลย”
+      หรือหน้า “จุดหมาย” ใส่รายการแล้วกดปุ่มเขียวหน้าหลัก<br>
+      <small>Click the map and choose “Go here”, or build a waypoint list.</small></li>
+    <li><b>หยุดฉุกเฉิน</b> — ปุ่มแดงมุมขวาบน กดได้ตลอดทุกหน้า
+      ปุ่มเห็ดบนตัวหุ่นยังตัดไฟจริงเสมอ<br><small>The red button always works, on every page.</small></li>
+  </ol>
+  <button class="btn go" id="helpClose">เข้าใจแล้ว / Got it</button>
+</dialog>
+
+<main>
+
+<!-- ============================ DASHBOARD ============================ -->
+<section id="tab-dash" class="tabpage active">
+
+  <!-- what the robot is doing, in one sentence, plus the one button that
+       makes sense right now. This is the only thing a new operator has to read. -->
+  <div class="hero card" id="heroCard">
+    <div class="hero-say">
+      <span class="hero-icon" id="heroIcon" aria-hidden="true">⏳</span>
+      <div class="hero-text">
+        <div class="hero-title" id="heroTitle">กำลังเชื่อมต่อ…</div>
+        <div class="hero-sub" id="heroSub">รอข้อมูลชุดแรกจากหุ่นยนต์ / waiting for the robot</div>
+      </div>
+    </div>
+    <div class="hero-actions">
+      <button class="btn go hero-primary" id="heroPrimary" disabled>เริ่มภารกิจ / START</button>
+      <button class="btn hidden" id="heroSecondary">พัก / PAUSE</button>
+    </div>
+  </div>
+
+  <div class="grid tiles live-data">
+    <div class="tile big"><label>ความเร็ว / Speed</label><output id="tSpeed">0.00</output><span>m/s</span></div>
+    <div class="tile big"><label>ทิศทาง / Heading</label><output id="tHeading">0</output><span>° (0=เหนือ)</span></div>
+    <div class="tile adv"><label>เป้าหมาย / Target heading</label><output id="tTargetHeading">0</output><span>°</span></div>
+    <div class="tile adv"><label>ผิดพลาด / Heading error</label><output id="tHeadingErr">0</output><span>°</span></div>
+    <div class="tile"><label>ละติจูด / Latitude</label><output id="tLat">—</output><span>°</span></div>
+    <div class="tile"><label>ลองจิจูด / Longitude</label><output id="tLon">—</output><span>°</span></div>
+    <div class="tile"><label>ดาวเทียม / Satellites</label><output id="tSats">0</output><span>HDOP <i id="tHdop">—</i></span></div>
+    <div class="tile"><label>ระยะถึงจุดหมาย / Distance</label><output id="tDist">—</output><span>m</span></div>
+  </div>
+
+  <div class="grid two">
+    <div class="card live-data adv">
+      <h3>ล้อ / Wheels <small>คำนวณจาก IMU (ไม่มี encoder)</small></h3>
+      <table class="kv">
+        <tr><th>ซ้าย / Left</th><td><b id="tRpmL">0.0</b> rpm</td><td><span id="tMpsL">0.00</span> m/s</td><td><span id="tPwmL">0</span> pwm</td></tr>
+        <tr><th>ขวา / Right</th><td><b id="tRpmR">0.0</b> rpm</td><td><span id="tMpsR">0.00</span> m/s</td><td><span id="tPwmR">0</span> pwm</td></tr>
+        <tr><th>หมุน / Yaw rate</th><td colspan="3"><span id="tYawRate">0.0</span> °/s</td></tr>
+        <tr><th>Odometry</th><td colspan="3">x <span id="tOdomX">0.00</span> m · y <span id="tOdomY">0.00</span> m</td></tr>
+      </table>
+    </div>
+
+    <div class="card live-data">
+      <h3>เซ็นเซอร์ / Sensors <small>ตัวไหนเสีย ระบบสลับไปใช้ตัวที่เหลือเอง</small></h3>
+      <div class="sensors" id="sensorChips"></div>
+      <table class="kv adv">
+        <tr><th>อ้างอิงทิศจาก / Heading from</th><td colspan="2"><b id="tHeadingRef">—</b></td></tr>
+        <tr><th>เข็มทิศ / Compass</th><td><span id="tMagHeading">—</span>°</td><td><span id="tMagStatus">—</span></td></tr>
+        <tr><th>ความเร็วคำนวณจาก / Speed from</th><td colspan="2"><span id="tSpeedSource">—</span></td></tr>
+        <tr><th>รอบล้อจากไฟฟ้า / Wheel rpm (V·A)</th><td>L <span id="tMotorRpmL">—</span></td><td>R <span id="tMotorRpmR">—</span></td></tr>
+      </table>
+      <div class="row">
+        <button class="btn" id="btnMagStart">ปรับเข็มทิศ / Calibrate compass</button>
+        <button class="btn save" id="btnMagFinish" disabled>บันทึกผล / Finish</button>
+        <span class="hint" id="magHint">หมุนหุ่นช้า ๆ ครบ 1 รอบ แล้วกดบันทึก</span>
+      </div>
+    </div>
+
+    <div class="card live-data">
+      <h3>ไฟฟ้า / Power <small>INA226 × 4</small></h3>
+      <table class="kv">
+        <tr><th>แบตเตอรี่ / Battery</th><td><b id="tBattV">0.00</b> V</td><td><span id="tBattA">0.00</span> A</td></tr>
+        <tr class="adv"><th>มอเตอร์ A / Motor A</th><td><b id="tMaV">0.00</b> V</td><td><span id="tMaA">0.00</span> A</td></tr>
+        <tr class="adv"><th>มอเตอร์ B / Motor B</th><td><b id="tMbV">0.00</b> V</td><td><span id="tMbA">0.00</span> A</td></tr>
+        <tr class="adv"><th>พัดลม / Fans</th><td><b id="tFanV">0.00</b> V</td><td><span id="tFanA">0.00</span> A</td></tr>
+        <tr class="adv"><th>หน่วยความจำว่าง / Free RAM</th><td colspan="2"><span id="tHeap">—</span> kB · loop <span id="tLoop">—</span> µs</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="grid two">
+    <div class="card live-data adv">
+      <h3>ภารกิจ / Mission</h3>
+      <div class="mission">
+        <div class="mission-line">
+          <span class="badge" id="navState">IDLE</span>
+          <span id="navTarget">ยังไม่ได้เลือกจุดหมาย / no waypoint selected</span>
+        </div>
+        <div class="progress"><div id="navProgress"></div></div>
+        <div class="mission-line small">
+          ระยะ <b id="navDist">—</b> m · ทิศ <b id="navBearing">—</b>° · เหลือเวลา <b id="navEta">—</b> s
+        </div>
+        <div class="mission-line small warn" id="navBlock"></div>
+      </div>
+      <div class="row adv">
+        <button class="btn" data-nav="start">เริ่ม / START</button>
+        <button class="btn" data-nav="pause">พัก / PAUSE</button>
+        <button class="btn" data-nav="resume">ไปต่อ / RESUME</button>
+        <button class="btn" data-nav="next">ข้ามจุด / NEXT</button>
+        <button class="btn stop" data-nav="stop">จบภารกิจ / STOP</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>ขับเอง / Manual drive <small>กดค้างไว้ ปล่อยแล้วหยุด</small></h3>
+      <div class="dpad">
+        <button class="jog" data-fwd="1" data-turn="0">▲</button>
+        <div class="dpad-mid">
+          <button class="jog" data-fwd="0" data-turn="-1">◀</button>
+          <button class="jog stopjog" data-fwd="0" data-turn="0">■</button>
+          <button class="jog" data-fwd="0" data-turn="1">▶</button>
+        </div>
+        <button class="jog" data-fwd="-1" data-turn="0">▼</button>
+      </div>
+      <div class="speednow">
+        <span class="hint">ความเร็วตอนนี้ / Speed now</span>
+        <output id="speedNow">0.18</output><span class="unit">m/s</span>
+      </div>
+      <div class="row presets">
+        <button class="btn" data-preset="0.10">ช้า · Slow<small>0.10 m/s</small></button>
+        <button class="btn" data-preset="0.18">ปกติ · Normal<small>0.18 m/s</small></button>
+        <button class="btn" data-preset="0.30">เร็ว · Fast<small>0.30 m/s</small></button>
+      </div>
+      <div class="speedbox adv">
+        <div class="speedrow">
+          <span class="speedlabel">ความเร็วเดินหน้า<small>Linear speed</small></span>
+          <button class="btn stepbtn" data-speed="-0.02">−</button>
+          <output id="manualSpeed">0.18</output><span class="unit">m/s</span>
+          <button class="btn stepbtn" data-speed="0.02">+</button>
+        </div>
+        <div class="speedrow">
+          <span class="speedlabel">ความเร็วเลี้ยว<small>Angular speed</small></span>
+          <button class="btn stepbtn" data-turnrate="-5">−</button>
+          <output id="manualTurn">45</output><span class="unit">°/s</span>
+          <button class="btn stepbtn" data-turnrate="5">+</button>
+        </div>
+        <div class="speedrow">
+          <button class="btn save" id="btnSaveSpeeds">จำค่านี้ไว้ / Save as default</button>
+          <span class="hint" id="speedMsg"></span>
+        </div>
+      </div>
+      <p class="hint">แป้นพิมพ์: W A S D หรือปุ่มลูกศร · <b>Space = หยุด</b> · ปล่อยปุ่ม = หยุดทันที<br>กดปุ่มขับ หุ่นจะวิ่งด้วยความเร็วที่ตั้งไว้ด้านบนพอดี / the robot drives at exactly the speed set above</p>
+
+      <h4 class="subhead adv">หมุนตามองศา / Turn by angle <small>ใช้ในร่มได้ ไม่ต้องมี GPS</small></h4>
+      <div class="row turnrow adv">
+        <button class="btn" data-turn-deg="-90">↺ 90°</button>
+        <button class="btn" data-turn-deg="-45">↺ 45°</button>
+        <button class="btn" data-turn-deg="45">45° ↻</button>
+        <button class="btn" data-turn-deg="90">90° ↻</button>
+        <button class="btn" data-turn-deg="180">180°</button>
+      </div>
+      <div class="row turnrow adv">
+        <label class="hint" for="turnDeg">องศา / degrees</label>
+        <input type="number" id="turnDeg" value="30" step="5" inputmode="numeric">
+        <button class="btn" id="btnTurnCustom">หมุนตามที่พิมพ์ / Turn</button>
+      </div>
+      <h4 class="subhead adv">หันไปทางทิศ / Turn to compass point</h4>
+      <div class="row turnrow adv">
+        <button class="btn" data-compass="N">N เหนือ</button>
+        <button class="btn" data-compass="E">E ตะวันออก</button>
+        <button class="btn" data-compass="S">S ใต้</button>
+        <button class="btn" data-compass="W">W ตะวันตก</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== MAP =============================== -->
+<section id="tab-map" class="tabpage">
+  <div class="card">
+    <h3>แผนที่ท้องถิ่น / Local map <small>เลื่อนเมาส์ดูพิกัด · แตะหรือคลิกเพื่อเลือกจุด</small></h3>
+    <div class="empty hidden" id="mapEmpty">
+      <b>แผนที่ยังไม่มีจุดอ้างอิง / map has no reference yet</b>
+      รอให้ GPS จับสัญญาณครั้งแรก หรือกด “ตั้งตำแหน่งเริ่มต้น” เพื่อบอกเองว่าหุ่นอยู่ตรงไหน
+    </div>
+    <div class="mapwrap">
+      <canvas id="map" width="900" height="560" aria-label="แผนที่ท้องถิ่น local map"></canvas>
+      <div id="mapHud" class="maphud">—</div>
+      <div id="mapMenu" class="mapmenu hidden">
+        <div class="mapmenu-head" id="mapMenuPos">—</div>
+        <button class="btn go" data-map="goto">ไปที่นี่เลย / Go here</button>
+        <button class="btn save" data-map="add">เพิ่มเข้ารายการ / Add to list</button>
+        <button class="btn" data-map="copy">คัดลอกพิกัด / Copy</button>
+        <button class="btn" data-map="close">ปิด / Close</button>
+      </div>
+    </div>
+    <div class="row">
+      <button class="btn" id="mapFit">พอดีจอ / Fit</button>
+      <button class="btn" id="mapClear">ล้างเส้นทาง / Clear trail</button>
+      <button class="btn" id="mapPoseTool">📍 ตั้งตำแหน่งเริ่มต้น / Set start pose</button>
+      <span class="hint">▲ = หุ่นยนต์ · ● = จุดหมาย · ✛ = จุดที่เลือก · เส้นเหลือง = จุดที่กำลังไป</span>
+    </div>
+    <p class="hint" id="poseHint">
+      ใช้เมื่อ <b>ไม่มีสัญญาณ GPS</b> (ทดสอบในร่ม): กดปุ่มด้านบนก่อน แล้วกดค้างบนแผนที่ตรงที่หุ่นอยู่
+      ลากไปทางที่หุ่นหันหน้า แล้วปล่อย — เหมือน “2D Pose Estimate” ใน RViz ของ Nav2
+    </p>
+  </div>
+</section>
+
+<!-- =========================== WAYPOINTS ============================ -->
+<section id="tab-wp" class="tabpage">
+  <div class="card">
+    <h3>รายการจุดหมาย / Waypoints</h3>
+    <p class="hint">พิมพ์ค่า lat/lon จาก Google Maps ได้เลย หรือขับหุ่นไปที่จุดนั้นแล้วกด “เพิ่มจุดที่นี่”</p>
+    <table class="wptable" id="wpTable">
+      <thead><tr><th>#</th><th>ชื่อ / Name</th><th>Latitude</th><th>Longitude</th><th>ระยะ</th><th>จัดการ</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="empty hidden" id="wpEmpty">
+      <b>ยังไม่มีจุดหมาย / No waypoints yet</b>
+      ขับหุ่นไปยืนตรงจุดที่ต้องการแล้วกด “เพิ่มจุดที่นี่”
+      หรือคลิกบนแผนที่แล้วเลือก “เพิ่มเข้ารายการ”
+    </div>
+    <div class="row">
+      <button class="btn" id="wpAddHere">เพิ่มจุดที่นี่ / Add here</button>
+      <button class="btn" id="wpAddRow">เพิ่มแถวว่าง / Add row</button>
+      <button class="btn go" id="wpSave">บันทึก / SAVE</button>
+      <span id="wpMsg" class="hint" role="status" aria-live="polite"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ SETTINGS ============================ -->
+<section id="tab-cfg" class="tabpage">
+  <div class="card">
+    <h3>ตั้งค่า / Settings</h3>
+    <p class="hint">
+      แก้ตัวเลขแล้วกดบันทึก มีผลทันที ไม่ต้องแฟลชบอร์ดใหม่ ·
+      ถ้าตั้งเพี้ยนจนหุ่นวิ่งแปลก กด “คืนค่าโรงงาน” ของกลุ่มนั้น
+    </p>
+    <div class="cfg-tabs" id="cfgGroups"></div>
+    <div id="cfgForm" class="cfg-form"></div>
+    <div class="row">
+      <button class="btn go" id="cfgSave">บันทึก / SAVE</button>
+      <button class="btn" id="cfgReload">โหลดใหม่ / RELOAD</button>
+      <button class="btn danger" id="cfgReset">คืนค่าโรงงาน / FACTORY RESET</button>
+      <span id="cfgMsg" class="hint" role="status" aria-live="polite"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== LOG =============================== -->
+<section id="tab-log" class="tabpage">
+  <div class="card">
+    <h3>บันทึกเหตุการณ์ / Event log</h3>
+    <div id="logBox" class="logbox" role="log" aria-live="polite"></div>
+  </div>
+</section>
+
+</main>
+
+<footer role="status" aria-live="polite">
+  <span class="live-dot" aria-hidden="true"></span>
+  <span id="connLabel">กำลังเชื่อมต่อ… / connecting…</span>
+  <a id="lanUrl" class="lanurl hidden" href="#"></a>
+  <span id="footInfo">—</span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

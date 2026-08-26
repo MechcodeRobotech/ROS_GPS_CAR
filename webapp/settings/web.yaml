@@ -1,0 +1,12 @@
+web:
+  host: 0.0.0.0
+  port: 8080
+  telemetry_rate_hz: 5.0
+  heartbeat_rate_hz: 4.0
+  max_clients: 8
+  log_lines: 200
+  manual_speed_mps: 0.18
+  manual_turn_dps: 45.0
+  manual_repeat_ms: 150
+  trail_points: 300
+  allow_config_edit: true

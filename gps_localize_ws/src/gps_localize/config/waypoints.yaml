@@ -1,0 +1,10 @@
+# Waypoint list. Normally you never edit this by hand - use the web UI:
+#   "เพิ่มจุดที่นี่ / Add here" records the robot's current position.
+# lat/lon are WGS-84 decimal degrees, the same numbers Google Maps shows.
+waypoints:
+  - name: WP1
+    lat: 13.736717
+    lon: 100.523186
+  - name: WP2
+    lat: 13.736817
+    lon: 100.523286

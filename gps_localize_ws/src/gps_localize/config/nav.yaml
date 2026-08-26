@@ -1,0 +1,32 @@
+# Waypoint navigation behaviour. Everything here is editable from the web UI
+# (page "ตั้งค่า / Settings"), no rebuild needed.
+nav:
+  cruise_speed_mps: 0.25       # normal driving speed
+  approach_speed_mps: 0.12     # speed used inside approach_distance_m
+  approach_distance_m: 1.5     # start slowing down this far from the waypoint
+  arrive_radius_m: 1.0         # waypoint counts as reached inside this radius
+  heading_tolerance_deg: 15.0  # turn on the spot until the bearing error is smaller
+  command_rate_hz: 5.0         # how often cmd_move is republished
+  loop_waypoints: false        # true = start again at waypoint 1 after the last one
+  reverse_allowed: false       # keep false: this robot steers by driving forward
+  waypoint_timeout_s: 180.0    # give up on a waypoint after this long and stop
+
+  # Heading discovery - the fallback when the compass is dead or disturbed.
+  # The robot cannot know which way it points while standing still without a
+  # compass, so it drives straight for a couple of metres: the GPS course then
+  # tells it exactly, and it turns towards the waypoint from there.
+  discover_heading: true
+  discover_speed_mps: 0.15
+  discover_distance_m: 2.0
+  discover_max_s: 12.0
+
+  # TESTING ONLY: navigate without GPS, using the start pose you set on the map
+  # plus IMU odometry. Dead reckoning drifts several metres per minute, so this
+  # is for indoor bring-up, never for a real mission.
+  allow_dead_reckoning: false
+
+  # GPS quality gate - navigation refuses to drive with a bad fix
+  require_fix: true
+  min_satellites: 6
+  max_hdop: 3.0
+  fix_timeout_s: 3.0           # no NavSatFix for this long = fix lost

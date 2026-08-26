@@ -1,0 +1,259 @@
+{
+  "project": "GPS_Localize",
+  "target": "Ubuntu 22.04.5 jammy  ·  ROS 2 Humble  ·  Python 3.10.12",
+  "staging": "_work/",
+  "steps": [
+    {
+      "n": 0,
+      "title": "Restore source from Windows",
+      "state": "DONE",
+      "owner": "user + claude",
+      "files": "all of gps_localize_ws, webapp, tools, setup, docs, firmware",
+      "note": "Source found at /mnt/winshare/GPS_Localize (VirtualBox shared folder) and it was complete. Copied into _work/ in parallel, excluding the 711 MB .pio build cache. Only 2 files are empty and both are the legitimate ament markers (resource/gps_localize, __init__.py)."
+    },
+    {
+      "n": 1,
+      "title": "Windows to Ubuntu hygiene pass",
+      "state": "DONE",
+      "owner": "claude",
+      "files": "18 files with CRLF, 11 missing the exec bit",
+      "note": "Stripped CR from 18 files (web_server.py, index.html, app.js, style.css, viewer_server.py, the docs and the exe settings YAMLs) and restored the exec bit on 11 scripts. Fanned out across files with xargs -P 6. No Windows paths, COM ports or codepage workarounds were found in live code."
+    },
+    {
+      "n": 2,
+      "title": "Make the ROS 2 package build",
+      "state": "DONE",
+      "owner": "claude",
+      "files": "gps_localize_ws/",
+      "note": "Needed no changes at all. package.xml, setup.py and the data_files entries were already correct. colcon build --symlink-install finished clean in 1.47 s and all 5 entry points registered."
+    },
+    {
+      "n": 3,
+      "title": "micro-ROS agent and link up",
+      "state": "DONE",
+      "owner": "claude",
+      "files": "firmware/config/network.h, launch/bringup.launch.py",
+      "note": "Uses YOUR agent at ~/uros_ws (sourced from .bashrc) - the launch file detects the ROS micro_ros_agent package and prefers it, falling back to a source-built binary only if that package is missing. network.h points at mannaja / 192.168.100.64, and mDNS IPv4 works so the name is enough."
+    },
+    {
+      "n": 4,
+      "title": "Telemetry, web UI, heartbeat and e-stop",
+      "state": "DONE",
+      "owner": "claude",
+      "files": "httpd.py, web_server.py, telemetry.py, web/",
+      "note": "Full stack verified: agent on UDP 8888, all 4 nodes up, 17 topics in the /gps_localize namespace, heartbeat publishing at 10.1 Hz, e-stop accepting commands, web UI 200 on every asset. Only the physical ESP32 is missing."
+    },
+    {
+      "n": 5,
+      "title": "Navigation and the rest of the graph",
+      "state": "IN PROGRESS",
+      "owner": "claude",
+      "files": "waypoint_nav.py, gps_odom.py, heading_check.py, launch/, systemd/",
+      "note": "Firmware now scans and joins the strongest listed Wi-Fi, so changing network needs no reflash. Remaining: install the systemd unit (needs sudo) and 6 pre-existing estimator/motor-model test failures."
+    }
+  ],
+  "log": [
+    {
+      "ts": "2026-08-27 00:40:29",
+      "step": "firmware",
+      "what": "Fixed 8 wrong NMEA checksums in the test fixtures. The coordinates had been changed to Thailand without recomputing the checksum, so the parser was correctly rejecting its own test data. The deliberate bad-checksum test was left corrupt on purpose. Host tests went from 14 failures to 6; every NMEA test now passes.",
+      "files": "firmware/test/test_native/test_safety_gps.cpp",
+      "promoted": true,
+      "problem": null
+    },
+    {
+      "ts": "2026-08-27 00:38:00",
+      "step": "firmware",
+      "what": "Added a multi-network Wi-Fi table. On boot the ESP32 scans, keeps the networks that are both visible and listed, and joins the strongest, trying the next if one fails. Changing Wi-Fi is now a one-line edit instead of a reconfigure, and the micro-ROS transport is handed the credentials that actually associated. Builds clean: RAM 24.7%, Flash 47.3%.",
+      "files": "firmware/config/network.h, firmware/src/main.cpp",
+      "promoted": true,
+      "problem": null
+    },
+    {
+      "ts": "2026-08-27 00:35:00",
+      "step": "tooling",
+      "what": "Added tools/snapshot.sh: a timestamped full-source backup into _backup/<YYYYMMDD_HHMMSS>/ with a NOTE recording the reason and the QC result at that moment. Run before and after every finished change; keeps the 20 most recent.",
+      "files": "tools/snapshot.sh",
+      "promoted": true,
+      "problem": null
+    },
+    {
+      "ts": "2026-08-27 00:20:00",
+      "step": "correction",
+      "what": "Corrected two of my earlier conclusions. mDNS IPv4 does work - avahi-resolve-host-name -4 returns 192.168.100.64; my first check used avahi-resolve -n, which answers IPv6 first. And micro_ros_agent was already installed at ~/uros_ws and sourced from .bashrc, so the agent I built from source was redundant and is now only a fallback.",
+      "files": "firmware/config/network.h",
+      "promoted": true,
+      "problem": null
+    },
+    {
+      "ts": "2026-08-27 00:05:00",
+      "step": "3+4",
+      "what": "Full stack verified end to end with one command: ros2 launch gps_localize bringup.launch.py. Agent bound 0.0.0.0:8888, gps_odom / safety_watchdog / waypoint_nav / web_server all came up, 17 topics appeared, heartbeat measured at 10.126 Hz, e-stop accepted a published command, and the web UI returned 200. Everything the host side can do without the robot now works.",
+      "files": "whole stack",
+      "promoted": true,
+      "problem": null
+    },
+    {
+      "ts": "2026-08-27 00:01:00",
+      "step": "3",
+      "what": "Taught bringup.launch.py to use whichever agent exists: the ROS micro_ros_agent package via Node() when installed, otherwise the source-built MicroXRCEAgent binary via ExecuteProcess. The two take different flags (--port/--dev vs -p/-D), so each branch passes its own.",
+      "files": "gps_localize_ws/src/gps_localize/launch/bringup.launch.py",
+      "promoted": true,
+      "problem": null
+    },
+    {
+      "ts": "2026-08-26 23:52:00",
+      "step": "3",
+      "what": "Built the micro-ROS agent from source. ros-humble-micro-ros-agent is not packaged for Humble, so Micro-XRCE-DDS-Agent v2.4.2 was compiled against the FastDDS 2.6 that ships with ROS, which guarantees wire compatibility with the ROS 2 graph. Installed to ~/.local/bin, no sudo required.",
+      "files": "~/.local/bin/MicroXRCEAgent",
+      "promoted": true,
+      "problem": null
+    },
+    {
+      "ts": "2026-08-26 23:47:00",
+      "step": "QC",
+      "what": "Fixed a bug my own gate introduced: adding _work to the skip list made find_pkg reject any path containing that name, so pointing the gate at _work/ could no longer find the package. Skip names are now matched relative to the scan root, and the self-check matches by filename so a staged copy of the gate is not linted either.",
+      "files": "tools/port_qc.py",
+      "promoted": true,
+      "problem": null
+    },
+    {
+      "ts": "2026-08-26 23:45:00",
+      "step": "3",
+      "what": "Pointed the firmware at this machine: AGENT_HOSTNAME ros2-agent -> mannaja, AGENT_IP 192.168.50.242 -> 192.168.100.64, and the unused STATIC_IP block moved to the 192.168.100.x subnet. Fixed the systemd unit, which hardcoded User=ubuntu and /home/ubuntu.",
+      "files": "firmware/config/network.h, systemd/gps_localize.service",
+      "promoted": true,
+      "problem": null
+    },
+    {
+      "ts": "2026-08-26 23:32:00",
+      "step": "promote",
+      "what": "Promoted the staged tree onto the real folders transactionally: snapshot to _patches/ubuntu_port_20260826_2328/before, stage beside the target, swap in with mv, then write after/, changes.diff (11012 lines) and rollback.sh. Rebuilt in place and re-verified. firmware/.pio was restored to the real tree and kept out of the patch, which shrank it from 737 MB to 9.8 MB.",
+      "files": "gps_localize_ws, webapp, tools, setup, docs, firmware",
+      "promoted": true,
+      "problem": null
+    },
+    {
+      "ts": "2026-08-26 23:31:00",
+      "step": "4",
+      "what": "Fixed a real port bug: the web UI returned 403 on every file. httpd.py checked containment with os.path.realpath, and colcon's --symlink-install links each installed asset back to src/, so every legitimate file resolved outside static_dir and looked like a traversal attempt. Containment is now checked on the normalised path, so '..' is still rejected while symlinked files resolve. Windows never hit this because it has no symlink install.",
+      "files": "gps_localize_ws/src/gps_localize/gps_localize/httpd.py",
+      "promoted": true,
+      "problem": null
+    },
+    {
+      "ts": "2026-08-26 23:30:00",
+      "step": "QC",
+      "what": "Merged the two QC suites instead of letting one overwrite the other. The project's own 15 KB cross-file checker keeps the name tools/qc.py; the Ubuntu port gate became tools/port_qc.py. Made the project checker's Windows .exe freshness check platform-aware, since a stale PyInstaller build cannot affect what Linux serves. Both suites now exit 0.",
+      "files": "tools/qc.py, tools/port_qc.py, tools/planhtml.py",
+      "promoted": true,
+      "problem": null
+    },
+    {
+      "ts": "2026-08-26 23:29:00",
+      "step": "2",
+      "what": "colcon build --symlink-install succeeded on Humble first try, 1.47 s. All 5 nodes (gps_odom, heading_check, safety_watchdog, waypoint_nav, web_server) started and were still alive after 5 s.",
+      "files": "gps_localize_ws/",
+      "promoted": true,
+      "problem": null
+    },
+    {
+      "ts": "2026-08-26 23:26:00",
+      "step": "QC",
+      "what": "Corrected port QC check 11, which was wrong rather than the code. It scanned for literal data[0..39] indexing, but telemetry.py maps a 40-name FIELDS tuple with enumerate, which is the better implementation. The check now parses with ast and accepts a declared length constant, a names sequence, or literal indexing.",
+      "files": "tools/port_qc.py",
+      "promoted": true,
+      "problem": null
+    },
+    {
+      "ts": "2026-08-26 23:25:00",
+      "step": "1",
+      "what": "Hygiene pass: CRLF stripped from 18 files and the exec bit restored on 11, fanned out across files with xargs -P 6. Port QC went from 5 failures to 1.",
+      "files": "_work/** (18 + 11 files)",
+      "promoted": true,
+      "problem": null
+    },
+    {
+      "ts": "2026-08-26 23:24:00",
+      "step": "0",
+      "what": "Found the complete source at /mnt/winshare/GPS_Localize and copied gps_localize_ws, webapp, docs, setup, tools and firmware into _work/ with six parallel jobs, excluding the 711 MB .pio cache. Their tools/ was staged separately so it could not clobber the new gate.",
+      "files": "_work/**",
+      "promoted": false,
+      "problem": null
+    },
+    {
+      "ts": "2026-08-26 22:49:37",
+      "step": "QC",
+      "what": "First QC run against the empty staging tree. Exit 1, promotion blocked, exactly as intended while the source was still missing.",
+      "files": "tools/port_qc.py",
+      "promoted": false,
+      "problem": null
+    },
+    {
+      "ts": "2026-08-26 22:40:00",
+      "step": "survey",
+      "what": "Surveyed the project and recovered the full ROS 2 interface contract from firmware/src/main.cpp: 10 topics, 40 named telemetry fields, config selectors. This became the spec the host side is checked against.",
+      "files": "firmware/src/main.cpp, firmware/config/network.h",
+      "promoted": false,
+      "problem": null
+    }
+  ],
+  "problems": [
+    {
+      "ts": "2026-08-27 00:40:00",
+      "severity": "MEDIUM",
+      "what": "6 host tests still fail, in the estimator, motor model and PIDF: derivative filter smoothing, GPS course winning while moving, speed following GPS, speed falling back to the model, and stall detect/clear.",
+      "state": "OPEN - pre-existing, identical on the untouched Windows copy, unrelated to the port",
+      "impact": "Left alone deliberately. Changing the expectations to make them pass could hide a real bug in the estimator that steers the robot. Needs a decision on whether the test or the algorithm is wrong."
+    },
+    {
+      "ts": "2026-08-27 00:06:00",
+      "severity": "HIGH",
+      "what": "The ESP32 has not been reflashed, so it still carries the old single-network Wi-Fi config and AGENT_IP 192.168.50.242.",
+      "state": "OPEN - PlatformIO is now installed; flash with: cd firmware && pio run -e wifi -t upload",
+      "impact": "Until it is flashed the robot cannot find the agent. The firmware image is already built and verified."
+    },
+    {
+      "ts": "2026-08-27 00:06:00",
+      "severity": "MEDIUM",
+      "what": "The systemd unit is corrected for this machine but not installed, because copying into /etc/systemd/system needs sudo.",
+      "state": "OPEN - needs your password, 3 commands in the unit header",
+      "impact": "The stack does not start on boot yet; ros2 launch works fine by hand."
+    },
+    {
+      "ts": "2026-08-26 22:42:00",
+      "severity": "RESOLVED",
+      "what": "firmware/config/network.h points at the wrong machine. AGENT_HOSTNAME is \"ros2-agent\" but this host is \"mannaja\"; AGENT_IP is 192.168.50.242 but this host is 192.168.100.64, a different subnet. WIFI_SSID is \"Teelek_IoT\" and needs to match the network this PC is on.",
+      "state": "RESOLVED 23:45 - now mannaja / 192.168.100.64",
+      "impact": "Still needs the ESP32 reflashed for the change to reach the robot, and the robot's Wi-Fi must be the same LAN as 192.168.100.0/24."
+    },
+    {
+      "ts": "2026-08-26 22:44:00",
+      "severity": "RESOLVED",
+      "what": "micro_ros_agent was not installed, and ros-humble-micro-ros-agent turned out not to exist in apt for Humble at all.",
+      "state": "RESOLVED 23:52 - built from source to ~/.local/bin/MicroXRCEAgent",
+      "impact": "Solved by building Micro-XRCE-DDS-Agent v2.4.2 against the FastDDS that ships with ROS. No sudo was needed."
+    },
+    {
+      "ts": "2026-08-26 22:35:00",
+      "severity": "RESOLVED",
+      "what": "The entire host-side source was 0 bytes: gps_localize_ws (28 files), webapp (14), docs (8), tools (4), setup (4), and the _backup and _patches archives too.",
+      "state": "RESOLVED 23:24 - restored complete from /mnt/winshare/GPS_Localize",
+      "impact": "Was the blocker for the whole port. The likely cause was a failed transfer from the VirtualBox shared folder; copy as an archive rather than a folder sync next time."
+    },
+    {
+      "ts": "2026-08-26 22:43:00",
+      "severity": "RESOLVED",
+      "what": "firmware/platformio.ini was empty, so the ESP32 could not be rebuilt or reflashed.",
+      "state": "RESOLVED 23:24 - Windows copy had it (3632 bytes), now restored",
+      "impact": "The firmware can be rebuilt again once PlatformIO is installed."
+    },
+    {
+      "ts": "2026-08-26 23:30:00",
+      "severity": "RESOLVED",
+      "what": "The web UI returned 403 forbidden on every file, including index.html, because httpd.py resolved symlinks before its containment check and colcon's --symlink-install points every installed asset back at src/.",
+      "state": "RESOLVED 23:31 - containment now checked on the normalised path",
+      "impact": "Was a genuine Windows-to-Linux port bug; Windows has no symlink install so it never surfaced there. Traversal is still blocked, verified."
+    }
+  ]
+}

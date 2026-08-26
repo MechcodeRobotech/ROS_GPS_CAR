@@ -1,0 +1,29 @@
+; Autostart the whole stack on boot (Ubuntu 22.04 + ROS 2 Humble).
+;
+;   sudo cp gps_localize.service /etc/systemd/system/
+;   sudo systemctl daemon-reload
+;   sudo systemctl enable --now gps_localize
+;   journalctl -u gps_localize -f                          # watch the log
+;
+; User= and the paths below are already set for this machine
+; (mannaja, /home/mannaja/GPS_Localize). Change them only if the workspace
+; moves or another account runs the robot.
+
+[Unit]
+Description=GPS_Localize robot stack (micro-ROS agent, navigation, web UI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mannaja
+WorkingDirectory=/home/mannaja/GPS_Localize
+Environment=ROS_DOMAIN_ID=10
+ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source /home/mannaja/GPS_Localize/gps_localize_ws/install/setup.bash && ros2 launch gps_localize bringup.launch.py'
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target
