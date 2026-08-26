@@ -147,9 +147,11 @@ services:
     environment:
       - ROS_DOMAIN_ID=10
 
-    # Only needed for the serial transport and for flashing over USB.
-    devices:
-      - /dev/ttyUSB0:/dev/ttyUSB0
+    # NO devices here on purpose. Docker refuses to start a container whose
+    # device is absent, and /dev/ttyUSB0 does not exist unless a board happens
+    # to be plugged in - so requiring it made the stack fail to start on any
+    # machine without the robot attached, which is the normal case. The robot
+    # connects over Wi-Fi. For USB flashing, add the serial override.
 
     # Waypoints, runtime config and bug reports must outlive the container.
     volumes:
@@ -169,6 +171,21 @@ volumes:
   gps_localize_data:
   gps_localize_pio:
 COMPOSE
+
+    cat > "$wt/docker-compose.serial.yml" <<'SERIALCOMPOSE'
+# Add the ESP32's serial port. Only needed for flashing over USB or for the
+# serial micro-ROS transport - the robot normally connects over Wi-Fi.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.serial.yml up -d
+#
+# The port must exist before you start, or Docker refuses to create the
+# container. Check with:  ls /dev/ttyUSB* /dev/ttyACM*
+# It is not in the base file for exactly that reason.
+services:
+  gps_localize:
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0
+SERIALCOMPOSE
 
     cat > "$wt/docker-compose.windows.yml" <<'WINCOMPOSE'
 # Override for Docker Desktop on Windows and macOS.
@@ -201,12 +218,10 @@ services:
     ports:
       - "8080:8080/tcp"
       - "8888:8888/udp"
-    # !reset, not [] - Compose MERGES device lists rather than replacing them,
-    # so an empty list leaves /dev/ttyUSB0 in place and the container fails to
-    # start on Windows, where that device does not exist. Verified with
-    # `docker compose config`: with [] the device survived, with !reset it is
-    # gone. Needs Compose 2.24 or newer.
-    devices: !reset []
+    # No devices to clear: the base file no longer declares any, because a
+    # missing device stops the container being created at all. Do not add the
+    # serial override on Windows - Docker Desktop cannot pass a COM port
+    # through. Flash over Wi-Fi, or from Windows with PlatformIO directly.
 WINCOMPOSE
 
     cat > "$wt/install.sh" <<'INSTALL'

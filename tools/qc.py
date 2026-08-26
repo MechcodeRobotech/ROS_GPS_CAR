@@ -393,6 +393,7 @@ def check_branch_publisher():
               'publish_branches.sh writes %s with a closed heredoc' % name)
 
     for expected in ('Dockerfile', 'docker-compose.yml', 'docker-compose.windows.yml',
+                     'docker-compose.serial.yml',
                      'docker-entrypoint.sh', 'install.sh', 'README.md'):
         check(expected in written,
               'docker branch gets %s' % expected)
@@ -506,8 +507,14 @@ def check_compose_merge():
     # Windows. Only the !reset tag actually removes it. This check previously
     # asserted the merged value was [] - which passed while the real
     # `docker compose config` still emitted the device.
-    check('devices: !reset' in over_txt,
-          'windows override uses !reset to really drop devices (a bare [] does not)')
+    # The base must declare NO devices: Docker refuses to create a container
+    # whose device is missing, and /dev/ttyUSB0 does not exist unless a board
+    # is plugged in. Found by actually running it - the stack would not start
+    # on a machine without the robot attached, which is the normal case.
+    check('devices:' not in base_txt,
+          'base compose declares no devices (a missing one blocks container creation)')
+    check('docker-compose.serial.yml' in body,
+          'the serial port is available as an opt-in override')
     check('healthcheck' in merged, 'healthcheck survives the merge')
 
 
