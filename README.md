@@ -4,7 +4,7 @@
 
 Outdoor GPS-waypoint robot. The ESP32 closes the heading and speed loops
 locally at 100 Hz; the Ubuntu machine plans the route, watches the safety
-chain and serves a local web UI. Built from the `mor_luam` prototype, wired to
+chain and serves a local web UI. Wired to
 schematic **draft_5** (`SCH_Schematic1_5-draft_5_2026-08-04.pdf`).
 
 ```
@@ -63,7 +63,6 @@ webapp/                   desktop viewer: the same UI without ROS (VIEW ONLY)
   run_windows.bat / run_ubuntu.sh
 tools/qc.py               cross-file QC (telemetry layout, endpoints, topics, CSS, exe freshness)
 docs/                     hardware, architecture, topics, install, web guide, tuning, safety
-mor_luam/                 the earlier single-wheel prototype, kept for reference
 ```
 
 ## Who runs what

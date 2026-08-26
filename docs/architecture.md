@@ -1,191 +1,285 @@
-# Architecture
+# GPS_Localize — how the whole thing fits together
 
-## Split of responsibilities
+Everything in this document was read out of the code, not from memory. File and
+line references point at where each fact lives, so you can check any of it.
 
-The one rule that shapes everything: **nothing that must happen within 100 ms
-is allowed to depend on Wi-Fi.**
+---
 
-| Layer | Runs on | Rate | Owns |
-|---|---|---|---|
-| Sensing | ESP32 | 100 Hz | BNO085, QMC5883L, GPS NMEA, 4× INA226, e-stop inputs |
-| Estimation | ESP32 | 100 Hz | fused heading, fused speed, dead-reckoned odometry |
-| Control | ESP32 | 100 Hz | heading PID, speed PI, motor PWM, safety cut-off |
-| Planning | Ubuntu / ROS 2 | 5 Hz | which waypoint, what bearing, what speed |
-| Supervision | Ubuntu / ROS 2 | 10 Hz | heartbeat, e-stop latch, GPS quality gate |
-| Interface | Ubuntu / ROS 2 | 5 Hz | web UI, settings files, waypoint editor, log |
+## The short answer: no, it is not "just ROS"
 
-If the network dies mid-drive the robot keeps the last heading for at most
-600 ms and then brakes — it never swerves because a packet was late.
+Four different network protocols are in play, and they are easy to confuse
+because three of them are UDP.
 
-## Heading convention
+| # | Link | Protocol | Port | Who talks |
+|---|---|---|---|---|
+| 1 | ESP32 → host | **micro-ROS over UDP4** | **8888** | the robot to the agent |
+| 2 | inside the host | **DDS (Fast DDS)** over UDP, unicast + multicast | ephemeral + 7400-range | ROS 2 nodes to each other |
+| 3 | browser → host | **HTTP + SSE** over TCP | **8080** | your phone or laptop to the web UI |
+| 4 | name lookup | **mDNS** over UDP | 5353 | finding `.local` names on the Wi-Fi |
 
-**Compass degrees everywhere**: 0 = north, 90 = east, positive = clockwise.
-Same units as GPS course over ground and as the bearing to a waypoint, so the
-customer-visible numbers match a phone compass.
+ROS 2 itself never speaks to the ESP32. The **agent** is the translator: the
+ESP32 speaks the compact micro-XRCE-DDS wire protocol over UDP 8888, and the
+agent turns that into real DDS traffic that ordinary ROS 2 nodes can see.
 
-Conversions happen only at the edges:
+That is why the agent is not optional, and why the robot vanishes from
+`ros2 topic list` the moment the agent stops even though the ESP32 is still
+transmitting.
 
-* BNO085 reports yaw counter-clockwise → `IMU_YAW_TO_COMPASS_SIGN = -1`.
-* ROS odometry is published in ENU (REP-103, x east, y north, yaw CCW from
-  east) → `StateEstimator::headingEnuRad()` and `geo.compass_to_enu_deg()`.
+---
 
-## Estimating speed and wheel speed without encoders
-
-This robot has no wheel encoders (outdoor build, draft_5). Two sources are
-fused in `firmware/lib/estimator/state_estimator.h`:
+## The picture
 
 ```
-speed  = ∫ IMU forward acceleration           (fast, drifts)
-       + pull towards GPS ground speed        (slow, drift free, gps_tau_s)
-       + pull towards the motor model         (used only when the fix is lost)
-
-wheel_left  = speed − yaw_rate · track / 2
-wheel_right = speed + yaw_rate · track / 2     yaw_rate from the BNO085 gyro
+  ESP32  (firmware/src/main.cpp)
+    |
+    |  micro-ROS over UDP4 : 8888          Wi-Fi
+    |  or micro-ROS over USB serial        cable
+    v
+  micro-ROS agent  (MicroXRCEAgent)
+    |
+    |  DDS / Fast DDS, ROS_DOMAIN_ID = 10
+    v
+  ROS 2 nodes            gps_odom · heading_check · safety_watchdog
+    |                    waypoint_nav · web_server
+    |  HTTP + SSE : 8080
+    v
+  browser                phone, laptop, anything on the Wi-Fi
 ```
 
-So the wheel RPM shown on the web UI is *derived*, exactly as requested
-("find wheel speed from IMU"). It is good enough for monitoring and for the
-speed loop, not for precise odometry — the GPS is the position truth.
+Everything below the ESP32 runs on one machine — natively, or all inside one
+Docker container. That matters: **DDS discovery never has to cross a machine
+boundary**, which is what makes the Docker-on-Windows setup work with nothing
+but two published ports.
 
-## Heading estimation — all sources combined, with fallbacks
+---
 
-The gyro is always the backbone: it is fast, quiet and never lies about
-*change*. What it cannot do is tell you where north is, so an absolute
-reference is eased onto it. Three independent references exist, and the
-estimator uses the best one that is currently healthy:
+## 1. ESP32 → host: micro-ROS over UDP 8888
 
-| Priority | Source | Works when | Weakness |
-|---|---|---|---|
-| 1 | GPS course over ground | robot is moving faster than `align_min_mps` | useless standing still, noisy at low speed |
-| 2 | QMC5883L in the GPS module | any time, including standing still | magnetic interference (rejected by the field check) |
-| 3 | BNO085 magnetometer (rotation vector) | any time | sits next to the motors, so it is the noisiest |
-| 4 | none — gyro only | always | drifts, heading is relative; flagged on the web UI |
+`firmware/config/network.h:83`
 
-```
-heading_source = 0   BNO085 rotation vector only
-                 1   gyro + GPS course only
-                 2   GPS course only
-                 3   gyro + compass when still + GPS when moving
-                 4   AUTO: the table above, health checked  ← default
+```c
+static const uint16_t AGENT_PORT = 8888;
 ```
 
-Losing a sensor degrades the heading, it never stops the robot:
+`firmware/src/main.cpp:940`
 
-* **compass dies** → standing-still reference falls back to the BNO085
-  magnetometer; once moving, GPS course takes over anyway
-* **GPS dies** → compass keeps the heading absolute, navigation blocks (it has
-  no position) but manual driving still works
-* **IMU dies** → heading comes straight from the GPS course while moving, or
-  from the compass while stopped; the PID keeps running on that
-* **everything magnetic dies** → gyro-only relative heading, `heading_relative_only`
-  is raised and shown on the UI
-
-Same idea for speed: `IMU + GPS` → `GPS only` → `IMU + motor model` →
-`motor model only`, reported in `speed_source`.
-
-The "motor model" is not a guess. Each motor has its own INA226, so the
-firmware knows the rail voltage and the current going into that one wheel, and
-a brushed DC motor obeys `V = I·R + Ke·ω`. Rearranged:
-
-```
-wheel_rpm = ((V_bus − V_diode) · duty − I · R) / Ke     Ke = 12 V / 100 rpm = 0.12
+```c
+set_microros_wifi_transports(ssid, pass, agent_ip, AGENT_PORT);
 ```
 
-`V_diode` is the series diode that sits between the sensor and the driver in
-schematic draft_5 (`Vf + I·R_slope`, set per motor — they can be different
-parts). Without subtracting it the estimate reads several percent high, and
-much worse at low duty.
+There is a serial alternative on the same code path
+(`set_microros_serial_transports(Serial)`, `main.cpp:942`), selected at build
+time by the PlatformIO environment: `-e wifi` or `-e serial`.
 
-That gives a **per-wheel** speed with no encoder, available the instant the
-wheels turn, and it reacts to load: a slope or long grass draws more current
-and the estimate drops, exactly like an encoder would show. It also detects
-two failures nothing else on this robot can see:
+**Finding the agent.** The firmware does not depend on a fixed IP. It resolves
+in order (`main.cpp:729`, `:734`):
 
-* **stall** — high current, no back-EMF → the wheel is blocked
-* **open circuit** — duty commanded but almost no current → broken wire, dead
-  driver channel, motor fell off
+1. mDNS — `<AGENT_HOSTNAME>.local`, UDP 5353
+2. plain DNS on the bare name, if the router registers DHCP names
+3. `AGENT_IP`, the hardcoded fallback
 
-Accuracy is 10–20 % (R and Ke drift with temperature, the INA226 averages over
-~18 ms), so it is a fallback and a diagnostic, not a replacement for GPS.
+and re-resolves on every reconnect, so the host PC changing address does not
+strand the robot. The robot also announces itself as `esp32-gps-localize.local`.
 
-Why the fast loop still runs on the gyro and not on the compass: a magnetometer
-reading is disturbed by the motor current a few centimetres away and updates at
-tens of Hz with heavy filtering. Feeding that into a 100 Hz PID makes the robot
-weave. The compass corrects the *offset* slowly (`mag_tau_s`, seconds), the gyro
-handles the *dynamics*.
+---
 
-## Driving straight
+## 2. Inside the host: DDS
+
+`ROS_DOMAIN_ID = 10` (`firmware/config/network.h:97`, and the same value in the
+launch file and the systemd unit).
+
+The domain id must match on **both** sides or the two halves cannot see each
+other at all — no error, just an empty topic list. It is the single most common
+cause of "everything looks fine but nothing appears".
+
+DDS discovery uses multicast. On one machine, or inside one container, that is
+entirely internal.
+
+---
+
+## 3. Browser → host: HTTP on 8080
+
+`gps_localize_ws/src/gps_localize/config/web.yaml:5` sets `port: 8080`, served
+by a `ThreadingHTTPServer` (`httpd.py:273`) bound to `0.0.0.0` so a phone on the
+same Wi-Fi can reach it.
+
+Two kinds of traffic:
+
+- **request/response JSON** — `/api/state`, `/api/waypoints`, `/api/topics`, …
+- **server-sent events** — `/api/stream`, `Content-Type: text/event-stream`
+  (`httpd.py:251`), a single long-lived connection pushing telemetry and log
+  lines. Not WebSockets: SSE is one-way and needs no handshake, which is all a
+  dashboard requires.
+
+The browser must also POST `/api/heartbeat` continuously. If it stops, the
+firmware stops the motors — see safety below.
+
+---
+
+## The data contract
+
+The ESP32 publishes and subscribes exactly these. `tools/qc.py` fails the build
+if the two sides ever disagree.
+
+**Robot → host**
+
+| Topic | Type |
+|---|---|
+| `/gps_localize/odom` | `nav_msgs/Odometry` |
+| `/gps_localize/imu/data` | `sensor_msgs/Imu` |
+| `/gps_localize/gps/fix` | `sensor_msgs/NavSatFix` |
+| `/gps_localize/telemetry` | `std_msgs/Float32MultiArray` — **42 floats** |
+
+**Host → robot**
+
+| Topic | Type |
+|---|---|
+| `/gps_localize/cmd_move` | `geometry_msgs/Twist` |
+| `/gps_localize/cmd_manual` | `geometry_msgs/Twist` |
+| `/gps_localize/cmd_vel` | `geometry_msgs/Twist` |
+| `/gps_localize/heartbeat` | `std_msgs/Int32` |
+| `/gps_localize/estop` | `std_msgs/Bool` |
+| `/gps_localize/config/pid` | `std_msgs/Float32MultiArray` |
+
+The telemetry array is one packed message rather than forty topics because each
+DDS message has real overhead on a microcontroller. Index → meaning is defined
+once in `main.cpp` (`publishTelemetry`) and mirrored in `telemetry.py` as the
+`FIELDS` tuple; QC checks they match, including the length.
+
+---
+
+## The sensors, and what each one really measures
+
+Four INA226 current/voltage sensors. **Two of them measure voltage and current
+at different points**, which caused a real bug and is documented in
+`firmware/config/power.h` and `firmware/src/power/power_monitor.h`.
+
+| Sensor | Voltage measured at | Current measured at |
+|---|---|---|
+| processor `0x40` | the ESP32 **+5 V rail**, after the buck | the **battery** side, including the buck |
+| fan `0x45` | the fan +5 V rail | source, through the fan buck |
+| motor A `0x41` | **VCC EMER — this is the pack voltage** | source → driver → motor |
+| motor B `0x44` | same node as A | source → driver → motor |
+
+**Pack voltage comes from the motor rails, never from the processor sensor.**
+Reading the +5 V rail as the pack is what previously latched the robot into
+e-stop three seconds after every boot: 5 V is below any 3S cutoff, and clearing
+the latch needed a voltage that rail can never reach.
+
+When the mushroom switch or the relay is open the motor rails read near zero.
+That means *cannot measure*, not *flat battery*, and the firmware marks the
+reading invalid rather than tripping the cutoff.
+
+Other sensors: **BNO085** IMU (yaw, yaw rate, forward acceleration),
+**QMC5883L** compass inside the GPS module, and a **GEP-M10 GNSS** module parsed
+from NMEA.
+
+---
+
+## How position and heading are worked out
+
+There are no wheel encoders. Everything is derived.
+
+**Heading** — `firmware/src/estimator/state_estimator.h`, `heading_source = 4`
+(AUTO). Sources are ranked and health-checked, and losing one degrades the
+heading rather than stopping the robot:
 
 ```
-bearing to waypoint ──► /cmd_move (heading, speed) ──► ESP32
-                                                        │
-   heading error = bearing − fused heading              │ 100 Hz
-   |error| > 45°  → turn on the spot                    │
-   otherwise      → PID(error) = differential PWM       │
-   speed error    → PI + feed-forward = common PWM      ▼
-                                       left = base + diff, right = base − diff
+GPS course  >  QMC5883 compass  >  BNO085 magnetometer  >  gyro only
 ```
 
-Saturation keeps the ratio: if one side would exceed full scale both sides are
-scaled down, so the robot never veers just because it asked for too much power.
+**Speed** — a complementary filter: IMU acceleration for the fast component,
+GPS ground speed pulling it to truth, and the motor model (back-EMF from the
+INA226 volts and amps) as the fallback when GPS goes stale.
 
-Two ramps sit between a command and the wheels:
+**Position** — currently **plain dead reckoning**:
 
-1. **setpoint slew** `SPEED_SLEW_MPS_S` (0.6 m/s per second) — the speed target
-   itself cannot jump
-2. **motor acceleration ramp** `MOTOR_ACCEL_RAMP_S` (0.6 s stopped → full PWM,
-   0.3 s back down) — applied to the PWM that actually reaches the TB6612, so
-   inrush current and gearbox shock are limited whatever the controller asks
-   for. Starting from rest the output jumps to `PWM_MIN_MOVE` first (breakaway
-   torque) and ramps from there; a direction reversal always ramps through zero.
-
-An emergency stop bypasses both — `motor.disable()` is called directly.
-
-## ROS graph
-
-```
-ESP32 ──/telemetry ──┬─► web_server ──► browser (SSE)
-      ──/gps/fix ────┼─► waypoint_nav ──► /cmd_move ──► ESP32
-      ──/imu ────────┤   gps_odom ──► /odom/gps
-      ──/odom ───────┘   safety_watchdog ──► /heartbeat, /estop ──► ESP32
-browser ──/api/heartbeat──► web_server ──► /web/heartbeat ──► safety_watchdog
+```c
+x_ += speed_ * cosf(h_enu) * dt;
+y_ += speed_ * sinf(h_enu) * dt;
 ```
 
-Every topic, message layout and HTTP endpoint: [topics.md](topics.md).
+GPS never corrects it, so the error grows without bound. This is the known gap;
+the EKF that fixes it is planned as T20–T25.
 
-## Configuration flow
+---
+
+## Safety, and why the browser matters
+
+`firmware/src/safety/safety_manager.h` collects every stop condition into one
+bitfield. Motion is allowed only when all of them are clear:
+
+| Flag | Fires when |
+|---|---|
+| `STOP_HW_EMERGENCY` | the mushroom switch / relay line opens |
+| `STOP_ESP_BUTTON` | the on-board button |
+| `STOP_SW_ESTOP` | the web UI e-stop |
+| `STOP_HEARTBEAT_LOST` | the browser stopped sending heartbeats |
+| `STOP_CMD_TIMEOUT` | the command stream stalled while moving |
+| `STOP_AGENT_LOST` | the micro-ROS agent went away |
+| `STOP_BATTERY_SOFT` | pack below 11.0 V — stop driving, stay powered |
+| `STOP_BATTERY_LOW` | pack below 10.7 V for 3 s — latched |
+| `STOP_STARTUP` | boot lockout |
+
+3S LiPo tiers: warn 11.4, soft stop 11.0, hard cut 10.7, clear 11.1. A cell is
+damaged below about 3.0 V/cell (9.0 V pack); these sit well above that.
+
+**The control loops run on the ESP32 at 100 Hz, not on the host.** A Wi-Fi
+hiccup cannot make the robot swerve, and if the link dies entirely the robot
+stops itself. The host decides *where to go*; the robot decides *how to get
+there* and when to refuse.
+
+---
+
+## Repository layout
 
 ```
-package config/*.yaml   (defaults, read only, shipped with the code)
-        │  first run: copied
-        ▼
-~/.gps_localize/*.yaml  (live settings, written by the web UI)
-        │  POST /api/config
-        ├─► /gps_localize/config/updated ──► nodes reload themselves
-        └─► /gps_localize/config/pid ─────► firmware applies new gains live
+firmware/          ESP32, PlatformIO
+  config/          tunables and the pin map
+  lib/             reusable drivers: INA226, BNO085, TB6612, QMC5883, NMEA, PIDF
+  src/             this robot: estimator, control, safety, power
+  test/            124 host tests, run with pio test -e native
+gps_localize_ws/   ROS 2 Humble workspace
+  .../gps_localize/  the five nodes, web UI, launch files, config
+webapp/            the no-ROS viewer, for a PC with no robot
+tools/             QC gates, the branch publisher, plan.html, sync scripts
+setup/             install.sh and the Windows setup script
+docs/              this file and the rest
 ```
 
-No rebuild, no reflash, no ROS parameter files to hand-edit. `configstore.py`
-merges the defaults underneath the live file, so a software update that adds a
-new setting cannot break an existing installation.
+Branches: `main` (everything), `workspace` (no firmware), `firmware` (no ROS or
+web), `docker` (workspace + firmware + Dockerfile). The three subsets are
+generated from `main`, never edited by hand.
 
-## Memory policy
+---
 
-**Firmware**
+## Ports to open
 
-* no `String`, no `malloc`/`new` after `setup()`
-* every ROS message owns a static buffer (`telemetry_buf`, `config_buf`, frame
-  id strings); `Float32MultiArray` capacity is fixed at compile time
-* the NMEA parser uses one 96-byte line buffer and consumes at most 160 bytes
-  per control cycle, so a noisy GPS burst cannot stall the loop
-* micro-ROS pools are trimmed in `firmware/colcon.meta` (history 2, 8 pubs/subs)
-* free heap and loop time are published in the telemetry array — if the heap
-  number on the web footer drifts down over hours, something leaks
+| Port | Protocol | Needed for |
+|---|---|---|
+| 8888 | **UDP** | the robot reaching the agent — **the one people forget** |
+| 8080 | TCP | the web UI |
+| 5353 | UDP | mDNS `.local` names (optional but convenient) |
 
-**ROS / web**
+On Windows, Docker publishes these but the firewall drops them by default:
+`setup/setup_windows.ps1` opens both and warns if the network profile is Public,
+where Private/Domain rules do not apply at all.
 
-* `deque(maxlen=…)` for the log, bounded SSE queue per client, capped client
-  count (`web.max_clients`), oldest frame dropped for slow clients
-* no request-scoped state kept between calls; the snapshot dict is rebuilt,
-  not accumulated
-* the browser caps the trail (`TRAIL_MAX`) and the log DOM nodes (`LOG_MAX`)
+---
+
+## When nothing appears, check in this order
+
+1. **Domain id** — must be 10 on both sides. A mismatch shows an empty topic
+   list with no error at all.
+2. **Is the agent running?** No agent, no topics, however healthy the ESP32 is.
+3. **UDP 8888 inbound** — firewall on Windows, `ufw` on Linux.
+4. **Same network?** Check the Wi-Fi the ESP32 joined against the PC's subnet.
+5. **`ros2 node list`** — `/gps_localize_firmware` present means the board is
+   really connected. Topic presence alone does not prove it: a host node that
+   merely *subscribes* to `/gps_localize/gps/fix` puts that topic in the graph
+   with no board anywhere.
+
+Without a terminal, the **Topics tab** in the web UI shows the whole graph —
+every topic, its type, rate and live value. That is the reason it exists:
+Windows has no `ros2` CLI, and inside Docker the graph is not reachable from the
+host either.

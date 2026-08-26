@@ -58,13 +58,13 @@ breaks the robot. The firmware can look the PC up by name instead:
 
 ```bash
 sudo apt install -y avahi-daemon        # publishes <hostname>.local on the LAN
-sudo hostnamectl set-hostname ros2-agent
+sudo hostnamectl set-hostname mannaja
 systemctl restart avahi-daemon
-avahi-resolve -n ros2-agent.local       # sanity check
+avahi-resolve-host-name -4 mannaja.local   # sanity check, -4 forces IPv4
 ```
 
 Then in `config/network.h` keep `USE_AGENT_HOSTNAME 1` and set
-`AGENT_HOSTNAME = "ros2-agent"`. The ESP32 tries mDNS first, then plain DNS,
+`AGENT_HOSTNAME = "mannaja"`. The ESP32 tries mDNS first, then plain DNS,
 then the fixed `AGENT_IP` as a fallback — and it repeats the lookup while
 waiting for the agent, so it follows the PC to a new address without a reflash.
 
@@ -74,7 +74,7 @@ Put the fallback address in `firmware/config/network.h`:
 static const char* WIFI_SSID = "your-ssid";
 static const char* WIFI_PASS = "your-password";
 #define USE_AGENT_HOSTNAME 1
-static const char*     AGENT_HOSTNAME = "ros2-agent";  // preferred: found by name
+static const char*     AGENT_HOSTNAME = "mannaja";      // preferred: found by name
 static const IPAddress AGENT_IP(192, 168, 50, 242);    // fallback only
 static const uint16_t  AGENT_PORT = 8888;
 #define ROS_DOMAIN_ID 10

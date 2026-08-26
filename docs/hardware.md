@@ -88,9 +88,9 @@ separate diodes:
 
 ```c
 // firmware/config/motor.h        (or Settings → มอเตอร์ on the web UI)
-#define MOTOR_A_DIODE_VF_V      0.45f   // Schottky SS34/1N5822 ~0.35-0.50
+#define MOTOR_A_DIODE_VF_V      1.81f   // MEASURED on this board, left
 #define MOTOR_A_DIODE_R_OHM     0.03f   // slope, 0 = flat drop
-#define MOTOR_B_DIODE_VF_V      0.45f   // standard 1N4007 ~0.8-1.0
+#define MOTOR_B_DIODE_VF_V      1.90f   // MEASURED on this board, right
 #define MOTOR_B_DIODE_R_OHM     0.03f
 ```
 
@@ -99,8 +99,14 @@ separate diodes:
 for the processor and fan rails, too small for the motors. Fit 0.01 Ω on the
 two motor sensors and keep `INA226_SHUNT_MOTOR_OHM` in sync.
 
-Battery protection lives in `power.h`: warn at 10.8 V, cut motion at
-9.9 V held for 3 s (3S LiPo, 3.3 V/cell).
+Battery protection lives in `power.h`, as 3S LiPo tiers: warn at 11.4 V
+(3.80 V/cell), soft stop at 11.0 V, hard cut at 10.7 V held for 3 s, and
+recovery above 11.1 V. A cell is damaged below about 3.0 V/cell (9.0 V pack),
+so these sit well clear of it.
+
+The diode drops above are measured, not datasheet figures - at ~12 V a 1.8 V
+drop is 15% of the rail, and the back-EMF wheel-speed model uses it, so a
+guess makes the derived speed read high whenever GPS is unavailable.
 
 Check the addresses on the bench:
 

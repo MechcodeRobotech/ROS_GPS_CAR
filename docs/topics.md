@@ -98,7 +98,8 @@ Mirror of `firmware/src/main.cpp::publishTelemetry` and
 | 3 | `heartbeat_lost` | no ROS heartbeat (network) |
 | 4 | `command_timeout` | command stream stalled |
 | 5 | `agent_lost` | micro-ROS agent unreachable |
-| 6 | `battery_low` | pack under 9.9 V for 3 s |
+| 6 | `battery_low` | pack under 10.7 V for 3 s (latched) |
+| 8 | `battery_soft` | pack under 11.0 V - stop driving, not latched |
 | 7 | `startup_lockout` | first 1.5 s after boot |
 
 ## ROS-side topics

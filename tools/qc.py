@@ -548,6 +548,71 @@ def check_installer():
               'install.sh %s never targets a bare root path' % label)
 
 
+
+def check_docs_current():
+    """Documentation must not still describe the old behaviour.
+
+    Every entry here is a value that changed once and left a document behind
+    saying something untrue. Docs that disagree with the code are worse than no
+    docs, because they get believed - so the numbers that matter are read out
+    of the source and compared with what the .md files claim.
+    """
+    section('docs match the code')
+    docs = sorted(set(ROOT.glob('*.md')) | set(ROOT.glob('docs/*.md')) |
+                  set(ROOT.glob('setup/*.md')) | set(ROOT.glob('webapp/*.md')))
+    text = {d: read(d) for d in docs}
+
+    # CLAUDE.md lists superseded values on purpose - it is the record of what
+    # went stale and had to be swept. Scanning it would report every example
+    # it exists to document.
+    def nowhere(pattern, why):
+        hits = sorted(str(d.relative_to(ROOT)) for d, t in text.items()
+                      if d.name != 'CLAUDE.md' and re.search(pattern, t))
+        check(not hits, '%s %s' % (why, hits or ''))
+
+    power = read(FW / 'config' / 'power.h')
+    motor = read(FW / 'config' / 'motor.h')
+
+    def const(src, name):
+        m = re.search(r'#define\s+%s\s+([0-9.]+)f?' % name, src)
+        return m.group(1).rstrip('.') if m else None
+
+    # The live values, read from the firmware rather than assumed.
+    cutoff = const(power, 'BATT_CUTOFF_V')
+    warn_v = const(power, 'BATT_WARN_V')
+    diode_a = const(motor, 'MOTOR_A_DIODE_VF_V')
+    check(cutoff is not None and warn_v is not None,
+          'battery thresholds are readable from power.h (%s / %s)' % (warn_v, cutoff))
+
+    # Superseded values that must not survive anywhere in the docs.
+    nowhere(r'9\.9\s*V', 'no doc still quotes the old 9.9 V cutoff')
+    nowhere(r'10\.8\s*V', 'no doc still quotes the old 10.8 V warning')
+    nowhere(r'0\.45f', 'no doc still quotes the old 0.45 V diode drop')
+    nowhere(r'\bmor_luam\b', 'no doc still refers to mor_luam (removed)')
+    nowhere(r'ros2-agent', 'no doc still uses the old ros2-agent hostname')
+    nowhere(r'lib/(estimator|control|safety|power)/',
+            'no doc still points at headers that moved to src/')
+
+    # The current values should actually appear where they are documented.
+    if cutoff:
+        found = any(cutoff in t for t in text.values())
+        check(found, 'the current cutoff (%s V) is documented somewhere' % cutoff)
+    if diode_a:
+        found = any(diode_a in t for t in text.values())
+        check(found, 'the measured diode drop (%s V) is documented somewhere' % diode_a)
+
+    # Paths named in the docs must exist.
+    missing = []
+    for d, t in text.items():
+        for path in set(re.findall(r'`((?:firmware|gps_localize_ws|tools|setup|webapp|docs)/[\w./-]+)`', t)):
+            if path.endswith('/'):
+                continue
+            if not (ROOT / path).exists():
+                missing.append('%s -> %s' % (d.relative_to(ROOT), path))
+    check(not missing, 'every project path named in the docs exists %s'
+          % (sorted(missing)[:6] or ''))
+
+
 def main():
     main_cpp = read(FW / 'src' / 'main.cpp')
     telemetry_py = read(PKG / 'gps_localize' / 'telemetry.py')
@@ -569,6 +634,7 @@ def main():
     check_branch_publisher()
     check_compose_merge()
     check_installer()
+    check_docs_current()
     check_native_tests()
     check_viewer_build()
 

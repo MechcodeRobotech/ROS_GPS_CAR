@@ -13,7 +13,7 @@ to work. Read this before the first outdoor test.
 
 Plus two conditions that latch inside the firmware:
 
-* **Battery cutoff** — pack under 9.9 V for 3 s (`BATT_CUTOFF_V`), red LED slow
+* **Battery cutoff** — pack under 10.7 V for 3 s (`BATT_CUTOFF_V`), and a non-latching soft stop at 11.0 V (`BATT_SOFT_STOP_V`), red LED slow
   blink. Clears when the pack recovers above 10.3 V.
 * **Startup lockout** — no motion during the first 1.5 s after boot.
 
