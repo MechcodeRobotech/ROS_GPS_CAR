@@ -143,6 +143,53 @@ code,.mono{font-family:var(--mono);font-size:13px}
 .cell b{font-family:var(--mono);color:var(--accent);margin-right:var(--sp2)}
 footer{margin-top:var(--sp6);padding-top:var(--sp3);
   border-top:1px solid var(--border);color:var(--fg-dim);font-size:13px}
+
+.cards{display:grid;gap:var(--sp3);
+  grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+.card{background:var(--surface);border:1px solid var(--border);
+  border-left-width:4px;border-radius:var(--radius);padding:var(--sp3) var(--sp4)}
+.card.ok{border-left-color:var(--ok)}
+.card.bad{border-left-color:var(--bad)}
+.card.warn{border-left-color:var(--warn)}
+.card.run{border-left-color:var(--run)}
+.cardnum{font-size:30px;font-weight:700;line-height:1;font-family:var(--mono)}
+.card.ok .cardnum{color:var(--ok)}
+.card.bad .cardnum{color:var(--bad)}
+.card.warn .cardnum{color:var(--warn)}
+.card.run .cardnum{color:var(--run)}
+.cardlabel{font-weight:600;margin:var(--sp2) 0 var(--sp1)}
+.cardids{margin-top:var(--sp2);word-break:break-word;font-size:12px;
+  line-height:1.5}
+.filters{display:flex;flex-wrap:wrap;gap:var(--sp2);margin-bottom:var(--sp3)}
+.fbtn{font:600 13px/1 var(--mono);color:var(--fg-dim);background:var(--surface);
+  border:1px solid var(--border);border-radius:var(--radius);
+  padding:var(--sp2) var(--sp3);cursor:pointer}
+.fbtn:hover{color:var(--fg);border-color:var(--fg-dim)}
+.fbtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.fbtn.on{color:var(--surface);background:var(--fg);border-color:var(--fg)}
+@media (prefers-reduced-motion:no-preference){
+  .fbtn{transition:color .15s ease-out,background .15s ease-out}
+}
+"""
+
+JS = """
+(function () {
+  var btns = document.querySelectorAll('.fbtn');
+  var rows = document.querySelectorAll('#tasks tr[data-g]');
+  function apply(f) {
+    rows.forEach(function (r) {
+      r.style.display = r.dataset.g.split(' ').indexOf(f) >= 0 ? '' : 'none';
+    });
+    btns.forEach(function (b) { b.classList.toggle('on', b.dataset.f === f); });
+    try { localStorage.setItem('planFilter', f); } catch (e) {}
+  }
+  btns.forEach(function (b) {
+    b.addEventListener('click', function () { apply(b.dataset.f); });
+  });
+  var saved = 'all';
+  try { saved = localStorage.getItem('planFilter') || 'all'; } catch (e) {}
+  if (document.querySelector('.fbtn[data-f="' + saved + '"]')) apply(saved);
+})();
 """
 
 
@@ -193,8 +240,36 @@ def render(state: dict, qc: dict | None, stamp: str) -> str:
               f"<td class='mono'>{c['seconds']}s</td></tr>")
         a("</table></div>")
 
-    # ---- waiting on hardware ----------------------------------------------
+    # ---- where things stand -----------------------------------------------
     tasks = state.get("tasks", [])
+    if tasks:
+        ready = [t for t in tasks if t["state"] in ("TODO", "IN PROGRESS")
+                 and t["needs"] == "PC"]
+        on_you = [t for t in tasks if t["state"] == "BLOCKED"]
+        on_hw = [t for t in tasks if t["state"] == "HW-BLOCKED"]
+        done = [t for t in tasks if t["state"] == "DONE"]
+        buckets = [
+            ("Ready to do now", ready, "run",
+             "Needs only this PC. Nothing is stopping these."),
+            ("Waiting on you", on_you, "warn",
+             "One command from you unblocks them."),
+            ("Waiting on hardware", on_hw, "bad",
+             "Not started. Tell me a part arrived and they open up."),
+            ("Finished", done, "ok",
+             "Done and proved by the test in the table below."),
+        ]
+        a("<h2>Where things stand</h2>")
+        a("<div class='cards'>")
+        for label, group, cls, why in buckets:
+            ids = ", ".join(t["id"] for t in group) or "&mdash;"
+            a(f"<div class='card {cls}'>"
+              f"<div class='cardnum'>{len(group)}</div>"
+              f"<div class='cardlabel'>{esc(label)}</div>"
+              f"<div class='note'>{esc(why)}</div>"
+              f"<div class='mono note cardids'>{ids}</div></div>")
+        a("</div>")
+
+    # ---- waiting on hardware ----------------------------------------------
     blocked = [t for t in tasks if t["state"] == "HW-BLOCKED"]
     if blocked:
         by_part: dict[str, list] = {}
@@ -222,7 +297,14 @@ def render(state: dict, qc: dict | None, stamp: str) -> str:
             f"<span class='badge {TASK_COLORS.get(k,'todo')}'>{esc(k)} {v}</span>"
             for k, v in sorted(counts.items(), key=lambda kv: -kv[1]))
         a(f"<p>{chips} &nbsp;<span class='note'>of {len(tasks)} total</span></p>")
-        a("<div class='wrap'><table>")
+        a("<div class='filters'>"
+          "<button class='fbtn on' data-f='all'>All</button>"
+          "<button class='fbtn' data-f='ready'>Ready now</button>"
+          "<button class='fbtn' data-f='notdone'>Not done</button>"
+          "<button class='fbtn' data-f='hw'>Waiting on hardware</button>"
+          "<button class='fbtn' data-f='done'>Finished</button>"
+          "</div>")
+        a("<div class='wrap'><table id='tasks'>")
         a("<tr><th>id</th><th>phase</th><th>task</th><th>needs</th><th>state</th>"
           "<th>files</th><th>test that proves it</th><th>result</th></tr>")
         for t in tasks:
@@ -231,7 +313,18 @@ def render(state: dict, qc: dict | None, stamp: str) -> str:
             res = esc(t.get("result", "")) or "<span class='note'>&mdash;</span>"
             if t.get("ts"):
                 res += f"<div class='note mono'>{esc(t['ts'])}</div>"
-            a(f"<tr><td class='mono'><strong>{esc(t['id'])}</strong></td>"
+            # Which filter buttons this row answers to.
+            groups = ["all"]
+            if t["state"] == "DONE":
+                groups.append("done")
+            else:
+                groups.append("notdone")
+            if t["state"] in ("TODO", "IN PROGRESS") and t["needs"] == "PC":
+                groups.append("ready")
+            if t["state"] == "HW-BLOCKED":
+                groups.append("hw")
+            a(f"<tr data-g=\"{' '.join(groups)}\">"
+              f"<td class='mono'><strong>{esc(t['id'])}</strong></td>"
               f"<td class='mono note'>{esc(t['phase'])}</td>"
               f"<td>{esc(t['title'])}</td>"
               f"<td><span class='badge {needs_cls}'>{esc(t['needs'])}</span></td>"
@@ -316,6 +409,7 @@ def render(state: dict, qc: dict | None, stamp: str) -> str:
         a(f"<div class='cell'><b>{i}</b>{esc(name)}</div>")
     a("</div>")
 
+    a(f"<script>{JS}</script>")
     a("<footer>Generated by <code>tools/planhtml.py</code>. "
       "This file is the one thing written straight to the real project root; "
       "everything else stages in <code>_work/</code> first.</footer>")
