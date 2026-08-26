@@ -166,6 +166,7 @@ http://packages.ros.org/ros2/ubuntu \$(. /etc/os-release && echo \$UBUNTU_CODENA
         run bash -c "source /opt/ros/$ROS_DISTRO_WANT/setup.bash && \
             cmake -S /tmp/uros_agent -B /tmp/uros_agent/build \
               -DCMAKE_INSTALL_PREFIX=\$HOME/.local \
+              -DCMAKE_PREFIX_PATH=/opt/ros/$ROS_DISTRO_WANT \
               -DUAGENT_BUILD_EXECUTABLE=ON -DUAGENT_USE_SYSTEM_FASTDDS=ON \
               -DUAGENT_USE_SYSTEM_FASTCDR=ON \
               -DUAGENT_SUPERBUILD=OFF \

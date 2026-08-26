@@ -61,6 +61,14 @@ FROM ros:humble-ros-base
 # micro-ROS agent is not packaged for Humble, so it is built from source
 # against the Fast DDS that ships with ROS. Building it here keeps wire
 # compatibility with the ROS 2 graph inside the same image.
+#
+# Three things this needs, each learned by the build failing:
+#   UAGENT_SUPERBUILD=OFF   the default superbuild generates no install target
+#                           at all, so --target install has nothing to do
+#   CMAKE_PREFIX_PATH       sourcing setup.bash leaves it empty, and fastcdr /
+#                           fastrtps configs live under /opt/ros/humble
+#   the two USE_SYSTEM flags so it links the same DDS as the ROS graph rather
+#                           than downloading a second copy
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake git python3-pip curl \
         ros-humble-rmw-fastrtps-cpp \
@@ -70,6 +78,7 @@ RUN git clone -b v2.4.2 --depth 1 \
         https://github.com/eProsima/Micro-XRCE-DDS-Agent.git /tmp/agent \
     && cmake -S /tmp/agent -B /tmp/agent/build \
         -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_PREFIX_PATH=/opt/ros/humble \
         -DUAGENT_BUILD_EXECUTABLE=ON \
         -DUAGENT_USE_SYSTEM_FASTDDS=ON \
         -DUAGENT_USE_SYSTEM_FASTCDR=ON \
