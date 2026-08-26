@@ -43,9 +43,13 @@
 // VF is the drop at working current, R_OHM is the slope (0 = flat drop model).
 // Measure yours: docs/tuning.md 4d. Both are also editable from the web UI
 // (Settings -> มอเตอร์) without reflashing.
-#define MOTOR_A_DIODE_VF_V      0.45f
+// Measured on the bench, 2026-08-27, at working current. These are much
+// larger than a small-signal Schottky: at ~12 V they are 15% of the rail, so
+// getting them wrong makes the back-EMF wheel speed read high whenever the
+// motor model is the fallback. Editable from the web UI (T69).
+#define MOTOR_A_DIODE_VF_V      1.81f     // measured, left
 #define MOTOR_A_DIODE_R_OHM     0.03f
-#define MOTOR_B_DIODE_VF_V      0.45f
+#define MOTOR_B_DIODE_VF_V      1.90f     // measured, right
 #define MOTOR_B_DIODE_R_OHM     0.03f
 // The fan buck has a diode too (FAN_DIODE), but it sits after the fan sensor
 // and the firmware neither controls nor measures the fans, so it needs no

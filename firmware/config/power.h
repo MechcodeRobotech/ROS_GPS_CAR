@@ -10,10 +10,31 @@
  *   VCC BATT ─ fuse ─ mushroom SW ─ relay ─ VCC EMER ─┬─ [MOTOR_A_SENSOR] ─ VCC MOTOR A ─ diode ─ TB6612 VM
  *                                                     └─ [MOTOR_B_SENSOR] ─ VCC MOTOR B ─ diode ─ TB6612 VM
  *
- * Each sensor therefore reads the rail BEFORE its diode / buck converter.
- * The motor voltage that actually reaches the driver is
- *      V_driver = V_sensor - MOTOR_DIODE_VF_V   (see motor.h)
- * which matters because the back-EMF wheel-speed model uses it.
+ * WHAT EACH SENSOR ACTUALLY MEASURES
+ * An INA226 measures bus voltage and shunt current at points that need not be
+ * the same node, and on this board two of them are not. Getting this wrong
+ * once cost us a robot that latched into e-stop three seconds after boot, so
+ * it is spelled out:
+ *
+ *   PROCESSOR 0x40  voltage : the ESP32 +5 V rail, AFTER the LM2596
+ *                   current : from the battery side, so it includes the buck
+ *                   => V and I are different nodes. V*I is NOT a power figure.
+ *                   => this is NOT the pack voltage. It reads about 5 V.
+ *
+ *   FAN       0x45  voltage : the fan +5 V rail, after its own LM2596
+ *                   current : from source, including that buck
+ *
+ *   MOTOR A   0x41  voltage : VCC EMER, the pack behind the fuse, mushroom
+ *   MOTOR B   0x44            switch and relay - so this IS the pack voltage
+ *                   current : source -> driver -> motor
+ *                   The series diode sits AFTER the sensor, so the driver sees
+ *                       V_driver = V_sensor - (VF + I * R_diode)
+ *                   which is what the back-EMF wheel-speed model uses.
+ *
+ * PACK VOLTAGE therefore comes from the motor rails, not from the processor
+ * sensor. When the mushroom switch or the relay is open those rails read near
+ * zero: that means "cannot measure", not "flat battery", and the firmware
+ * marks the reading invalid rather than tripping the low-battery latch.
  *
  * SET THE A0/A1 JUMPERS on each module to match the addresses below before
  * powering up. The serial monitor prints "[INA226] ... missing" for every
@@ -44,9 +65,23 @@
 //------------------------ battery protection -----------------------------//
 // 3S LiPo: 12.6 V full, 11.1 V nominal, 9.9 V empty (3.3 V per cell).
 // Measured on the processor rail, which sits directly on VCC ON MODULE.
+// 3S LiPo. A cell is damaged below about 3.00 V (9.0 V pack); the usual working
+// floor is 3.3-3.5 V/cell. These tiers sit above that on purpose - they trade a
+// little runtime for pack life.
 #define BATT_CELLS              3
-#define BATT_WARN_V             10.8f     // 3.60 V/cell -> orange on the web UI
-#define BATT_CUTOFF_V           9.9f      // 3.30 V/cell -> stop driving, protect the pack
+#define BATT_WARN_V             11.4f     // 3.80 V/cell -> orange on the web UI, keep driving
+#define BATT_SOFT_STOP_V        11.0f     // 3.67 V/cell -> stop driving, stay powered
+#define BATT_CUTOFF_V           10.7f     // 3.57 V/cell -> latch STOP_BATTERY_LOW
+#define BATT_CUTOFF_CLEAR_V     11.1f     // 3.70 V/cell -> hysteresis, unlatch above this
 #define BATT_CUTOFF_HOLD_MS     3000      // must stay low this long (ignore load dips)
+
+// Below this the motor rail is not powered (mushroom switch or relay open), so
+// the pack voltage is unknown rather than low. Never latch on that.
+#define PACK_RAIL_MIN_VALID_V   6.0f
+
+// Sanity window for the ESP32 +5 V rail. Outside it the buck is misbehaving;
+// reported on the web UI, never a reason to stop the robot on its own.
+#define ESP32_RAIL_MIN_V        4.5f
+#define ESP32_RAIL_MAX_V        5.5f
 
 #endif // POWER_CONFIG_H

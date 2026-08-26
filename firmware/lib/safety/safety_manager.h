@@ -60,14 +60,26 @@ public:
     if (in.motion_requested && in.cmd_age_ms > CMD_TIMEOUT_MS) f |= STOP_CMD_TIMEOUT;
 
     // --- battery protection (must stay low, ignore short load dips) ---
+    //
+    // battery_valid false means the pack voltage could not be MEASURED - the
+    // motor rail is unpowered because the mushroom switch or the relay is open.
+    // That is not a flat battery, so nothing latches. Reading the ESP32 +5 V
+    // rail here by mistake is exactly what latched the robot into e-stop three
+    // seconds after every boot; see power.h.
     if (in.battery_valid && in.battery_v < BATT_CUTOFF_V) {
       if (batt_low_since_ == 0) batt_low_since_ = now;
       if (now - batt_low_since_ > BATT_CUTOFF_HOLD_MS) batt_latched_ = true;
     } else {
       batt_low_since_ = 0;
-      if (in.battery_valid && in.battery_v > (BATT_CUTOFF_V + 0.4f)) batt_latched_ = false;
+      if (in.battery_valid && in.battery_v > BATT_CUTOFF_CLEAR_V) batt_latched_ = false;
     }
     if (batt_latched_) f |= STOP_BATTERY_LOW;
+
+    // Soft stop: stop driving but stay powered, so the pack is not run down to
+    // the hard cut on every outing. Not latched - it follows the voltage back
+    // up once the load comes off.
+    batt_soft_stop_ = in.battery_valid && in.battery_v < BATT_SOFT_STOP_V;
+    if (batt_soft_stop_) f |= STOP_BATTERY_SOFT;
 
     // --- boot lockout ---
     if (now - boot_ms_ < STARTUP_LOCKOUT_MS) f |= STOP_STARTUP;
@@ -93,6 +105,7 @@ public:
     return (flags_ & (STOP_HEARTBEAT_LOST | STOP_CMD_TIMEOUT | STOP_AGENT_LOST)) != 0;
   }
   bool batteryLatched() const { return batt_latched_; }
+  bool batterySoftStop() const { return batt_soft_stop_; }
   bool hwEmergency() const { return hw_emer_; }
   bool espButton() const { return esp_btn_; }
 
@@ -158,6 +171,7 @@ private:
   uint32_t last_clear_ms_ = 0;
   uint32_t batt_low_since_ = 0;
   bool     batt_latched_ = false;
+  bool     batt_soft_stop_ = false;
   bool     led_on_ = false;
 };
 

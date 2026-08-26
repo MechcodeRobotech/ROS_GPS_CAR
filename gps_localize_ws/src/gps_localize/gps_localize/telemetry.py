@@ -6,7 +6,7 @@ snapshot per tick. The firmware fills it in src/main.cpp::publishTelemetry -
 KEEP BOTH SIDES IN SYNC.
 """
 
-TELEMETRY_LEN = 40
+TELEMETRY_LEN = 42
 
 # index -> key used everywhere on the ROS/web side
 FIELDS = (
@@ -23,8 +23,10 @@ FIELDS = (
     'yaw_rate_dps',       # 10 counter-clockwise positive
     'pwm_left',           # 11
     'pwm_right',          # 12
-    'battery_v',          # 13 INA226 on the processor rail = pack voltage
-    'battery_a',          # 14
+    'battery_v',          # 13 pack voltage, read from the motor rail (VCC EMER).
+                          #    NOT the processor sensor: that one measures the
+                          #    ESP32 +5 V rail. See firmware/config/power.h.
+    'battery_a',          # 14 whole-module draw, measured on the battery side
     'motor_a_v',          # 15
     'motor_a_a',          # 16
     'motor_b_v',          # 17
@@ -50,6 +52,10 @@ FIELDS = (
     'motor_faults',       # 37 bitfield: stall / open circuit per motor
     'fan_v',              # 38 fan rail INA226 (schematic draft_5)
     'fan_a',              # 39
+    'esp32_rail_v',       # 40 ESP32 +5 V rail, health of the processor buck
+    'pack_valid',         # 41 1 = pack voltage is measurable; 0 = motor rail
+                          #    unpowered (mushroom switch or relay open), so
+                          #    the pack voltage is unknown, not low
 )
 
 # must match publishTelemetry() in firmware/src/main.cpp

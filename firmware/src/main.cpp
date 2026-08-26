@@ -49,6 +49,7 @@
 #include <state_estimator.h>
 #include <drive_controller.h>
 #include <safety_manager.h>
+#include <power_monitor.h>
 
 //============================ helpers ======================================//
 #define RCCHECK(fn)     { rcl_ret_t rc = fn; if (rc != RCL_RET_OK) { return false; } }
@@ -90,7 +91,7 @@ static std_msgs__msg__Bool            in_estop;
 static std_msgs__msg__Float32MultiArray in_config;
 
 //--- static payload buffers (never freed, never grown) ---
-#define TELEMETRY_LEN 40
+#define TELEMETRY_LEN 42
 static float telemetry_buf[TELEMETRY_LEN];
 #define CONFIG_MAX_LEN 12
 static float config_buf[CONFIG_MAX_LEN];
@@ -106,7 +107,7 @@ static Conn conn_state = WAITING_AGENT;
 //============================== hardware ===================================//
 static MotorTB6612   motor_left;    // MOTOR A
 static MotorTB6612   motor_right;   // MOTOR B
-static INA226        ina_processor, ina_motor_a, ina_motor_b, ina_fan;
+static PowerMonitor  power;      // the 4x INA226, and what each one means
 static GpsNmea       gps;
 static CompassQMC5883 compass;
 static ImuBno085     imu(BNO085_RESET_PIN);
@@ -122,12 +123,6 @@ static volatile uint32_t last_cmd_ms       = 0;
 static volatile bool     sw_estop          = false;
 static volatile bool     have_heartbeat    = false;
 
-static float batt_v = 0.0f, batt_a = 0.0f;
-static float motor_a_v = 0.0f, motor_a_a = 0.0f;
-static float motor_b_v = 0.0f, motor_b_a = 0.0f;
-static float fan_v = 0.0f, fan_a = 0.0f;      // draft_5: 4th sensor on the fan rail
-static bool  batt_valid = false;
-static bool  motor_a_sensor_ok = false, motor_b_sensor_ok = false;
 
 static uint32_t loop_us = 0;
 static uint16_t div_odom = 0, div_imu = 0, div_tel = 0, div_ina = 0, div_mag = 0;
@@ -457,12 +452,12 @@ static void publishTelemetry(RunState state) {
   t[10] = estimator.yawRate() * 57.29578f;
   t[11] = (float)drive.pwmLeft();
   t[12] = (float)drive.pwmRight();
-  t[13] = batt_v;
-  t[14] = batt_a;
-  t[15] = motor_a_v;
-  t[16] = motor_a_a;
-  t[17] = motor_b_v;
-  t[18] = motor_b_a;
+  t[13] = power.packVoltage();                            // pack, from the motor rail
+  t[14] = power.moduleCurrent();                          // module draw, battery side
+  t[15] = power.motorAVoltage();
+  t[16] = power.motorACurrent();
+  t[17] = power.motorBVoltage();
+  t[18] = power.motorBCurrent();
   t[19] = (float)gps.fixQuality();
   t[20] = (float)gps.satellites();
   t[21] = gps.hdop();
@@ -489,8 +484,10 @@ static void publishTelemetry(RunState state) {
     if (model_right.openCircuit()) f |= 1 << 3;
     t[37] = (float)f;                        // motor fault bitfield
   }
-  t[38] = fan_v;                             // draft_5: fan rail sensor
-  t[39] = fan_a;
+  t[38] = power.fanVoltage();                             // draft_5: fan rail sensor
+  t[39] = power.fanCurrent();
+  t[40] = power.esp32RailVoltage();                      // ESP32 +5 V rail health
+  t[41] = power.packValid() ? 1.0f : 0.0f;          // 0 = rail unpowered, pack unknown
   RCSOFTCHECK(rcl_publish(&pub_telemetry, &msg_telemetry, NULL));
 }
 
@@ -526,25 +523,14 @@ static void controlCallback(rcl_timer_t *timer, int64_t) {
 
   if (++div_ina >= INA_READ_DIV) {
     div_ina = 0;
-    if (ina_processor.read()) {
-      batt_v = ina_processor.voltage();
-      batt_a = ina_processor.current();
-      batt_valid = true;
-    } else {
-      batt_valid = false;
-    }
-    motor_a_sensor_ok = ina_motor_a.read();
-    if (motor_a_sensor_ok) { motor_a_v = ina_motor_a.voltage(); motor_a_a = ina_motor_a.current(); }
-    motor_b_sensor_ok = ina_motor_b.read();
-    if (motor_b_sensor_ok) { motor_b_v = ina_motor_b.voltage(); motor_b_a = ina_motor_b.current(); }
-    if (ina_fan.read()) { fan_v = ina_fan.voltage(); fan_a = ina_fan.current(); }
+    power.update();
   }
 
   // wheel speed from volts + amps (back-EMF), one estimate per motor
-  model_left.update(dt, motor_a_v, motor_a_a,
-                    (float)drive.pwmLeft() / (float)PWM_MAX, motor_a_sensor_ok);
-  model_right.update(dt, motor_b_v, motor_b_a,
-                     (float)drive.pwmRight() / (float)PWM_MAX, motor_b_sensor_ok);
+  model_left.update(dt, power.motorAVoltage(), power.motorACurrent(),
+                    (float)drive.pwmLeft() / (float)PWM_MAX, power.motorAOk());
+  model_right.update(dt, power.motorBVoltage(), power.motorBCurrent(),
+                     (float)drive.pwmRight() / (float)PWM_MAX, power.motorBOk());
 
   //----------------------------- estimation ----------------------------//
   const float imu_yaw   = wrap360f(IMU_YAW_TO_COMPASS_SIGN * imu.yawDeg() + IMU_YAW_OFFSET_DEG);
@@ -582,8 +568,8 @@ static void controlCallback(rcl_timer_t *timer, int64_t) {
   si.heartbeat_age_ms = have_heartbeat ? (now_ms - last_heartbeat_ms) : 0xFFFFFFFF;
   si.cmd_age_ms       = (last_cmd_ms == 0) ? 0xFFFFFFFF : (now_ms - last_cmd_ms);
   si.agent_ok         = (conn_state == AGENT_CONNECTED);
-  si.battery_v        = batt_v;
-  si.battery_valid    = batt_valid;
+  si.battery_v        = power.packVoltage();
+  si.battery_valid    = power.packValid();
   si.motion_requested = fabsf(drive.targetSpeed()) > 1e-3f ||
                         fabsf(drive.targetYawRate()) > 1e-3f;   // pure rotation counts too
   safety.update(si);
@@ -892,18 +878,8 @@ void setup() {
   }
   imu.setStaleMs(IMU_STALE_MS);
 
-  if (!ina_processor.begin(&Wire, INA226_ADDR_PROCESSOR,
-                           INA226_SHUNT_PROCESSOR_OHM, INA226_MAXA_PROCESSOR))
-    Serial.println("[INA226] processor sensor missing");
-  if (!ina_motor_a.begin(&Wire, INA226_ADDR_MOTOR_A,
-                         INA226_SHUNT_MOTOR_OHM, INA226_MAXA_MOTOR))
-    Serial.println("[INA226] motor A sensor missing");
-  if (!ina_motor_b.begin(&Wire, INA226_ADDR_MOTOR_B,
-                         INA226_SHUNT_MOTOR_OHM, INA226_MAXA_MOTOR))
-    Serial.println("[INA226] motor B sensor missing");
-  if (!ina_fan.begin(&Wire, INA226_ADDR_FAN,
-                     INA226_SHUNT_FAN_OHM, INA226_MAXA_FAN))
-    Serial.println("[INA226] fan sensor missing");
+  if (!power.begin(&Wire))
+    Serial.println("[INA226] one or more sensors missing - see the rail readings");
 
 #if USE_QMC5883L
   if (compass.begin(&Wire, QMC5883L_ADDR)) {

@@ -28,6 +28,8 @@
 #define STOP_AGENT_LOST         (1u << 5) // micro-ROS agent unreachable
 #define STOP_BATTERY_LOW        (1u << 6) // pack below BATT_CUTOFF_V
 #define STOP_STARTUP            (1u << 7) // boot lockout still active
+#define STOP_BATTERY_SOFT       (1u << 8) // pack below BATT_SOFT_STOP_V - stop driving,
+                                          // not latched, clears when the voltage recovers
 
 //======================= LED patterns ========================//
 // Red LED behaviour (green LED is hardwired to 5 V, firmware never touches it)

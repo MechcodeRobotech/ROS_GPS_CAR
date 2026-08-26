@@ -378,6 +378,84 @@ void test_nmea_partial_sentence_then_rest(void) {
     TEST_ASSERT_TRUE(gps.valid());
 }
 
+
+/* ---------------------------------------------------------------------------
+ * Regression: the ESP32 +5 V rail must never be judged as the pack.
+ *
+ * The processor INA226 measures the +5 V rail for voltage. If that reading is
+ * fed to the battery protection it sits below any sane 3S cutoff forever, the
+ * hold time expires after 3 s, and the robot latches STOP_BATTERY_LOW on every
+ * boot with no way back - the hysteresis needs a voltage the rail cannot reach.
+ * PowerMonitor now sources the pack from the motor rail instead, and marks the
+ * reading invalid when that rail is unpowered.
+ * ------------------------------------------------------------------------ */
+void test_safety_rail_voltage_is_not_treated_as_pack(void) {
+    SafetyManager safety;
+    set_hardware_clear();
+    arm(safety);
+    SafetyManager::Inputs in = healthy();
+    // Motor rail unpowered: PowerMonitor reports "cannot measure", not "flat".
+    in.battery_valid = false;
+    in.battery_v = 5.0f;
+    for (int i = 0; i < 100; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_FALSE(safety.batteryLatched());
+    TEST_ASSERT_FALSE(safety.flags() & STOP_BATTERY_LOW);
+    TEST_ASSERT_TRUE(safety.allowMotion());
+}
+
+/** A genuinely flat pack must still latch - the fix must not disable the
+ *  protection it was covering for. */
+void test_safety_genuinely_low_pack_still_latches(void) {
+    SafetyManager safety;
+    set_hardware_clear();
+    arm(safety);
+    SafetyManager::Inputs in = healthy();
+    in.battery_valid = true;
+    in.battery_v = 10.4f;                       // below BATT_CUTOFF_V (10.7)
+    for (int i = 0; i < 60; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_TRUE(safety.batteryLatched());
+    TEST_ASSERT_TRUE(safety.flags() & STOP_BATTERY_LOW);
+}
+
+/** The 3S tiers must each fire on their own band and not on the others. */
+void test_safety_battery_tiers(void) {
+    struct { float v; bool soft; bool hard; } cases[] = {
+        { 11.5f, false, false },   // healthy
+        { 11.2f, false, false },   // between warn and soft stop
+        { 10.9f, true,  false },   // soft stop only
+        { 10.6f, true,  true  },   // hard cut
+    };
+    for (auto &c : cases) {
+        SafetyManager safety;
+        set_hardware_clear();
+        arm(safety);
+        SafetyManager::Inputs in = healthy();
+        in.battery_v = c.v;
+        for (int i = 0; i < 60; ++i) { mock_advance_ms(100); safety.update(in); }
+        TEST_ASSERT_EQUAL(c.soft, safety.batterySoftStop());
+        TEST_ASSERT_EQUAL(c.hard, safety.batteryLatched());
+    }
+}
+
+/** Hysteresis: recovery needs BATT_CUTOFF_CLEAR_V, not just cutoff + a hair. */
+void test_safety_battery_clear_threshold(void) {
+    SafetyManager safety;
+    set_hardware_clear();
+    arm(safety);
+    SafetyManager::Inputs in = healthy();
+    in.battery_v = 10.4f;
+    for (int i = 0; i < 60; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_TRUE(safety.batteryLatched());
+
+    in.battery_v = 10.9f;                       // above cutoff, below clear
+    for (int i = 0; i < 30; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_TRUE(safety.batteryLatched());
+
+    in.battery_v = 11.2f;                       // above BATT_CUTOFF_CLEAR_V
+    for (int i = 0; i < 30; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_FALSE(safety.batteryLatched());
+}
+
 int run_safety_gps_tests(void) {
     RUN_TEST(test_safety_blocks_during_startup_lockout);
     RUN_TEST(test_safety_allows_motion_when_everything_is_fine);
@@ -391,6 +469,10 @@ int run_safety_gps_tests(void) {
     RUN_TEST(test_safety_battery_cutoff_needs_to_persist);
     RUN_TEST(test_safety_battery_recovers_above_hysteresis);
     RUN_TEST(test_safety_invalid_battery_reading_is_ignored);
+    RUN_TEST(test_safety_rail_voltage_is_not_treated_as_pack);
+    RUN_TEST(test_safety_genuinely_low_pack_still_latches);
+    RUN_TEST(test_safety_battery_tiers);
+    RUN_TEST(test_safety_battery_clear_threshold);
     RUN_TEST(test_safety_run_state_mapping);
     RUN_TEST(test_safety_multiple_flags_at_once);
 
