@@ -54,6 +54,14 @@
   ],
   "log": [
     {
+      "ts": "2026-08-27 02:52:00",
+      "step": "T10",
+      "what": "Sudoers file installed and correct (root:root, 0440), but it does not help me: this shell has NoNewPrivs set, which blocks sudo at the kernel level whatever sudoers allows. Checked rootless Docker as a way around it - it needs newuidmap/newgidmap from the uidmap package, so that needs root too. Anything requiring root now has to be run in your terminal.",
+      "files": "/etc/sudoers.d/gps_localize",
+      "promoted": false,
+      "problem": "NoNewPrivs=1 blocks sudo for the assistant"
+    },
+    {
       "ts": "2026-08-27 03:20:00",
       "step": "T86,T87,T89",
       "what": "Topics tab and compass rose added. The tab lists every topic with type, publisher and subscriber counts and measured rate, filters, and expands any topic to show its live value - the robot subscribes on demand and drops it again when the page stops asking. The map gained a compass rose: north, a solid needle for the fused heading the robot steers by, a hollow one for the raw QMC5883 when a healthy compass is fitted, and the heading source underneath. When the needles separate the magnetometer is being disturbed, which is the moment you want to see it. The Windows viewer serves both endpoints with simulated data so the page never 404s there, which QC enforces. Also added a JavaScript parse check to QC - nothing else would have caught a broken app.js: Python compiles, firmware builds, QC passes, and the page is simply dead when opened.",
@@ -288,6 +296,13 @@
   ],
   "problems": [
     {
+      "ts": "2026-08-27 02:52:00",
+      "severity": "MEDIUM",
+      "what": "My shell runs with NoNewPrivs=1, so sudo is refused for me no matter what the sudoers file says. Rootless Docker is not an option either: it needs the uidmap package, which itself needs apt.",
+      "state": "OPEN - anything needing root has to be run by you, in your own terminal",
+      "impact": "Docker cannot be installed or tested by me. Everything not needing root is unaffected; the compose merge is verified offline instead."
+    },
+    {
       "ts": "2026-08-27 00:40:00",
       "severity": "RESOLVED",
       "what": "6 host tests still fail, in the estimator, motor model and PIDF: derivative filter smoothing, GPS course winning while moving, speed following GPS, speed falling back to the model, and stall detect/clear.",
@@ -493,10 +508,10 @@
       "phase": "0b",
       "title": "Prove both install routes on a clean machine",
       "needs": "PC",
-      "state": "TODO",
+      "state": "BLOCKED",
       "files": "-",
       "test": "native and Docker one-liners each give HTTP 200",
-      "result": "",
+      "result": "needs Docker installed by you - I cannot install it without sudo",
       "ts": ""
     },
     {
@@ -504,11 +519,11 @@
       "phase": "A",
       "title": "Sudoers NOPASSWD (you run one command)",
       "needs": "PC",
-      "state": "BLOCKED",
+      "state": "DONE",
       "files": "/etc/sudoers.d/gps_localize",
       "test": "sudo visudo -c parses OK; sudo -n true works",
-      "result": "waiting: needs you to run one command",
-      "ts": ""
+      "result": "PASS on your side - /etc/sudoers.d/gps_localize installed, root:root 0440. My shell cannot use it: NoNewPrivs=1 blocks sudo for me regardless.",
+      "ts": "2026-08-27 02:52:00"
     },
     {
       "id": "T11",
@@ -529,7 +544,7 @@
       "state": "BLOCKED",
       "files": "systemd/gps_localize.service",
       "test": "systemctl is-enabled -> enabled",
-      "result": "waiting on T10 (needs sudo)",
+      "result": "needs a command from you - I cannot run sudo in this environment",
       "ts": ""
     },
     {
