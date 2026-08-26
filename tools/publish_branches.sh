@@ -149,6 +149,40 @@ volumes:
   gps_localize_pio:
 COMPOSE
 
+    cat > "$wt/docker-compose.windows.yml" <<'WINCOMPOSE'
+# Override for Docker Desktop on Windows and macOS.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.windows.yml up -d
+#
+# WHY THIS EXISTS
+# network_mode: host is a Linux-only feature. On Docker Desktop the container
+# runs inside a VM, so "host" is that VM and not your PC - the ESP32 on your
+# Wi-Fi could never reach the agent.
+#
+# Publishing ports works instead, because every ROS 2 node AND the micro-ROS
+# agent run inside this one container. DDS discovery never has to cross the
+# boundary; only two things do:
+#     ESP32   -> agent    UDP 8888
+#     browser -> web UI   TCP 8080
+#
+# So this is a real robot setup on Windows, not a demo.
+#
+# WHAT IS DIFFERENT
+#  - ros2 from the Windows host cannot see the topics. There is no ROS on the
+#    host anyway; use  docker compose exec gps_localize ros2 topic list
+#  - USB is not passed through. Flash over Wi-Fi (OTA), flash from Windows
+#    with PlatformIO directly, or attach the port to WSL with usbipd-win.
+#  - point the firmware's agent address at your PC's LAN address, not at the
+#    container. Docker Desktop forwards the published port to it.
+services:
+  gps_localize:
+    network_mode: "bridge"
+    ports:
+      - "8080:8080/tcp"
+      - "8888:8888/udp"
+    devices: []
+WINCOMPOSE
+
     cat > "$wt/install.sh" <<'INSTALL'
 #!/bin/bash
 # One-command Docker install. No ROS 2 on the host.

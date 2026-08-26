@@ -366,6 +366,44 @@ def check_firmware_layout():
                   'local library %s with a .cpp is declared in lib_deps' % lib_dir.name)
 
 
+
+def check_branch_publisher():
+    """Every file publish_branches.sh claims to write, it must actually write.
+
+    A heredoc block was once dropped by a search-and-replace whose pattern had
+    a trailing space. The script still ran, still reported success, and the
+    branch was published without docker-compose.windows.yml - nothing failed,
+    the file was simply absent. Checking that each named output has a matching
+    heredoc catches that silently-missing case.
+    """
+    section('branch publisher')
+    script = ROOT / 'tools' / 'publish_branches.sh'
+    if not script.exists():
+        notes.append('tools/publish_branches.sh not present, skipped')
+        return
+    body = read(script)
+
+    written = set(re.findall(r'cat > "\$wt/([^"]+)" <<', body))
+    for name in sorted(written):
+        # the closing marker must exist too, or the heredoc is truncated
+        marker = re.search(r'cat > "\$wt/%s" <<\x27([A-Z]+)\x27' % re.escape(name), body)
+        check(bool(marker) and re.search(r'^%s$' % marker.group(1), body, re.M) is not None,
+              'publish_branches.sh writes %s with a closed heredoc' % name)
+
+    for expected in ('Dockerfile', 'docker-compose.yml', 'docker-compose.windows.yml',
+                     'docker-entrypoint.sh', 'install.sh', 'README.md'):
+        check(expected in written,
+              'docker branch gets %s' % expected)
+
+    # every branch named in the dispatch must have a subset defined
+    declared = set(re.findall(r'^\s+(workspace|firmware|docker|main|[a-z_]+)\)\s+echo "',
+                              body, re.M))
+    default = re.search(r'BRANCHES=\("\$\{ARGS\[@\]:-([^}]*)\}"\)', body)
+    if default:
+        for b in default.group(1).split():
+            check(b in declared, 'branch %s has a subset defined' % b)
+
+
 def main():
     main_cpp = read(FW / 'src' / 'main.cpp')
     telemetry_py = read(PKG / 'gps_localize' / 'telemetry.py')
@@ -383,6 +421,7 @@ def main():
     check_yaml(py_all)
     check_firmware_headers(main_cpp)
     check_firmware_layout()
+    check_branch_publisher()
     check_native_tests()
     check_viewer_build()
 
