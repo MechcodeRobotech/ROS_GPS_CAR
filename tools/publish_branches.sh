@@ -66,7 +66,10 @@ FROM ros:humble-ros-base
 # micro_ros_setup is the supported route and resolves those versions itself.
 # It is also exactly how the agent on the development machine was built, so
 # the container and the host end up with the same thing.
-RUN mkdir -p /uros_ws/src \
+# apt lists were cleared by the layer above, so rosdep cannot resolve anything
+# without refreshing them first - it fails on libcurl4-openssl-dev otherwise.
+RUN apt-get update \
+    && mkdir -p /uros_ws/src \
     && git clone -b humble --depth 1 \
         https://github.com/micro-ROS/micro_ros_setup.git /uros_ws/src/micro_ros_setup \
     && . /opt/ros/humble/setup.sh \
@@ -76,7 +79,7 @@ RUN mkdir -p /uros_ws/src \
     && . install/local_setup.sh \
     && ros2 run micro_ros_setup create_agent_ws.sh \
     && ros2 run micro_ros_setup build_agent.sh \
-    && rm -rf /uros_ws/build /uros_ws/log
+    && rm -rf /uros_ws/build /uros_ws/log /var/lib/apt/lists/*
 
 # PlatformIO, so the ESP32 firmware can be built and flashed from the same
 # container. Kept in its own layer: it is large and changes rarely.

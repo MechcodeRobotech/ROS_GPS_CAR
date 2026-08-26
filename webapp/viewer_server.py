@@ -60,9 +60,39 @@ sys.path.insert(0, os.path.normpath(os.path.join(HERE, '..', 'gps_localize_ws', 
 try:
     from gps_localize.configstore import GROUPS, ConfigStore
     from gps_localize.httpd import SseBroadcaster, WebApp, WebServer, urls_for
-except ImportError:                                        # frozen build: modules are bundled flat
-    from configstore import GROUPS, ConfigStore            # type: ignore
-    from httpd import SseBroadcaster, WebApp, WebServer, urls_for   # type: ignore
+except ImportError as exc:
+    # Only fall back when it is OUR package that is missing. A broad except
+    # here used to swallow a missing third-party dependency and then fail on
+    # the fallback instead, reporting "No module named 'configstore'" when the
+    # real problem was pyyaml - which nobody could guess from that message.
+    # Seen for real on a fresh Windows machine.
+    # exc.name is the module the failing import ASKED for, but when the failure
+    # happens inside our package (configstore doing 'import yaml') it can come
+    # back empty, so fall back to parsing the message.
+    missing = getattr(exc, 'name', None) or ''
+    if not missing:
+        import re as _re
+        m = _re.search(r"No module named '?([\w.]+)'?", str(exc))
+        missing = m.group(1) if m else ''
+    if missing.split('.')[0] not in ('gps_localize', 'configstore', 'httpd'):
+        raise SystemExit(
+            "\nGPS_Localize viewer cannot start.\n"
+            "\n  missing module : %s\n"
+            "  install it with: pip install %s\n"
+            "\nEverything else it needs is in the Python standard library.\n"
+            "Original error: %s\n"
+            % (missing or 'unknown',
+               {'yaml': 'pyyaml'}.get(missing, missing or 'pyyaml'), exc)
+        ) from exc
+    try:                                   # frozen build: modules are bundled flat
+        from configstore import GROUPS, ConfigStore            # type: ignore
+        from httpd import SseBroadcaster, WebApp, WebServer, urls_for   # type: ignore
+    except ImportError as inner:
+        raise SystemExit(
+            "\nGPS_Localize viewer cannot find its own modules.\n"
+            "Run it from inside the project so gps_localize_ws/ is alongside webapp/.\n"
+            "  looked in: %s\n  error: %s\n" % (sys.path[0], inner)
+        ) from inner
 
 
 BANNER = r"""
