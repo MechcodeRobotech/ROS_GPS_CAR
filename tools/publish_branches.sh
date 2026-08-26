@@ -58,34 +58,25 @@ write_docker_extras() {
 # GPS_Localize - ROS 2 Humble workspace and web UI, no ROS install on the host.
 FROM ros:humble-ros-base
 
-# micro-ROS agent is not packaged for Humble, so it is built from source
-# against the Fast DDS that ships with ROS. Building it here keeps wire
-# compatibility with the ROS 2 graph inside the same image.
+# micro-ROS agent. There is no apt package for Humble, and building
+# Micro-XRCE-DDS-Agent directly does not work: its superbuild pins a FastDDS
+# tag (2.12.x) that no longer exists upstream, and with the superbuild off it
+# needs microxrcedds_client, which the base image does not ship.
 #
-# Three things this needs, each learned by the build failing:
-#   UAGENT_SUPERBUILD=OFF   the default superbuild generates no install target
-#                           at all, so --target install has nothing to do
-#   CMAKE_PREFIX_PATH       sourcing setup.bash leaves it empty, and fastcdr /
-#                           fastrtps configs live under /opt/ros/humble
-#   the two USE_SYSTEM flags so it links the same DDS as the ROS graph rather
-#                           than downloading a second copy
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential cmake git python3-pip curl \
-        ros-humble-rmw-fastrtps-cpp \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN git clone -b v2.4.2 --depth 1 \
-        https://github.com/eProsima/Micro-XRCE-DDS-Agent.git /tmp/agent \
-    && cmake -S /tmp/agent -B /tmp/agent/build \
-        -DCMAKE_INSTALL_PREFIX=/usr/local \
-        -DCMAKE_PREFIX_PATH=/opt/ros/humble \
-        -DUAGENT_BUILD_EXECUTABLE=ON \
-        -DUAGENT_USE_SYSTEM_FASTDDS=ON \
-        -DUAGENT_USE_SYSTEM_FASTCDR=ON \
-        -DUAGENT_SUPERBUILD=OFF \
-        -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build /tmp/agent/build --target install -j"$(nproc)" \
-    && rm -rf /tmp/agent
+# micro_ros_setup is the supported route and resolves those versions itself.
+# It is also exactly how the agent on the development machine was built, so
+# the container and the host end up with the same thing.
+RUN mkdir -p /uros_ws/src \
+    && git clone -b humble --depth 1 \
+        https://github.com/micro-ROS/micro_ros_setup.git /uros_ws/src/micro_ros_setup \
+    && . /opt/ros/humble/setup.sh \
+    && cd /uros_ws \
+    && rosdep install --from-paths src --ignore-src -y \
+    && colcon build \
+    && . install/local_setup.sh \
+    && ros2 run micro_ros_setup create_agent_ws.sh \
+    && ros2 run micro_ros_setup build_agent.sh \
+    && rm -rf /uros_ws/build /uros_ws/log
 
 # PlatformIO, so the ESP32 firmware can be built and flashed from the same
 # container. Kept in its own layer: it is large and changes rarely.
@@ -116,6 +107,8 @@ DOCKERFILE
 #!/bin/bash
 set -e
 source /opt/ros/humble/setup.bash
+# the micro-ROS agent lives in its own workspace, built by micro_ros_setup
+source /uros_ws/install/local_setup.bash
 source /ws/install/setup.bash
 exec "$@"
 ENTRYPOINT

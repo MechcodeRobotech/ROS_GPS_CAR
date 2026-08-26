@@ -156,22 +156,26 @@ http://packages.ros.org/ros2/ubuntu \$(. /etc/os-release && echo \$UBUNTU_CODENA
        [ -d "$HOME/uros_ws/install/micro_ros_agent" ]; then
         ok "already available"
     else
-        # Not packaged for Humble, so it is built against the Fast DDS that
-        # ships with ROS - that is what keeps it wire-compatible with the graph.
-        say "building Micro-XRCE-DDS-Agent from source (no package exists for $ROS_DISTRO_WANT)"
-        run $SUDO apt-get install -y -qq build-essential cmake git
-        run rm -rf /tmp/uros_agent
-        run git clone -b v2.4.2 --depth 1 \
-            https://github.com/eProsima/Micro-XRCE-DDS-Agent.git /tmp/uros_agent
+        # No apt package exists for Humble. Building Micro-XRCE-DDS-Agent
+        # directly does not work either: its superbuild pins a FastDDS tag
+        # that no longer exists upstream, and without the superbuild it needs
+        # microxrcedds_client, which ROS does not ship. micro_ros_setup is the
+        # supported route and resolves those versions itself.
+        say "building the agent with micro_ros_setup (no package exists for $ROS_DISTRO_WANT)"
+        run $SUDO apt-get install -y -qq build-essential cmake git python3-rosdep
+        run mkdir -p "$HOME/uros_ws/src"
+        run git clone -b "$ROS_DISTRO_WANT" --depth 1 \
+            https://github.com/micro-ROS/micro_ros_setup.git \
+            "$HOME/uros_ws/src/micro_ros_setup"
         run bash -c "source /opt/ros/$ROS_DISTRO_WANT/setup.bash && \
-            cmake -S /tmp/uros_agent -B /tmp/uros_agent/build \
-              -DCMAKE_INSTALL_PREFIX=\$HOME/.local \
-              -DCMAKE_PREFIX_PATH=/opt/ros/$ROS_DISTRO_WANT \
-              -DUAGENT_BUILD_EXECUTABLE=ON -DUAGENT_USE_SYSTEM_FASTDDS=ON \
-              -DUAGENT_USE_SYSTEM_FASTCDR=ON \
-              -DUAGENT_SUPERBUILD=OFF \
-              -DCMAKE_BUILD_TYPE=Release && \
-            cmake --build /tmp/uros_agent/build --target install -j\$(nproc)"
+            cd '$HOME/uros_ws' && \
+            rosdep install --from-paths src --ignore-src -y && \
+            colcon build && \
+            source install/local_setup.bash && \
+            ros2 run micro_ros_setup create_agent_ws.sh && \
+            ros2 run micro_ros_setup build_agent.sh"
+        ok "agent built in ~/uros_ws - add it to your shell with:"
+        say "  echo 'source ~/uros_ws/install/local_setup.sh' >> ~/.bashrc"
     fi
 
     head "workspace"
