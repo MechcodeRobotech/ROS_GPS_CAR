@@ -73,6 +73,7 @@ RUN git clone -b v2.4.2 --depth 1 \
         -DUAGENT_BUILD_EXECUTABLE=ON \
         -DUAGENT_USE_SYSTEM_FASTDDS=ON \
         -DUAGENT_USE_SYSTEM_FASTCDR=ON \
+        -DUAGENT_SUPERBUILD=OFF \
         -DCMAKE_BUILD_TYPE=Release \
     && cmake --build /tmp/agent/build --target install -j"$(nproc)" \
     && rm -rf /tmp/agent
