@@ -54,6 +54,14 @@
   ],
   "log": [
     {
+      "ts": "2026-08-27 07:05:00",
+      "step": "T91,T92",
+      "what": "Docker works end to end: image builds, stack comes up healthy, web UI serves, 19 topics visible. Getting there found six separate causes, every one a real defect rather than a tweak - the agent could not be built from source at all (three different dead ends, now micro_ros_setup), rosdep needed apt lists, my rewrite had deleted the apt layer taking pip and curl, rosdep could not resolve micro_ros_agent, the container refused to start because /dev/ttyUSB0 was absent, and docker exec had no ros2 because exec skips the entrypoint. The device one matters most: it meant the stack could not start on any machine without the robot plugged in, which is the normal case.",
+      "files": "tools/publish_branches.sh, tools/qc.py",
+      "promoted": true,
+      "problem": null
+    },
+    {
       "ts": "2026-08-27 06:35:00",
       "step": "T20-T24",
       "what": "Position EKF landed. GPS now corrects position instead of it being open-loop dead reckoning. Measurement variance comes from the receiver's own hdop and fix quality, so an RTK receiver improves the result with no code change, and outlier gating stops a multipath jump yanking the estimate - while still giving in after five rejections so it cannot sit stale and confident. Seven tests measured against known truth; two failed first and both were my tests rather than the filter, which is recorded in the file. 139 host tests pass.",
@@ -724,11 +732,11 @@
       "phase": "C",
       "title": "Extend telemetry with covariance + EKF health",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "firmware + telemetry.py + web/app.js",
       "test": "QC check 11 passes",
-      "result": "next: publish covariance + EKF health in telemetry, all 3 sides together",
-      "ts": ""
+      "result": "PASS - 44 fields across firmware, telemetry.py and app.js",
+      "ts": "2026-08-27 07:05:00"
     },
     {
       "id": "T71",
@@ -1252,22 +1260,22 @@
       "phase": "X",
       "title": "Docker image builds end to end",
       "needs": "PC",
-      "state": "IN PROGRESS",
+      "state": "DONE",
       "files": "tools/publish_branches.sh",
       "test": "docker compose build succeeds",
-      "result": "3 causes ruled out; now on micro_ros_setup + apt fix",
-      "ts": ""
+      "result": "PASS - image builds, 2.34 GB, after 6 distinct causes",
+      "ts": "2026-08-27 07:05:00"
     },
     {
       "id": "T92",
       "phase": "X",
       "title": "Docker stack runs and serves, agent reachable",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "-",
       "test": "compose up -> healthy, ros2 topic list inside the container",
-      "result": "",
-      "ts": ""
+      "result": "PASS - stack healthy, UI 200, 19 topics, agent in image",
+      "ts": "2026-08-27 07:05:00"
     },
     {
       "id": "T93",
