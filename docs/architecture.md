@@ -283,3 +283,47 @@ Without a terminal, the **Topics tab** in the web UI shows the whole graph —
 every topic, its type, rate and live value. That is the reason it exists:
 Windows has no `ros2` CLI, and inside Docker the graph is not reachable from the
 host either.
+
+---
+
+## Why micro-ROS and not plain UDP
+
+A fair question, since the ESP32 already speaks UDP and the telemetry is a
+single packed array. Writing a small custom UDP protocol would remove the agent
+entirely.
+
+**The ESP32 cannot run real ROS 2.** A full DDS stack does not fit on it —
+micro-ROS exists precisely because of that. So the real choice is micro-ROS
+versus a hand-written protocol, not micro-ROS versus "proper" ROS 2.
+
+| | micro-ROS (what this uses) | hand-written UDP |
+|---|---|---|
+| Host tooling | `ros2 topic echo`, `ros2 bag`, rviz, plotjuggler all work unchanged | none of it; you write every tool yourself |
+| Message format | typed, versioned, generated | you own serialisation, endianness, versioning |
+| Adding a signal | add a field, QC checks both sides agree | edit two parsers by hand and hope |
+| Reconnect / discovery | handled, including the agent going away and coming back | you write it |
+| Extra moving part | **the agent must be running** | none |
+| Flash and RAM | ~930 KB flash, ~81 KB RAM as built | much smaller |
+| Failure mode | agent dies, robot vanishes from the graph | fewer parts to fail |
+
+**This project keeps micro-ROS**, for two concrete reasons.
+
+The host side already depends on the ROS graph: five nodes, launch files, and a
+web server that reads topics. Replacing the transport means rewriting all of it
+and losing every off-the-shelf tool — for a robot whose whole point is
+navigation, throwing away rviz and bag files is a bad trade.
+
+And the efficiency argument mostly does not apply here, because the design
+already sidesteps it. Telemetry is **one** `Float32MultiArray` of 42 floats
+rather than 42 topics, which is a packed binary payload wearing a ROS message
+as a wrapper. The per-message DDS overhead people worry about is paid once per
+cycle, not forty-two times.
+
+The agent being a required extra process is the genuine cost. It is why the
+robot disappears from `ros2 topic list` the moment the agent stops, and why the
+Docker image builds one from source. That is a real downside, accepted
+knowingly.
+
+**When plain UDP would win:** a sensor node that only ever ships one fixed
+struct to one consumer, on hardware too small for micro-ROS, where nobody needs
+bags or rviz. That is not this robot.
