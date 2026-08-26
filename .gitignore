@@ -48,3 +48,7 @@ PNG_Schematic*.zip
 
 # --- tooling state --------------------------------------------------------
 .claude/
+
+# windows test output, regenerated on every run
+windows_test_report.txt
+windows_test_report.json
