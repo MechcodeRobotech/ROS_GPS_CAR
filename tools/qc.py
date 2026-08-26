@@ -468,9 +468,21 @@ def check_compose_merge():
         check(False, 'both compose files are extractable from the publisher')
         return
 
+    # Compose 2.24+ understands !reset, which is how a value is really removed
+    # in an override. PyYAML does not know the tag, so teach it: for our purpose
+    # the tag means "this key goes away", which we model as None.
+    class ComposeLoader(yaml.SafeLoader):
+        pass
+
+    ComposeLoader.add_constructor(
+        '!reset', lambda loader, node: None)
+    ComposeLoader.add_constructor(
+        '!override', lambda loader, node: loader.construct_sequence(node)
+        if isinstance(node, yaml.SequenceNode) else loader.construct_mapping(node))
+
     try:
-        base = yaml.safe_load(base_txt)
-        over = yaml.safe_load(over_txt)
+        base = yaml.load(base_txt, Loader=ComposeLoader)
+        over = yaml.load(over_txt, Loader=ComposeLoader)
     except Exception as exc:
         check(False, 'compose files parse as YAML (%s)' % exc)
         return
@@ -489,8 +501,13 @@ def check_compose_merge():
           'windows override publishes UDP 8888 for the robot')
     check(any('8080' in p for p in ports),
           'windows override publishes TCP 8080 for the browser')
-    check(merged.get('devices') == [],
-          'windows override clears devices (no /dev/ttyUSB0 to bind)')
+    # Compose MERGES device lists rather than replacing them, so `devices: []`
+    # silently leaves /dev/ttyUSB0 in place and the container will not start on
+    # Windows. Only the !reset tag actually removes it. This check previously
+    # asserted the merged value was [] - which passed while the real
+    # `docker compose config` still emitted the device.
+    check('devices: !reset' in over_txt,
+          'windows override uses !reset to really drop devices (a bare [] does not)')
     check('healthcheck' in merged, 'healthcheck survives the merge')
 
 

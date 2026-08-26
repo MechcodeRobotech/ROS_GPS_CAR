@@ -180,7 +180,12 @@ services:
     ports:
       - "8080:8080/tcp"
       - "8888:8888/udp"
-    devices: []
+    # !reset, not [] - Compose MERGES device lists rather than replacing them,
+    # so an empty list leaves /dev/ttyUSB0 in place and the container fails to
+    # start on Windows, where that device does not exist. Verified with
+    # `docker compose config`: with [] the device survived, with !reset it is
+    # gone. Needs Compose 2.24 or newer.
+    devices: !reset []
 WINCOMPOSE
 
     cat > "$wt/install.sh" <<'INSTALL'

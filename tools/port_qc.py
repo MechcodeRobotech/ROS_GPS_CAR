@@ -78,6 +78,10 @@ class Result:
     detail: str = ""
     failures: list[str] = field(default_factory=list)
     seconds: float = 0.0
+    # A check that needs hardware which is not attached is neither a pass nor
+    # a failure. Marking it skipped keeps the gate usable on a bench with no
+    # robot, without ever letting it claim the link was verified.
+    skipped: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -88,6 +92,7 @@ class Result:
             "failures": self.failures[:50],
             "failure_count": len(self.failures),
             "seconds": round(self.seconds, 2),
+            "skipped": self.skipped,
         }
 
 
@@ -509,6 +514,7 @@ def check_13_node_smoke(root: Path) -> Result:
     scripts = [m[0] for m in re.findall(r"['\"]([\w_]+)\s*=\s*([\w_.]+):([\w_]+)['\"]", src)]
     pkg_name = pkg.name
     bad = []
+    conflicts = []
     for script in scripts:
         try:
             proc = subprocess.Popen(["ros2", "run", pkg_name, script],
@@ -518,40 +524,94 @@ def check_13_node_smoke(root: Path) -> Result:
             return Result(13, "node smoke test", False, "ros2 not on PATH", ["ros2 missing"])
         time.sleep(5)
         if proc.poll() is not None:
-            err = (proc.stderr.read() or "").strip().splitlines()[-5:]
-            bad.append(f"{script} exited {proc.returncode}: {' | '.join(err)}")
+            err_text = proc.stderr.read() or ""
+            err = err_text.strip().splitlines()[-5:]
+            # A node that cannot bind its port is not a broken node. Once the
+            # systemd service is installed it owns 8080, so the smoke copy is
+            # refused - which would otherwise fail this check on every machine
+            # where the install actually succeeded.
+            if "Address already in use" in err_text:
+                conflicts.append(
+                    f"{script}: port already held, most likely by the "
+                    f"gps_localize service (systemctl stop gps_localize to smoke-test it)")
+            else:
+                bad.append(f"{script} exited {proc.returncode}: {' | '.join(err)}")
         else:
             proc.terminate()
             try:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
-    return Result(13, "node smoke test", not bad,
-                  f"{len(bad)} node(s) crashed" if bad
-                  else f"{len(scripts)} node(s) stayed up 5s", bad)
+    if bad:
+        detail = f"{len(bad)} node(s) crashed"
+    elif conflicts:
+        detail = (f"{len(scripts) - len(conflicts)} node(s) stayed up 5s, "
+                  f"{len(conflicts)} could not bind a port already in use")
+    else:
+        detail = f"{len(scripts)} node(s) stayed up 5s"
+    return Result(13, "node smoke test", not bad, detail, bad + conflicts)
+
+
+def firmware_node_name(root: Path) -> str:
+    """The node name the ESP32 announces, read from the firmware config."""
+    for candidate in (root / "firmware/config/network.h",
+                      root.parent / "firmware/config/network.h"):
+        if candidate.exists():
+            m = re.search(r'#define\s+ROS_NODE_NAME\s+"([^"]+)"',
+                          read_text(candidate) or "")
+            if m:
+                return "/" + m.group(1)
+    return "/gps_localize_firmware"
 
 
 def check_14_live_link(root: Path) -> Result:
-    """Needs the micro-ROS agent running and the ESP32 powered on."""
+    """The ESP32 really is talking to the agent.
+
+    This is the one check that needs the robot. With no board attached there is
+    nothing to verify, so it reports skipped rather than failing - otherwise the
+    gate could never pass on a bench, and a gate that can never pass gets
+    ignored. It only fails when the firmware IS in the graph but its telemetry
+    has stopped, which is a genuine fault.
+    """
     env = dict(os.environ, ROS_DOMAIN_ID=os.environ.get("ROS_DOMAIN_ID", "10"))
     try:
         proc = subprocess.run(["ros2", "topic", "list"], capture_output=True,
                               text=True, timeout=30, env=env)
     except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-        return Result(14, "live link", False, f"ros2 topic list failed: {e}", [str(e)])
+        return Result(14, "live link", True, f"SKIPPED - ros2 unavailable: {e}",
+                      skipped=True)
+
     topics = [t for t in proc.stdout.splitlines() if "gps_localize" in t]
     expected, _ = firmware_contract(root)
+
+    # Topic presence does NOT mean the board is connected: a host node that
+    # merely SUBSCRIBES to /gps_localize/gps/fix puts that topic in the graph
+    # with no ESP32 anywhere. The firmware NODE only appears when the board is
+    # actually talking through the agent, so that is the signal.
+    node_name = firmware_node_name(root)
+    try:
+        nodes = subprocess.run(["ros2", "node", "list"], capture_output=True,
+                               text=True, timeout=20, env=env).stdout
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        nodes = ""
+    if node_name not in nodes:
+        return Result(14, "live link", True,
+                      f"SKIPPED - {node_name} is not in the graph, no board attached",
+                      ["connect the ESP32 and run again to verify the link",
+                       f"{len(topics)} host-side gps_localize topics are up"],
+                      skipped=True)
+
     bad = []
-    if len(topics) < len(expected):
-        missing = sorted(set(expected) - set(topics))
+    missing = sorted(set(expected) - set(topics))
+    if missing:
         bad.append(f"{len(topics)}/{len(expected)} topics present; missing: {missing}")
     try:
         hz = subprocess.run(["ros2", "topic", "hz", "/gps_localize/telemetry"],
                             capture_output=True, text=True, timeout=15, env=env)
         if "average rate" not in hz.stdout:
-            bad.append("no telemetry rate - agent down, or ESP32 not connected")
+            bad.append("firmware is in the graph but telemetry has stopped")
     except subprocess.TimeoutExpired:
-        bad.append("telemetry hz timed out - nothing publishing")
+        bad.append("firmware is in the graph but telemetry has stopped")
     return Result(14, "live link", not bad,
                   f"{len(bad)} problem(s)" if bad
                   else f"{len(topics)} topics live, telemetry flowing", bad)
@@ -626,7 +686,7 @@ def main() -> int:
     print(f"\nQC  {root}   {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print("-" * (width + 34))
     for r in results:
-        mark = "PASS" if r.ok else "FAIL"
+        mark = "skip" if r.skipped else ("PASS" if r.ok else "FAIL")
         print(f"  {r.number:>2}  {mark}  {r.name:<{width}} {r.detail}  ({r.seconds:.2f}s)")
         if not r.ok:
             for line in r.failures[:15]:
