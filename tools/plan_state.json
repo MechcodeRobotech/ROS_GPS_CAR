@@ -54,6 +54,22 @@
   ],
   "log": [
     {
+      "ts": "2026-08-27 02:05:00",
+      "step": "T15-T19",
+      "what": "All six failing host tests resolved by cause, not by adjusting expectations. Two were real firmware bugs: the estimator's anti-creep floor trapped the speed estimate at zero forever (the robot would have read 0 m/s at low speed, which is exactly what the waypoint controller relies on), and that same bug was why the GPS-course test failed - speed never exceeded align_min_mps. The PIDF deadband left d_init set, so the first D kick after a setpoint step went through unfiltered. Two were wrong test data: 2.0 A at 12 V through 5 ohm leaves 12.9 rpm of back-EMF and is not a stall, and the model-fallback test ran two time constants against a tolerance needing four. 124/124 pass.",
+      "files": "state_estimator.h, PIDF.cpp, test_motor_model.cpp, test_estimator.cpp",
+      "promoted": true,
+      "problem": null
+    },
+    {
+      "ts": "2026-08-27 02:00:00",
+      "step": "T71-T75",
+      "what": "Power sensing corrected to match the wiring, closing the blocker. Pack voltage now comes from the motor rails; the processor INA226 is reported as the ESP32 rail plus module current, which is what it actually measures. A new lib/power/power_monitor.h keeps that mapping in one place instead of spread through main.cpp. Telemetry grew to 42 fields, tiers retiered for 3S, diode drops set to your measured 1.81/1.90 V.",
+      "files": "power_monitor.h, power.h, motor.h, safety_manager.h, main.cpp, telemetry.py",
+      "promoted": true,
+      "problem": null
+    },
+    {
       "ts": "2026-08-27 01:55:00",
       "step": "T13",
       "what": "Added the task board to plan.html: 66 tasks with phase, hardware needed, state, files, the test that proves each one, and its last result. A 'waiting on hardware' panel above it groups the blocked tasks by the part they need.",
@@ -257,10 +273,10 @@
   "problems": [
     {
       "ts": "2026-08-27 00:40:00",
-      "severity": "MEDIUM",
+      "severity": "RESOLVED",
       "what": "6 host tests still fail, in the estimator, motor model and PIDF: derivative filter smoothing, GPS course winning while moving, speed following GPS, speed falling back to the model, and stall detect/clear.",
-      "state": "OPEN - pre-existing, identical on the untouched Windows copy, unrelated to the port",
-      "impact": "Left alone deliberately. Changing the expectations to make them pass could hide a real bug in the estimator that steers the robot. Needs a decision on whether the test or the algorithm is wrong."
+      "state": "RESOLVED 02:05 - all 124 pass",
+      "impact": "Two were real firmware bugs that would have affected the robot; two were wrong fixtures."
     },
     {
       "ts": "2026-08-27 00:06:00",
@@ -486,8 +502,8 @@
       "state": "DONE",
       "files": "tools/, _backup/",
       "test": "both QC suites still pass",
-      "result": "PASS - removed, QC green after 2 real fixes",
-      "ts": "2026-08-27 01:50:00"
+      "result": "PASS - removed, QC green",
+      "ts": "2026-08-27 02:05:00"
     },
     {
       "id": "T12",
@@ -505,11 +521,11 @@
       "phase": "A",
       "title": "Task board in plan.html and its generator",
       "needs": "PC",
-      "state": "IN PROGRESS",
+      "state": "DONE",
       "files": "tools/planhtml.py, plan_state.json",
       "test": "plan.html renders every task with its test result",
-      "result": "",
-      "ts": ""
+      "result": "PASS - task board live with filters",
+      "ts": "2026-08-27 02:05:00"
     },
     {
       "id": "T14",
@@ -527,55 +543,55 @@
       "phase": "B",
       "title": "Diagnose test_speed_follows_gps + falls_back_to_model",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "estimator or test",
       "test": "root cause recorded, correct side fixed",
-      "result": "",
-      "ts": ""
+      "result": "PASS - firmware bug: creep floor trapped speed at 0",
+      "ts": "2026-08-27 02:05:00"
     },
     {
       "id": "T16",
       "phase": "B",
       "title": "Diagnose test_gps_course_wins_while_moving",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "estimator or test",
       "test": "root cause recorded, correct side fixed",
-      "result": "",
-      "ts": ""
+      "result": "PASS - same root cause as T15, fixed with it",
+      "ts": "2026-08-27 02:05:00"
     },
     {
       "id": "T17",
       "phase": "B",
       "title": "Diagnose test_derivative_filter_smooths",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "PIDF or test",
       "test": "root cause recorded, correct side fixed",
-      "result": "",
-      "ts": ""
+      "result": "PASS - firmware bug: d_init left set after deadband",
+      "ts": "2026-08-27 02:05:00"
     },
     {
       "id": "T18",
       "phase": "B",
       "title": "Diagnose the two stall tests",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "motor model or test",
       "test": "root cause recorded, correct side fixed",
-      "result": "",
-      "ts": ""
+      "result": "PASS - test data: 2.0 A is not a stall, 2.3 A is",
+      "ts": "2026-08-27 02:05:00"
     },
     {
       "id": "T19",
       "phase": "B",
       "title": "Full host suite green",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "-",
       "test": "pio test -e native -> 0 failed",
-      "result": "",
-      "ts": ""
+      "result": "PASS - 124/124 host tests",
+      "ts": "2026-08-27 02:05:00"
     },
     {
       "id": "T20",
@@ -648,55 +664,55 @@
       "phase": "D1",
       "title": "Document each INA's real measurement points; split the misnamed pair",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "power.h, main.cpp",
       "test": "5 V on the processor INA no longer feeds battery_v",
-      "result": "",
-      "ts": ""
+      "result": "PASS - PowerMonitor owns all 4 sensors, pack from motor rail",
+      "ts": "2026-08-27 02:05:00"
     },
     {
       "id": "T72",
       "phase": "D1",
       "title": "Battery voltage from the motor rail, invalid when the relay is open",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "main.cpp, safety_manager.h",
       "test": "relay open -> battery_valid false, no latch",
-      "result": "",
-      "ts": ""
+      "result": "PASS - relay open -> packValid false, no latch",
+      "ts": "2026-08-27 02:05:00"
     },
     {
       "id": "T73",
       "phase": "D1",
       "title": "Regression test for the e-stop latch bug",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "test_safety_gps.cpp",
       "test": "5 V must not latch; a real 9.5 V pack still must",
-      "result": "",
-      "ts": ""
+      "result": "PASS - 4 regression tests, all green",
+      "ts": "2026-08-27 02:05:00"
     },
     {
       "id": "T74",
       "phase": "D1",
       "title": "Diode defaults corrected to measured: A 1.81 V, B 1.90 V",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "firmware/config/motor.h",
       "test": "motor model output shifts accordingly",
-      "result": "",
-      "ts": ""
+      "result": "PASS - 1.81 V / 1.90 V measured, in place",
+      "ts": "2026-08-27 02:05:00"
     },
     {
       "id": "T75",
       "phase": "D1",
       "title": "Battery tiers: warn 11.4, soft 11.0, hard cut 10.7, clear 11.1",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "safety.h, safety_manager.h",
       "test": "11.5 / 11.2 / 10.9 / 10.6 V hit the intended tier",
-      "result": "",
-      "ts": ""
+      "result": "PASS - tiers 11.4 / 11.0 / 10.7 / 11.1 verified per band",
+      "ts": "2026-08-27 02:05:00"
     },
     {
       "id": "T30",
