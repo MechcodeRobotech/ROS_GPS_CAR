@@ -12,8 +12,10 @@ one spelling and written with another. That is what this script checks.
 Exit code 0 = clean, 1 = something to fix. Safe to run any time, it only reads.
 """
 
+import os
 import pathlib
 import re
+import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -492,6 +494,43 @@ def check_compose_merge():
     check('healthcheck' in merged, 'healthcheck survives the merge')
 
 
+
+def check_installer():
+    """The one-file installer must be exercised, not just written.
+
+    Almost everything it does needs root, so it cannot be run for real here.
+    --dry-run walks the identical decision tree and prints what it would do,
+    and --check runs the detection half; both are safe and both are run. That
+    is what stops the installer being the one script nobody tests until it
+    breaks on somebody else's machine.
+    """
+    section('installer')
+    script = ROOT / 'setup' / 'install.sh'
+    if not script.exists():
+        check(False, 'setup/install.sh exists')
+        return
+
+    rc = subprocess.run(['bash', '-n', str(script)], capture_output=True, text=True)
+    check(rc.returncode == 0, 'install.sh is valid bash %s'
+          % (rc.stderr.strip()[:120] if rc.returncode else ''))
+    check(os.access(script, os.X_OK), 'install.sh is executable')
+
+    for args, label in ((['--check'], '--check'),
+                        (['--dry-run'], '--dry-run'),
+                        (['--dry-run', '--docker'], '--dry-run --docker'),
+                        (['--uninstall', '--dry-run'], '--uninstall --dry-run')):
+        r = subprocess.run(['bash', str(script)] + args,
+                           capture_output=True, text=True, timeout=120, cwd=str(ROOT))
+        # --docker on a non-docker checkout reports a missing compose file and
+        # exits non-zero on purpose, so accept that specific outcome.
+        expected_fail = ('--docker' in args and
+                         'not the docker branch' in (r.stdout + r.stderr))
+        check(r.returncode == 0 or expected_fail,
+              'install.sh %s runs cleanly' % label)
+        check('would run: rm -rf /' not in r.stdout.replace(str(ROOT), 'ROOT'),
+              'install.sh %s never targets a bare root path' % label)
+
+
 def main():
     main_cpp = read(FW / 'src' / 'main.cpp')
     telemetry_py = read(PKG / 'gps_localize' / 'telemetry.py')
@@ -512,6 +551,7 @@ def main():
     check_firmware_layout()
     check_branch_publisher()
     check_compose_merge()
+    check_installer()
     check_native_tests()
     check_viewer_build()
 

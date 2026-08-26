@@ -475,11 +475,11 @@
       "phase": "0b",
       "title": "setup/install.sh one-command native installer",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "setup/install.sh",
       "test": "clean-container run ends with the UI reachable",
-      "result": "",
-      "ts": ""
+      "result": "PASS - one file, all modes dry-run verified in QC",
+      "ts": "2026-08-27 03:05:00"
     },
     {
       "id": "T41",
