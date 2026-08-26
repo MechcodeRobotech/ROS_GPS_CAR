@@ -428,6 +428,70 @@ def check_js_syntax():
             check(False, '%s: %s' % (js.name, str(exc).splitlines()[0]))
 
 
+
+def check_compose_merge():
+    """The Windows Docker override must really override.
+
+    network_mode: host is Linux-only; on Docker Desktop the container sits in
+    a VM, so "host" is that VM and the robot on your Wi-Fi can never reach the
+    agent. The override has to replace it with published ports. Compose
+    REPLACES sequences rather than appending, which is why devices must be
+    reset explicitly - get that wrong and Windows tries to bind a serial port
+    that does not exist.
+
+    Checked by extracting both compose files from the publisher and merging
+    them here, so it is verified on every run without Docker installed.
+    """
+    section('docker compose merge')
+    script = ROOT / 'tools' / 'publish_branches.sh'
+    if not script.exists():
+        return
+    try:
+        import yaml
+    except ImportError:
+        notes.append('pyyaml not installed, compose merge not checked')
+        print('  info   pyyaml not installed, skipped')
+        return
+
+    body = read(script)
+
+    def heredoc(name, marker):
+        m = re.search(r"cat > \"\$wt/%s\" <<'%s'\n(.*?)\n%s\n"
+                      % (re.escape(name), marker, marker), body, re.S)
+        return m.group(1) if m else None
+
+    base_txt = heredoc('docker-compose.yml', 'COMPOSE')
+    over_txt = heredoc('docker-compose.windows.yml', 'WINCOMPOSE')
+    if not base_txt or not over_txt:
+        check(False, 'both compose files are extractable from the publisher')
+        return
+
+    try:
+        base = yaml.safe_load(base_txt)
+        over = yaml.safe_load(over_txt)
+    except Exception as exc:
+        check(False, 'compose files parse as YAML (%s)' % exc)
+        return
+    check(True, 'both compose files parse as YAML')
+
+    svc_base = base['services']['gps_localize']
+    check(svc_base.get('network_mode') == 'host',
+          'linux uses host networking (needed for DDS discovery)')
+
+    merged = dict(svc_base)
+    merged.update(over['services']['gps_localize'])
+    ports = merged.get('ports') or []
+    check(merged.get('network_mode') != 'host',
+          'windows override drops host networking')
+    check(any('8888' in p for p in ports),
+          'windows override publishes UDP 8888 for the robot')
+    check(any('8080' in p for p in ports),
+          'windows override publishes TCP 8080 for the browser')
+    check(merged.get('devices') == [],
+          'windows override clears devices (no /dev/ttyUSB0 to bind)')
+    check('healthcheck' in merged, 'healthcheck survives the merge')
+
+
 def main():
     main_cpp = read(FW / 'src' / 'main.cpp')
     telemetry_py = read(PKG / 'gps_localize' / 'telemetry.py')
@@ -447,6 +511,7 @@ def main():
     check_firmware_headers(main_cpp)
     check_firmware_layout()
     check_branch_publisher()
+    check_compose_merge()
     check_native_tests()
     check_viewer_build()
 
