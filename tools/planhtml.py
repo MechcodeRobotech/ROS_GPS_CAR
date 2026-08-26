@@ -35,6 +35,14 @@ STATE_COLORS = {
     "PROBLEM": "bad",
 }
 SEVERITY_COLORS = {"BLOCKER": "bad", "HIGH": "warn", "MEDIUM": "run", "LOW": "todo"}
+TASK_COLORS = {
+    "DONE": "ok",
+    "IN PROGRESS": "run",
+    "TODO": "todo",
+    "BLOCKED": "warn",
+    "HW-BLOCKED": "bad",
+    "FAILED": "bad",
+}
 
 # Recovered from firmware/src/main.cpp. Rendered on the page so the contract both sides
 # must match is always in front of the user.
@@ -183,6 +191,54 @@ def render(state: dict, qc: dict | None, stamp: str) -> str:
             a(f"<tr><td class='mono'>{c['number']}</td><td>{esc(c['name'])}</td>"
               f"<td>{badge}</td><td>{esc(c['detail'])}{fails}</td>"
               f"<td class='mono'>{c['seconds']}s</td></tr>")
+        a("</table></div>")
+
+    # ---- waiting on hardware ----------------------------------------------
+    tasks = state.get("tasks", [])
+    blocked = [t for t in tasks if t["state"] == "HW-BLOCKED"]
+    if blocked:
+        by_part: dict[str, list] = {}
+        for t in blocked:
+            by_part.setdefault(t["needs"], []).append(t["id"])
+        a("<h2>Waiting on hardware</h2>")
+        a("<p class='note'>Not started, not half-built, and never marked done from a "
+          "simulation. Tell me a part has arrived and these flip to TODO.</p>")
+        a("<div class='wrap'><table>")
+        a("<tr><th>needs</th><th>count</th><th>tasks</th></tr>")
+        for part in sorted(by_part):
+            ids = by_part[part]
+            a(f"<tr><td><span class='badge bad'>{esc(part)}</span></td>"
+              f"<td class='mono'>{len(ids)}</td>"
+              f"<td class='mono note'>{esc(', '.join(ids))}</td></tr>")
+        a("</table></div>")
+
+    # ---- task board --------------------------------------------------------
+    if tasks:
+        counts: dict[str, int] = {}
+        for t in tasks:
+            counts[t["state"]] = counts.get(t["state"], 0) + 1
+        a("<h2>Tasks</h2>")
+        chips = " ".join(
+            f"<span class='badge {TASK_COLORS.get(k,'todo')}'>{esc(k)} {v}</span>"
+            for k, v in sorted(counts.items(), key=lambda kv: -kv[1]))
+        a(f"<p>{chips} &nbsp;<span class='note'>of {len(tasks)} total</span></p>")
+        a("<div class='wrap'><table>")
+        a("<tr><th>id</th><th>phase</th><th>task</th><th>needs</th><th>state</th>"
+          "<th>files</th><th>test that proves it</th><th>result</th></tr>")
+        for t in tasks:
+            cls = TASK_COLORS.get(t["state"], "todo")
+            needs_cls = "ok" if t["needs"] == "PC" else "bad"
+            res = esc(t.get("result", "")) or "<span class='note'>&mdash;</span>"
+            if t.get("ts"):
+                res += f"<div class='note mono'>{esc(t['ts'])}</div>"
+            a(f"<tr><td class='mono'><strong>{esc(t['id'])}</strong></td>"
+              f"<td class='mono note'>{esc(t['phase'])}</td>"
+              f"<td>{esc(t['title'])}</td>"
+              f"<td><span class='badge {needs_cls}'>{esc(t['needs'])}</span></td>"
+              f"<td><span class='badge {cls}'>{esc(t['state'])}</span></td>"
+              f"<td class='mono note'>{esc(t.get('files',''))}</td>"
+              f"<td class='note'>{esc(t.get('test',''))}</td>"
+              f"<td class='note'>{res}</td></tr>")
         a("</table></div>")
 
     # ---- status board ------------------------------------------------------
