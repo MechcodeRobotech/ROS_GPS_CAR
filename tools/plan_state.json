@@ -54,6 +54,22 @@
   ],
   "log": [
     {
+      "ts": "2026-08-27 06:05:00",
+      "step": "T14",
+      "what": "Built the simulation harness the EKF depends on. SimWorld integrates a true pose from commanded wheel speeds and synthesises each sensor from it with realistic error - GPS at 1 Hz with 2 m noise and dropouts, IMU with a drifting gyro bias, compass with a hard-iron offset, INA226 values consistent with the PWM. Because the truth is known, the eight new tests measure error rather than assert behaviour. Checked they can actually fail by tightening two bounds to absurd values and confirming both broke; that also measured current heading accuracy at 0.375 degrees after 20 s of driving with bias. 132 host tests pass.",
+      "files": "firmware/test/test_native/sim_world.h, test_fusion.cpp",
+      "promoted": true,
+      "problem": null
+    },
+    {
+      "ts": "2026-08-27 06:00:00",
+      "step": "docker",
+      "what": "Docker build: four distinct causes found and fixed so far. The agent could not be built from source at all (superbuild has no install target; without it microxrcedds_client is missing; with it the pinned FastDDS tag no longer exists upstream), so it now uses micro_ros_setup, the supported route and the same one that produced the agent on this machine. rosdep then failed because the apt lists had been cleared. Then pip3 was missing because my rewrite of that block had deleted the apt layer above it, which also took curl - which the healthcheck needs.",
+      "files": "tools/publish_branches.sh",
+      "promoted": true,
+      "problem": null
+    },
+    {
       "ts": "2026-08-27 04:05:00",
       "step": "priority",
       "what": "New standing priority from you: finish everything on THIS Ubuntu first, leave cross-platform work until after. Windows tasks stay in the plan but move behind the Ubuntu ones. Your Windows run found a real bug already - the viewer reported 'No module named configstore' when the actual problem was a missing pyyaml, because a broad except swallowed it. Fixed and verified by reproducing it here.",
@@ -579,11 +595,11 @@
       "phase": "B",
       "title": "sim_world.h: synthetic robot with known truth",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "firmware/test/test_native/sim_world.h",
       "test": "sim self-checks pass",
-      "result": "",
-      "ts": ""
+      "result": "PASS - SimWorld + 8 fusion tests, falsification-checked",
+      "ts": "2026-08-27 06:05:00"
     },
     {
       "id": "T15",
@@ -1283,11 +1299,11 @@
       "phase": "X",
       "title": "ROS 2 vs raw UDP: write the trade-off down",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "docs/architecture.md",
       "test": "the decision and its reasoning are recorded",
-      "result": "",
-      "ts": ""
+      "result": "PASS - written into docs/architecture.md",
+      "ts": "2026-08-27 06:05:00"
     }
   ]
 }
