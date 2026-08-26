@@ -13,6 +13,7 @@ int run_estimator_tests(void);
 int run_drive_tests(void);
 int run_motor_model_tests(void);
 int run_safety_gps_tests(void);
+int run_fusion_tests(void);
 
 int main(int, char **) {
     UNITY_BEGIN();
@@ -21,5 +22,6 @@ int main(int, char **) {
     run_drive_tests();
     run_motor_model_tests();
     run_safety_gps_tests();
+    run_fusion_tests();
     return UNITY_END();
 }
