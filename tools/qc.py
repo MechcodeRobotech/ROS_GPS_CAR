@@ -257,8 +257,10 @@ def check_firmware_headers(main_cpp):
           'config.h includes exactly the headers on disk (%d)' % len(on_disk))
     for header in included:
         check((FW / 'config' / header).exists(), '%s exists' % header)
-    # every lib header main.cpp includes must be somewhere under lib/
-    lib_headers = {p.name for p in (FW / 'lib').rglob('*.h')}
+    # Every project header main.cpp includes must exist somewhere we build
+    # from - lib/ for reusable code, src/ for this robot's own modules.
+    lib_headers = ({p.name for p in (FW / 'lib').rglob('*.h')} |
+                   {p.name for p in (FW / 'src').rglob('*.h')})
     for inc in re.findall(r'#include <([a-zA-Z0-9_]+\.h)>', main_cpp):
         if inc in lib_headers or inc.startswith(('rcl', 'rmw', 'std_msgs', 'sensor_msgs',
                                                  'nav_msgs', 'geometry_msgs', 'builtin')):
@@ -267,7 +269,7 @@ def check_firmware_headers(main_cpp):
         if inc in ('Arduino.h', 'Wire.h', 'Preferences.h', 'ESPmDNS.h', 'config.h',
                    'stdio.h', 'math.h', 'string.h', 'micro_ros_platformio.h'):
             continue
-        check(False, 'main.cpp includes <%s> but no such header is in lib/' % inc)
+        check(False, 'main.cpp includes <%s> but no such header is in lib/ or src/' % inc)
 
 
 def check_native_tests():
@@ -316,6 +318,54 @@ def check_viewer_build():
     check(not stale, 'exe is newer than web/ and config/ (rebuild with build_exe.bat if not)')
 
 
+
+def check_firmware_layout():
+    """lib/ is for reusable code, src/ is for this robot - and every header
+    must actually be reachable and linkable.
+
+    Written after moving the application headers out of lib/. Two failures came
+    out of that move and neither showed up until a build: an include path that
+    was never added, and a local library that stopped being compiled because
+    the dependency finder only discovers them from what src/main.cpp includes.
+    Both are cheap to check here and expensive to hit later.
+    """
+    section('firmware layout: lib/ vs src/')
+    ini = read(FW / 'platformio.ini')
+
+    # Application code must not live in lib/. These are the pieces that only
+    # make sense for this robot.
+    APP = {'state_estimator.h', 'motor_model.h', 'drive_controller.h',
+           'safety_manager.h', 'power_monitor.h', 'pose_ekf.h'}
+    in_lib = {p.name for p in (FW / 'lib').rglob('*.h')}
+    stray = sorted(APP & in_lib)
+    check(not stray, 'no robot-specific headers left in lib/ %s' % (stray or ''))
+
+    # Every include directory referenced by build_flags must exist, and every
+    # directory holding headers must be on an include path.
+    inc_dirs = set(re.findall(r'-I\s+(\S+)', ini))
+    missing = sorted(d for d in inc_dirs if not (FW / d).is_dir())
+    check(not missing, 'every -I path in platformio.ini exists %s' % (missing or ''))
+
+    header_dirs = {str(p.parent.relative_to(FW))
+                   for p in list((FW / 'src').rglob('*.h')) + list((FW / 'lib').rglob('*.h'))}
+    # lib/<name>/ is added automatically by PlatformIO; src subdirectories are not.
+    need_explicit = {d for d in header_dirs if d.startswith('src/')}
+    unreachable = sorted(d for d in need_explicit if d not in inc_dirs)
+    check(not unreachable,
+          'every src/ header directory is on an include path %s' % (unreachable or ''))
+
+    # A local library whose .cpp must be linked has to be named in lib_deps,
+    # or the header resolves and the link fails on a missing symbol.
+    for lib_dir in sorted((FW / 'lib').iterdir()):
+        if not lib_dir.is_dir() or not list(lib_dir.glob('*.cpp')):
+            continue
+        used = any(lib_dir.name.lower() in read(p).lower()
+                   for p in (FW / 'src').rglob('*.h'))
+        if used:
+            check(re.search(r'^\s*%s\s*$' % re.escape(lib_dir.name), ini, re.M) is not None,
+                  'local library %s with a .cpp is declared in lib_deps' % lib_dir.name)
+
+
 def main():
     main_cpp = read(FW / 'src' / 'main.cpp')
     telemetry_py = read(PKG / 'gps_localize' / 'telemetry.py')
@@ -332,6 +382,7 @@ def main():
     check_design_system(read(WEB / 'style.css'), read(WEB / 'index.html'))
     check_yaml(py_all)
     check_firmware_headers(main_cpp)
+    check_firmware_layout()
     check_native_tests()
     check_viewer_build()
 

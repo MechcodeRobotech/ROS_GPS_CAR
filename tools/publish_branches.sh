@@ -8,7 +8,7 @@
 #
 #   workspace  gps_localize_ws, webapp, tools, setup, docs   (no firmware)
 #   firmware   firmware, tools, setup, docs                  (no ROS, no web)
-#   docker     the workspace subset + Dockerfile/compose     (no ROS install)
+#   docker     workspace + firmware + Dockerfile/compose      (no ROS install)
 #
 # Each branch gets its own git worktree under .git/branch-worktrees, the subset
 # is rsynced in with --delete, and the result is committed and pushed. Running
@@ -37,7 +37,7 @@ subset_for() {
     case "$1" in
         workspace) echo "gps_localize_ws webapp tools setup docs .gitignore README.md" ;;
         firmware)  echo "firmware tools setup docs .gitignore README.md" ;;
-        docker)    echo "gps_localize_ws webapp tools setup docs .gitignore README.md" ;;
+        docker)    echo "gps_localize_ws webapp firmware tools setup docs .gitignore README.md" ;;
         *) return 1 ;;
     esac
 }
@@ -77,8 +77,13 @@ RUN git clone -b v2.4.2 --depth 1 \
     && cmake --build /tmp/agent/build --target install -j"$(nproc)" \
     && rm -rf /tmp/agent
 
+# PlatformIO, so the ESP32 firmware can be built and flashed from the same
+# container. Kept in its own layer: it is large and changes rarely.
+RUN pip3 install --no-cache-dir platformio
+
 WORKDIR /ws
 COPY gps_localize_ws/src ./src
+COPY firmware /firmware
 RUN . /opt/ros/humble/setup.sh \
     && rosdep install --from-paths src --ignore-src -y \
     && colcon build --symlink-install
@@ -86,7 +91,12 @@ RUN . /opt/ros/humble/setup.sh \
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
+# Flashing needs the board's serial port; docker-compose passes /dev/ttyUSB0
+# through. Build the firmware with:
+#   docker compose exec gps_localize pio run -e wifi -d /firmware
+# and flash by adding -t upload.
 ENV ROS_DOMAIN_ID=10
+ENV PLATFORMIO_CORE_DIR=/root/.platformio
 EXPOSE 8080 8888/udp
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["ros2", "launch", "gps_localize", "bringup.launch.py"]
@@ -123,6 +133,9 @@ services:
     # Waypoints, runtime config and bug reports must outlive the container.
     volumes:
       - gps_localize_data:/root/.gps_localize
+      # PlatformIO's toolchain cache is ~1.5 GB; keeping it in a volume means
+      # it survives a rebuild instead of being downloaded again.
+      - gps_localize_pio:/root/.platformio
 
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/"]
@@ -133,6 +146,7 @@ services:
 
 volumes:
   gps_localize_data:
+  gps_localize_pio:
 COMPOSE
 
     cat > "$wt/install.sh" <<'INSTALL'
@@ -167,6 +181,68 @@ docker compose up -d --build
 echo
 echo "web UI: http://$(hostname -I | awk '{print $1}'):8080"
 INSTALL
+    cat > "$wt/README.md" <<'DOCKERREADME'
+# GPS_Localize - Docker
+
+Runs the whole robot stack without installing ROS 2 on the machine: the
+micro-ROS agent, the navigation nodes and the web UI, plus PlatformIO so the
+ESP32 firmware can be built and flashed from the same container.
+
+## Linux
+
+```bash
+docker compose up -d
+```
+
+Uses host networking, so ROS 2 discovery, the agent on UDP 8888 and USB
+flashing all behave exactly as they do in a native install.
+
+## Windows and macOS
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.windows.yml up -d
+```
+
+`network_mode: host` does not exist on Docker Desktop - the container sits in
+a VM, so "host" is that VM rather than your PC. The override publishes the two
+ports that actually need to cross the boundary instead:
+
+| what | port |
+|---|---|
+| ESP32 to the agent | UDP 8888 |
+| browser to the web UI | TCP 8080 |
+
+Every ROS 2 node and the agent run inside this one container, so DDS discovery
+never crosses the boundary and does not need multicast to work. **This is a
+real setup on Windows, not a demo** - the robot connects, telemetry flows and
+the UI drives it.
+
+Two things do differ:
+
+- `ros2` on the Windows host sees nothing, because there is no ROS there. Use
+  `docker compose exec gps_localize ros2 topic list`.
+- USB is not passed through to the container. Flash over Wi-Fi (OTA), flash
+  from Windows with PlatformIO directly, or attach the port to WSL first with
+  [usbipd-win](https://github.com/dorssel/usbipd-win).
+
+Set the firmware's agent address to your PC's LAN address; Docker Desktop
+forwards the published port to the container.
+
+## Firmware from inside the container
+
+```bash
+docker compose exec gps_localize pio run -e wifi -d /firmware
+docker compose exec gps_localize pio run -e wifi -d /firmware -t upload   # Linux only
+```
+
+The PlatformIO toolchain cache lives in a named volume, so it survives a
+rebuild instead of downloading ~1.5 GB again.
+
+## Web UI
+
+http://localhost:8080 , or the machine's LAN address from a phone.
+DOCKERREADME
+
     chmod +x "$wt/install.sh" "$wt/docker-entrypoint.sh"
 }
 
