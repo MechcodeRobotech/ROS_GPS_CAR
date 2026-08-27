@@ -42,6 +42,17 @@ public:
 
   /** Service the sensor. Bounded: at most max_events per call. */
   bool update(uint8_t max_events = 8) {
+    // Never touch the driver if begin() failed. The Adafruit BNO08x library
+    // leaves its SHTP state uninitialised in that case, so getSensorEvent()
+    // dereferences a null pointer and the ESP32 dies with
+    //     Guru Meditation Error: LoadProhibited
+    // inside shtp_service.
+    //
+    // Found on real hardware with no IMU attached: the board crashed and
+    // rebooted roughly every 15 s, forever. It matters with an IMU fitted
+    // too - a loose connector or an I2C fault at boot turns a robot that
+    // should degrade into one that crash-loops.
+    if (!ok_) return false;
     if (bno_.wasReset()) { resets_++; enableReports(); }
 
     bool got = false;

@@ -605,13 +605,23 @@ def check_14_live_link(root: Path) -> Result:
     missing = sorted(set(expected) - set(topics))
     if missing:
         bad.append(f"{len(topics)}/{len(expected)} topics present; missing: {missing}")
+
+    # 'ros2 topic hz' NEVER exits on its own, so running it with a timeout
+    # always raised TimeoutExpired and this check reported "telemetry has
+    # stopped" even while the board was publishing at 8 Hz. It only ever looked
+    # correct because it skipped when no board was attached.
+    #
+    # 'echo --once' terminates as soon as one message arrives, so it answers
+    # the actual question: is anything being published right now?
     try:
-        hz = subprocess.run(["ros2", "topic", "hz", "/gps_localize/telemetry"],
-                            capture_output=True, text=True, timeout=15, env=env)
-        if "average rate" not in hz.stdout:
-            bad.append("firmware is in the graph but telemetry has stopped")
+        echo = subprocess.run(
+            ["ros2", "topic", "echo", "--once", "/gps_localize/telemetry"],
+            capture_output=True, text=True, timeout=20, env=env)
+        if echo.returncode != 0 or "data:" not in echo.stdout:
+            bad.append("firmware is in the graph but telemetry is not arriving")
     except subprocess.TimeoutExpired:
-        bad.append("firmware is in the graph but telemetry has stopped")
+        bad.append("no telemetry message within 20 s, though the firmware node is up")
+
     return Result(14, "live link", not bad,
                   f"{len(bad)} problem(s)" if bad
                   else f"{len(topics)} topics live, telemetry flowing", bad)
