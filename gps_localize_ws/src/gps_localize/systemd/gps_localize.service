@@ -19,7 +19,13 @@ Type=simple
 User=mannaja
 WorkingDirectory=/home/mannaja/GPS_Localize
 Environment=ROS_DOMAIN_ID=10
-ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source /home/mannaja/GPS_Localize/gps_localize_ws/install/setup.bash && ros2 launch gps_localize bringup.launch.py'
+# The micro-ROS agent lives in its own workspace, built by micro_ros_setup.
+# Without sourcing it the launch file cannot find the agent package, so it
+# starts the stack WITHOUT an agent - every host node comes up, the web UI
+# works, and the robot can never connect, with nothing in the log saying so.
+# Found on hardware: the board was flashed and joined Wi-Fi, but nothing was
+# listening on UDP 8888.
+ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && [ -f $HOME/uros_ws/install/local_setup.bash ] && source $HOME/uros_ws/install/local_setup.bash; source /home/mannaja/GPS_Localize/gps_localize_ws/install/setup.bash && ros2 launch gps_localize bringup.launch.py'
 Restart=always
 RestartSec=5
 KillSignal=SIGINT

@@ -303,7 +303,7 @@ versus a hand-written protocol, not micro-ROS versus "proper" ROS 2.
 | Adding a signal | add a field, QC checks both sides agree | edit two parsers by hand and hope |
 | Reconnect / discovery | handled, including the agent going away and coming back | you write it |
 | Extra moving part | **the agent must be running** | none |
-| Flash and RAM | ~930 KB flash, ~81 KB RAM as built | much smaller |
+| Flash and RAM | 930 KB flash, 81 KB RAM as built. **Measured: the rcl/rmw/uxr/ucdr stack is 65 KB of 808 KB of symbols — 8%.** The bulk is Wi-Fi, the Arduino core and the sensor drivers, none of which a custom protocol removes | saves that 8%, not the 47% |
 | Failure mode | agent dies, robot vanishes from the graph | fewer parts to fail |
 
 **This project keeps micro-ROS**, for two concrete reasons.
@@ -323,6 +323,28 @@ The agent being a required extra process is the genuine cost. It is why the
 robot disappears from `ros2 topic list` the moment the agent stops, and why the
 Docker image builds one from source. That is a real downside, accepted
 knowingly.
+
+### Measured on the real board, 2026-08-27
+
+Numbers from the ESP32 on the bench, not estimates:
+
+| | |
+|---|---|
+| telemetry configured | 10 Hz (`PUB_TELEMETRY_DIV 10` at 100 Hz) |
+| telemetry measured | **6.2 - 8.1 Hz**, varying with Wi-Fi signal |
+| micro-ROS code size | **65 KB of 808 KB** of symbols — 8% |
+| flash / RAM total | 47.3% / 24.8% |
+
+The rate shortfall is the honest cost, and it is worth being precise about what
+causes it: it moved between 8.1 Hz at -46 dBm and 6.2 Hz at -67 dBm, so it
+tracks **radio conditions**, not CPU. micro-XRCE-DDS acknowledges reliable
+messages, so a weaker link slows the publish path. A fire-and-forget UDP
+protocol would not slow down - it would silently drop instead, which for
+telemetry is arguably worse and for commands is much worse.
+
+The size argument is weaker than it looks. Removing micro-ROS entirely would
+save 8% of the symbol bytes; the other 92% is Wi-Fi, the Arduino core and the
+sensor drivers, none of which a custom protocol removes.
 
 **When plain UDP would win:** a sensor node that only ever ships one fixed
 struct to one consumer, on hardware too small for micro-ROS, where nobody needs
