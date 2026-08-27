@@ -54,6 +54,14 @@
   ],
   "log": [
     {
+      "ts": "2026-08-27 14:25:00",
+      "step": "E01,E02",
+      "what": "First flash onto the real ESP32. It boots, degrades gracefully with no sensors attached (IMU, INA226 and compass all report missing and it carries on), and the Wi-Fi scan works - 17 to 18 APs found. Two real bugs came out of it that no simulation would have produced: the board rebooted forever when no configured network was in range, which makes it impossible to configure; and the scan gave no clue what WAS in range. Both fixed. Learned from the scan list that the PC is on a 5 GHz radio the ESP32 cannot see.",
+      "files": "firmware/src/main.cpp",
+      "promoted": true,
+      "problem": "no 2.4 GHz network configured that reaches the PC"
+    },
+    {
       "ts": "2026-08-27 07:05:00",
       "step": "T91,T92",
       "what": "Docker works end to end: image builds, stack comes up healthy, web UI serves, 19 topics visible. Getting there found six separate causes, every one a real defect rather than a tweak - the agent could not be built from source at all (three different dead ends, now micro_ros_setup), rosdep needed apt lists, my rewrite had deleted the apt layer taking pip and curl, rosdep could not resolve micro_ros_agent, the container refused to start because /dev/ttyUSB0 was absent, and docker exec had no ros2 because exec skips the entrypoint. The device one matters most: it meant the stack could not start on any machine without the robot plugged in, which is the normal case.",
@@ -343,6 +351,20 @@
     }
   ],
   "problems": [
+    {
+      "ts": "2026-08-27 14:25:00",
+      "severity": "HIGH",
+      "what": "The ESP32 cannot join any network: the only configured SSID (Teelek_IoT) is not in range. It can see @JumboPlus (-72 dBm) and @JumboPlusIoT (-73 dBm), but the PC is on @JumboPlus5GHz - a 5 GHz radio the ESP32 cannot see at all, since it is 2.4 GHz only.",
+      "state": "OPEN - needs the password for a 2.4 GHz network that reaches the PC",
+      "impact": "Blocks E03 (micro-ROS link) and everything after it. Nothing else is blocked."
+    },
+    {
+      "ts": "2026-08-27 14:25:00",
+      "severity": "RESOLVED",
+      "what": "Firmware rebooted forever when no configured network was in range, making the board impossible to configure - the console never stayed up long enough.",
+      "state": "RESOLVED - it stays up, retries every 30 s, and lists what it can see",
+      "impact": "Found only by flashing real hardware; no simulation would have shown it."
+    },
     {
       "ts": "2026-08-27 03:35:00",
       "severity": "RESOLVED",
@@ -974,33 +996,33 @@
       "phase": "E",
       "title": "Flash the board and confirm it boots",
       "needs": "ESP32+USB",
-      "state": "HW-BLOCKED",
+      "state": "DONE",
       "files": "-",
       "test": "serial shows the Wi-Fi scan and chosen network",
-      "result": "",
-      "ts": ""
+      "result": "PASS - flashed, hash verified, boots and runs",
+      "ts": "2026-08-27 14:25:00"
     },
     {
       "id": "E02",
       "phase": "E",
       "title": "Multi-network Wi-Fi picks the strongest and falls through",
       "needs": "ESP32",
-      "state": "HW-BLOCKED",
+      "state": "IN PROGRESS",
       "files": "-",
       "test": "power one AP down, it moves to the other",
-      "result": "",
-      "ts": ""
+      "result": "scan works (17-18 APs, lists all with RSSI); join blocked - no configured SSID in range",
+      "ts": "2026-08-27 14:25:00"
     },
     {
       "id": "E03",
       "phase": "E",
       "title": "micro-ROS link over the real network",
       "needs": "ESP32",
-      "state": "HW-BLOCKED",
+      "state": "BLOCKED",
       "files": "-",
       "test": "all 10 contract topics; telemetry hz steady",
-      "result": "",
-      "ts": ""
+      "result": "needs the board on the same network as the PC",
+      "ts": "2026-08-27 14:25:00"
     },
     {
       "id": "E04",
