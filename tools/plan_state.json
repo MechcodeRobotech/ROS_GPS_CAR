@@ -54,6 +54,14 @@
   ],
   "log": [
     {
+      "ts": "2026-08-27 15:05:00",
+      "step": "E02,E03",
+      "what": "The robot is on the ROS graph over Wi-Fi: /gps_localize_firmware with all 10 contract topics and telemetry at 8 Hz. mDNS found the PC by name (mannaja.local -> 10.94.163.220) rather than the stale hardcoded IP, which is exactly what that resolution chain was built for. Two more real bugs on the way: the IMU driver crashed the board when its sensor was absent, and QC check 14 used 'ros2 topic hz', which never exits, so it always timed out and claimed telemetry had stopped while the board published at 8 Hz - it had only looked correct because it skipped without hardware. Full port QC now passes 14/14 with hardware in the loop.",
+      "files": "firmware/lib/imu/imu_bno085.h, tools/port_qc.py",
+      "promoted": true,
+      "problem": null
+    },
+    {
       "ts": "2026-08-27 14:25:00",
       "step": "E01,E02",
       "what": "First flash onto the real ESP32. It boots, degrades gracefully with no sensors attached (IMU, INA226 and compass all report missing and it carries on), and the Wi-Fi scan works - 17 to 18 APs found. Two real bugs came out of it that no simulation would have produced: the board rebooted forever when no configured network was in range, which makes it impossible to configure; and the scan gave no clue what WAS in range. Both fixed. Learned from the scan list that the PC is on a 5 GHz radio the ESP32 cannot see.",
@@ -352,11 +360,11 @@
   ],
   "problems": [
     {
-      "ts": "2026-08-27 14:25:00",
-      "severity": "HIGH",
-      "what": "The ESP32 cannot join any network: the only configured SSID (Teelek_IoT) is not in range. It can see @JumboPlus (-72 dBm) and @JumboPlusIoT (-73 dBm), but the PC is on @JumboPlus5GHz - a 5 GHz radio the ESP32 cannot see at all, since it is 2.4 GHz only.",
-      "state": "OPEN - needs the password for a 2.4 GHz network that reaches the PC",
-      "impact": "Blocks E03 (micro-ROS link) and everything after it. Nothing else is blocked."
+      "ts": "2026-08-27 15:05:00",
+      "severity": "RESOLVED",
+      "what": "Firmware crashed with Guru Meditation (LoadProhibited) roughly every 15 s: ImuBno085::update() called the Adafruit driver even though begin() had failed, and getSensorEvent() dereferenced uninitialised SHTP state.",
+      "state": "RESOLVED - update() now returns early when ok_ is false",
+      "impact": "Not just a bench issue: with an IMU fitted, a loose connector or an I2C fault at boot would have crash-looped the robot instead of degrading it."
     },
     {
       "ts": "2026-08-27 14:25:00",
@@ -1007,22 +1015,22 @@
       "phase": "E",
       "title": "Multi-network Wi-Fi picks the strongest and falls through",
       "needs": "ESP32",
-      "state": "IN PROGRESS",
+      "state": "DONE",
       "files": "-",
       "test": "power one AP down, it moves to the other",
-      "result": "scan works (17-18 APs, lists all with RSSI); join blocked - no configured SSID in range",
-      "ts": "2026-08-27 14:25:00"
+      "result": "PASS - joined manny at -47 dBm in 8.6 s, strongest-first, lists all APs",
+      "ts": "2026-08-27 15:05:00"
     },
     {
       "id": "E03",
       "phase": "E",
       "title": "micro-ROS link over the real network",
       "needs": "ESP32",
-      "state": "BLOCKED",
+      "state": "DONE",
       "files": "-",
       "test": "all 10 contract topics; telemetry hz steady",
-      "result": "needs the board on the same network as the PC",
-      "ts": "2026-08-27 14:25:00"
+      "result": "PASS - /gps_localize_firmware in the graph, 10 topics, telemetry 8 Hz, mDNS found the PC by name",
+      "ts": "2026-08-27 15:05:00"
     },
     {
       "id": "E04",
@@ -1117,11 +1125,11 @@
       "phase": "E",
       "title": "Wi-Fi set from the web, with no reflash",
       "needs": "ESP32",
-      "state": "HW-BLOCKED",
+      "state": "DONE",
       "files": "-",
       "test": "add over USB, unplug, board joins by itself",
-      "result": "",
-      "ts": ""
+      "result": "PASS - network added without touching AGENT_IP; mDNS resolved mannaja.local",
+      "ts": "2026-08-27 15:05:00"
     },
     {
       "id": "E09c",
