@@ -19,7 +19,7 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import NavSatFix, NavSatStatus
-from std_msgs.msg import Float32MultiArray, String
+from gps_localize_msgs.msg import Telemetry, String
 
 from gps_localize import geo
 from gps_localize import telemetry as tel
@@ -64,7 +64,7 @@ class GpsOdom(Node):
         self.pub_pose = self.create_publisher(String, NS + '/pose/estimate', latched_qos())
 
         self.create_subscription(NavSatFix, NS + '/gps/fix', self.on_fix, 10)
-        self.create_subscription(Float32MultiArray, NS + '/telemetry', self.on_telemetry, 5)
+        self.create_subscription(Telemetry, NS + '/telemetry', self.on_telemetry, 5)
         self.create_subscription(String, NS + '/nav/cmd', self.on_cmd, 5)
         self.create_timer(0.5, self.publish_pose_estimate)
 

@@ -43,17 +43,31 @@ def section(title):
 
 # ===========================================================================
 def check_telemetry(main_cpp, telemetry_py):
-    section('telemetry array: firmware <-> telemetry.py')
-    fw_len = int(re.search(r'#define TELEMETRY_LEN (\d+)', main_cpp).group(1))
-    fw_idx = sorted({int(m) for m in re.findall(r't\[(\d+)\]\s*=', main_cpp)})
-    py_len = int(re.search(r'TELEMETRY_LEN = (\d+)', telemetry_py).group(1))
-    py_fields = re.findall(r"^\s*'([a-z0-9_]+)',", telemetry_py, re.M)
+    """The firmware sets every field the message declares.
 
-    check(fw_len == py_len, 'TELEMETRY_LEN matches (%d)' % fw_len)
-    check(fw_idx == list(range(fw_len)),
-          'firmware fills every slot 0..%d with no gaps' % (fw_len - 1))
-    check(len([f for f in py_fields][:py_len]) == py_len,
-          'telemetry.py names all %d fields' % py_len)
+    Superseded the old index check: there is no TELEMETRY_LEN and no t[i] any
+    more, because the packed Float32MultiArray became a named message. What can
+    still go wrong is a field declared in the .msg and never assigned in
+    publishTelemetry - it would publish a silent zero rather than fail, which is
+    worse than a mismatch that stops the build.
+    """
+    section('telemetry: every declared field is actually set')
+    msg = read(ROOT / 'gps_localize_ws' / 'src' / 'gps_localize_msgs' / 'msg' / 'Telemetry.msg')
+    declared = re.findall(r'^float32\s+([a-z0-9_]+)', msg, re.M)
+
+    start = main_cpp.index('static void publishTelemetry')
+    body = main_cpp[start:main_cpp.index('rcl_publish(&pub_telemetry', start)]
+    assigned = set(re.findall(r'^\s*m\.([a-z0-9_]+)\s*=', body, re.M))
+
+    never_set = [f for f in declared if f not in assigned]
+    check(not never_set,
+          'every field in Telemetry.msg is assigned in publishTelemetry %s'
+          % (never_set or '(%d fields)' % len(declared)))
+
+    unknown = sorted(assigned - set(declared))
+    check(not unknown,
+          'publishTelemetry sets nothing that the message does not declare %s'
+          % (unknown or ''))
 
 
 def check_config_selectors(main_cpp, telemetry_py, web_py):
@@ -624,6 +638,55 @@ def check_docs_current():
           % (sorted(missing)[:6] or ''))
 
 
+
+def check_telemetry_message():
+    """The named Telemetry message, and the two copies of it.
+
+    micro-ROS compiles type support into the firmware image, so the .msg has to
+    exist under firmware/extra_packages as a real directory - a symlink is not
+    followed by the builder, and the firmware branch has no ROS workspace to
+    point at. That means two copies, which is exactly the kind of duplication
+    that goes stale, so it is checked rather than trusted.
+
+    Also checks the message and telemetry.py's FIELDS still agree. FIELDS is
+    what the web UI reads by name; a field in one and not the other is a value
+    that silently reads zero.
+    """
+    section('telemetry message')
+    ws_msg = PKG.parent / 'gps_localize_msgs' / 'msg' / 'Telemetry.msg'
+    fw_msg = FW / 'extra_packages' / 'gps_localize_msgs' / 'msg' / 'Telemetry.msg'
+
+    if not ws_msg.exists():
+        check(False, 'gps_localize_msgs/msg/Telemetry.msg exists')
+        return
+    check(True, 'Telemetry.msg exists in the workspace')
+
+    check(fw_msg.exists(),
+          'firmware/extra_packages carries the message (micro-ROS needs it '
+          'compiled in, and a symlink is not followed)')
+    if not fw_msg.exists():
+        return
+    check(not fw_msg.is_symlink(),
+          'the firmware copy is a real directory, not a symlink')
+    check(read(ws_msg) == read(fw_msg),
+          'the two copies of Telemetry.msg are identical')
+
+    msg_fields = re.findall(r'^float32\s+([a-z0-9_]+)', read(ws_msg), re.M)
+    py = read(PKG / 'gps_localize' / 'telemetry.py')
+    py_fields = re.findall(r"^\s*'([a-z0-9_]+)',", py, re.M)[:len(msg_fields)]
+    check(msg_fields == py_fields,
+          'Telemetry.msg and telemetry.py FIELDS agree (%d fields)' % len(msg_fields))
+
+    # Nothing should still subscribe to telemetry as a raw array.
+    stale = []
+    for f in sorted((PKG / 'gps_localize').glob('*.py')):
+        body = read(f)
+        if re.search(r"create_subscription\(\s*Float32MultiArray[^)]*/telemetry", body):
+            stale.append(f.name)
+    check(not stale, 'no node still subscribes to telemetry as Float32MultiArray %s'
+          % (stale or ''))
+
+
 def main():
     main_cpp = read(FW / 'src' / 'main.cpp')
     telemetry_py = read(PKG / 'gps_localize' / 'telemetry.py')
@@ -632,6 +695,7 @@ def main():
     py_all = '\n'.join(read(p) for p in (PKG / 'gps_localize').glob('*.py'))
 
     print('GPS_Localize QC  -  %s' % ROOT)
+    check_telemetry_message()
     check_telemetry(main_cpp, telemetry_py)
     check_config_selectors(main_cpp, telemetry_py, web_py)
     check_topics(main_cpp, py_all)

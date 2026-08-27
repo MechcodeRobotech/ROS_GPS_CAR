@@ -283,15 +283,25 @@ def find_pkg(root: Path) -> Path | None:
     Skip names are matched against the path *relative to root*, never the absolute
     path. Pointing the gate at _work/ must still find the package inside it, even
     though "_work" is a skip name when scanning the real tree from above.
+
+    The workspace holds two packages now: gps_localize (the nodes, ament_python)
+    and gps_localize_msgs (the Telemetry message, ament_cmake). These checks are
+    about the node package - entry points, setup.py, rclpy - so the one with a
+    setup.py is the one to return. Taking whichever package.xml sorted first
+    made them test the message package and report it had no setup.py.
     """
+    found = []
     for p in sorted(root.rglob("package.xml")):
         try:
             parts = p.relative_to(root).parts
         except ValueError:
             parts = p.parts
         if not any(part in SKIP_DIRS for part in parts):
-            return p.parent
-    return None
+            found.append(p.parent)
+    for d in found:
+        if (d / "setup.py").exists():
+            return d
+    return found[0] if found else None
 
 
 def check_08_package_manifest(root: Path, files: list[Path]) -> Result:

@@ -33,6 +33,7 @@
 #include <std_msgs/msg/bool.h>
 #include <std_msgs/msg/int32.h>
 #include <std_msgs/msg/float32_multi_array.h>
+#include <gps_localize_msgs/msg/telemetry.h>
 #include <sensor_msgs/msg/imu.h>
 #include <sensor_msgs/msg/nav_sat_fix.h>
 #include <nav_msgs/msg/odometry.h>
@@ -82,7 +83,7 @@ static rcl_subscription_t sub_config;
 static nav_msgs__msg__Odometry        msg_odom;
 static sensor_msgs__msg__Imu          msg_imu;
 static sensor_msgs__msg__NavSatFix    msg_fix;
-static std_msgs__msg__Float32MultiArray msg_telemetry;
+static gps_localize_msgs__msg__Telemetry msg_telemetry;
 
 static geometry_msgs__msg__Twist      in_cmd_move;
 static geometry_msgs__msg__Twist      in_cmd_manual;
@@ -92,8 +93,8 @@ static std_msgs__msg__Bool            in_estop;
 static std_msgs__msg__Float32MultiArray in_config;
 
 //--- static payload buffers (never freed, never grown) ---
-#define TELEMETRY_LEN 44
-static float telemetry_buf[TELEMETRY_LEN];
+// TELEMETRY_LEN is gone with the packed array: the message carries named
+// fields now, so there is no length for the two sides to disagree about.
 #define CONFIG_MAX_LEN 12
 static float config_buf[CONFIG_MAX_LEN];
 
@@ -272,10 +273,9 @@ static void initMessages() {
   msg_fix.position_covariance_type =
       sensor_msgs__msg__NavSatFix__COVARIANCE_TYPE_APPROXIMATED;
 
+  // A named message needs no backing buffer: every field is a plain float in
+  // the struct, so there is nothing to size or capacity-check.
   memset(&msg_telemetry, 0, sizeof(msg_telemetry));
-  msg_telemetry.data.data     = telemetry_buf;
-  msg_telemetry.data.size     = TELEMETRY_LEN;
-  msg_telemetry.data.capacity = TELEMETRY_LEN;
 
   memset(&in_config, 0, sizeof(in_config));
   in_config.data.data     = config_buf;
@@ -482,58 +482,64 @@ static void publishFix() {
 }
 
 static void publishTelemetry(RunState state) {
-  float *t = telemetry_buf;
-  t[0]  = (float)state;
-  t[1]  = estimator.headingDeg();
-  t[2]  = drive.targetHeading();
-  t[3]  = drive.headingError();
-  t[4]  = estimator.speed();
-  t[5]  = drive.targetSpeed();
-  t[6]  = estimator.wheelLeftRpm();
-  t[7]  = estimator.wheelRightRpm();
-  t[8]  = estimator.wheelLeftMps();
-  t[9]  = estimator.wheelRightMps();
-  t[10] = estimator.yawRate() * 57.29578f;
-  t[11] = (float)drive.pwmLeft();
-  t[12] = (float)drive.pwmRight();
-  t[13] = power.packVoltage();                            // pack, from the motor rail
-  t[14] = power.moduleCurrent();                          // module draw, battery side
-  t[15] = power.motorAVoltage();
-  t[16] = power.motorACurrent();
-  t[17] = power.motorBVoltage();
-  t[18] = power.motorBCurrent();
-  t[19] = (float)gps.fixQuality();
-  t[20] = (float)gps.satellites();
-  t[21] = gps.hdop();
-  t[22] = gps.speedMps();
-  t[23] = gps.courseDeg();
-  t[24] = (float)safety.flags();
-  t[25] = (float)(ESP.getFreeHeap() / 1024);
-  t[26] = (float)loop_us;
-  t[27] = pose_ekf.hasFix() ? pose_ekf.x() : estimator.x();
-  t[28] = pose_ekf.hasFix() ? pose_ekf.y() : estimator.y();
-  t[29] = compass.headingDeg();
-  t[30] = (float)estimator.headingRef();     // 0 relative, 1 compass, 2 GPS, 3 IMU mag
-  t[31] = compass.ok() ? 1.0f : (compass.disturbed() ? 2.0f : 0.0f);
-  t[32] = (float)mag_calib_state;
-  t[33] = (float)estimator.health();         // which sensors are missing, bitfield
-  t[34] = (float)estimator.speedSource();
-  t[35] = model_left.valid()  ? model_left.rpm()  : 0.0f;   // back-EMF wheel speed
-  t[36] = model_right.valid() ? model_right.rpm() : 0.0f;
+  // Named fields, not indices. Adding a signal is one line in
+  // gps_localize_msgs/msg/Telemetry.msg plus one line here - there is no
+  // position to keep in step across three files any more.
+  gps_localize_msgs__msg__Telemetry &m = msg_telemetry;
+  m.state = (float)state;
+  m.heading_deg = estimator.headingDeg();
+  m.target_heading_deg = drive.targetHeading();
+  m.heading_error_deg = drive.headingError();
+  m.speed_mps = estimator.speed();
+  m.target_speed_mps = drive.targetSpeed();
+  m.wheel_rpm_left = estimator.wheelLeftRpm();
+  m.wheel_rpm_right = estimator.wheelRightRpm();
+  m.wheel_mps_left = estimator.wheelLeftMps();
+  m.wheel_mps_right = estimator.wheelRightMps();
+  m.yaw_rate_dps = estimator.yawRate() * 57.29578f;
+  m.pwm_left = (float)drive.pwmLeft();
+  m.pwm_right = (float)drive.pwmRight();
+  m.battery_v = power.packVoltage();                      // pack, from the motor rail
+  m.battery_a = power.moduleCurrent();                    // module draw, battery side
+  m.motor_a_v = power.motorAVoltage();
+  m.motor_a_a = power.motorACurrent();
+  m.motor_b_v = power.motorBVoltage();
+  m.motor_b_a = power.motorBCurrent();
+  m.gps_fix_quality = (float)gps.fixQuality();
+  m.gps_satellites = (float)gps.satellites();
+  m.gps_hdop = gps.hdop();
+  m.gps_speed_mps = gps.speedMps();
+  m.gps_course_deg = gps.courseDeg();
+  m.stop_flags = (float)safety.flags();
+  m.free_heap_kb = (float)(ESP.getFreeHeap() / 1024);
+  m.loop_us = (float)loop_us;
+  m.odom_x = pose_ekf.hasFix() ? pose_ekf.x() : estimator.x();
+  m.odom_y = pose_ekf.hasFix() ? pose_ekf.y() : estimator.y();
+  m.mag_heading_deg = compass.headingDeg();
+  m.heading_ref = (float)estimator.headingRef();          // 0 relative, 1 compass, 2 GPS, 3 IMU mag
+  m.mag_status = compass.ok() ? 1.0f : (compass.disturbed() ? 2.0f : 0.0f);
+  m.mag_calib_state = (float)mag_calib_state;
+  m.sensor_health = (float)estimator.health();            // which sensors are missing, bitfield
+  m.speed_source = (float)estimator.speedSource();
+  m.motor_rpm_left = model_left.valid()  ? model_left.rpm()  : 0.0f;// back-EMF wheel speed
+  m.motor_rpm_right = model_right.valid() ? model_right.rpm() : 0.0f;
+  // Motor fault bitfield. Built here rather than assigned from an outer
+  // variable: the old packed-array version computed `f` inside its own scope
+  // block, and lifting the assignment out of that block left `f` undeclared.
   {
-    uint8_t f = 0;
-    if (model_left.stalled())      f |= 1 << 0;
-    if (model_right.stalled())     f |= 1 << 1;
-    if (model_left.openCircuit())  f |= 1 << 2;
-    if (model_right.openCircuit()) f |= 1 << 3;
-    t[37] = (float)f;                        // motor fault bitfield
+    uint8_t faults = 0;
+    if (model_left.stalled())      faults |= 1 << 0;
+    if (model_right.stalled())     faults |= 1 << 1;
+    if (model_left.openCircuit())  faults |= 1 << 2;
+    if (model_right.openCircuit()) faults |= 1 << 3;
+    m.motor_faults = (float)faults;
   }
-  t[38] = power.fanVoltage();                             // draft_5: fan rail sensor
-  t[39] = power.fanCurrent();
-  t[40] = power.esp32RailVoltage();                      // ESP32 +5 V rail health
-  t[41] = power.packValid() ? 1.0f : 0.0f;          // 0 = rail unpowered, pack unknown
-  t[42] = pose_ekf.positionSigma();                 // 1-sigma position uncertainty [m]
-  t[43] = pose_ekf.hasFix() ? 1.0f : 0.0f;          // has the EKF ever been anchored
+  m.fan_v = power.fanVoltage();                           // draft_5: fan rail sensor
+  m.fan_a = power.fanCurrent();
+  m.esp32_rail_v = power.esp32RailVoltage();              // ESP32 +5 V rail health
+  m.pack_valid = power.packValid() ? 1.0f : 0.0f;         // 0 = rail unpowered, pack unknown
+  m.pos_sigma_m = pose_ekf.positionSigma();               // 1-sigma position uncertainty [m]
+  m.pos_anchored = pose_ekf.hasFix() ? 1.0f : 0.0f;       // has the EKF ever been anchored
   RCSOFTCHECK(rcl_publish(&pub_telemetry, &msg_telemetry, NULL));
 }
 
@@ -684,7 +690,7 @@ static bool createEntities() {
   RCCHECK(rclc_publisher_init_default(&pub_fix, &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, NavSatFix), ROS_NS "/gps/fix"));
   RCCHECK(rclc_publisher_init_default(&pub_telemetry, &node,
-    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray), ROS_NS "/telemetry"));
+    ROSIDL_GET_MSG_TYPE_SUPPORT(gps_localize_msgs, msg, Telemetry), ROS_NS "/telemetry"));
 
   RCCHECK(rclc_subscription_init_default(&sub_cmd_move, &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist), ROS_NS "/cmd_move"));

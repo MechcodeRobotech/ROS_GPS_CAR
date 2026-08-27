@@ -17,7 +17,7 @@ import sys
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float32MultiArray
+from gps_localize_msgs.msg import Telemetry
 
 from gps_localize import telemetry as tel
 
@@ -34,7 +34,7 @@ class HeadingCheck(Node):
         self.refs = {}
         self.speeds = []
         self.start = self.now()
-        self.create_subscription(Float32MultiArray, NS + '/telemetry', self.on_telemetry, 20)
+        self.create_subscription(Telemetry, NS + '/telemetry', self.on_telemetry, 20)
         self.create_timer(0.5, self.tick)
         self.get_logger().info('collecting for %.0f s - keep the robot still' % seconds)
 

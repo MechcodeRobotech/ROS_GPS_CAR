@@ -54,6 +54,14 @@
   ],
   "log": [
     {
+      "ts": "2026-08-27 17:35:00",
+      "step": "T100-T102",
+      "what": "Moving telemetry from a packed 44-float array to a named gps_localize_msgs/Telemetry, on your call that ROS 2 stays and should be easy to extend. The array was the exact 'hard to edit' pattern the UDP question was about, living inside ROS: adding a signal meant keeping an index in step across three files. Now it is one line in the .msg. The web UI needed no change at all - it already read fields by name. The .msg was generated from telemetry.py's FIELDS so the names matched at birth, and QC now checks the two copies stay identical, that every declared field is actually assigned (an unset field would publish a silent zero rather than fail), and that no node still subscribes to the old type. telemetry.py still accepts the old array so recorded bags replay.",
+      "files": "gps_localize_msgs/, firmware/src/main.cpp, telemetry.py, tools/qc.py",
+      "promoted": false,
+      "problem": null
+    },
+    {
       "ts": "2026-08-27 15:05:00",
       "step": "E02,E03",
       "what": "The robot is on the ROS graph over Wi-Fi: /gps_localize_firmware with all 10 contract topics and telemetry at 8 Hz. mDNS found the PC by name (mannaja.local -> 10.94.163.220) rather than the stale hardcoded IP, which is exactly what that resolution chain was built for. Two more real bugs on the way: the IMU driver crashed the board when its sensor was absent, and QC check 14 used 'ros2 topic hz', which never exits, so it always timed out and claimed telemetry had stopped while the board published at 8 Hz - it had only looked correct because it skipped without hardware. Full port QC now passes 14/14 with hardware in the loop.",
@@ -1350,6 +1358,39 @@
       "test": "the decision and its reasoning are recorded",
       "result": "PASS - written into docs/architecture.md",
       "ts": "2026-08-27 06:05:00"
+    },
+    {
+      "id": "T100",
+      "phase": "X",
+      "title": "Custom Telemetry.msg replaces the packed float array",
+      "needs": "PC",
+      "state": "IN PROGRESS",
+      "files": "gps_localize_msgs/, main.cpp, telemetry.py",
+      "test": "firmware builds with the type compiled in; 44 named fields both sides",
+      "result": "",
+      "ts": ""
+    },
+    {
+      "id": "T101",
+      "phase": "X",
+      "title": "Host nodes subscribe to the named type",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "gps_odom, heading_check, safety_watchdog, waypoint_nav, web_server",
+      "test": "no node still subscribes as Float32MultiArray",
+      "result": "PASS - all five switched, QC enforces",
+      "ts": "2026-08-27 17:35:00"
+    },
+    {
+      "id": "T102",
+      "phase": "X",
+      "title": "QC for the message and its two copies",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "tools/qc.py",
+      "test": "msg and FIELDS agree; firmware copy is real and identical",
+      "result": "PASS - 6 checks green",
+      "ts": "2026-08-27 17:35:00"
     }
   ]
 }

@@ -30,7 +30,8 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import NavSatFix
-from std_msgs.msg import Bool, Float32MultiArray, Int32, String
+from gps_localize_msgs.msg import Telemetry
+from std_msgs.msg import Bool, Int32, String
 
 from gps_localize import telemetry as tel
 from gps_localize.configstore import GROUPS, ConfigStore
@@ -99,7 +100,7 @@ class WebServerNode(Node):
         self.pub_config = self.create_publisher(Float32MultiArray, NS + '/config/pid', 5)
         self.pub_config_updated = self.create_publisher(String, NS + '/config/updated', 5)
 
-        self.create_subscription(Float32MultiArray, NS + '/telemetry', self.on_telemetry, 5)
+        self.create_subscription(Telemetry, NS + '/telemetry', self.on_telemetry, 5)
         self.create_subscription(NavSatFix, NS + '/gps/fix', self.on_fix, 5)
         self.create_subscription(Odometry, NS + '/odom/gps', self.on_odom, 5)
         self.create_subscription(String, NS + '/nav/status', self.on_nav, latched_qos())

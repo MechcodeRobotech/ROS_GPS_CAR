@@ -22,7 +22,8 @@ import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
-from std_msgs.msg import Bool, Float32MultiArray, Int32, String
+from gps_localize_msgs.msg import Telemetry
+from std_msgs.msg import Bool, Int32, String
 
 from gps_localize import telemetry as tel
 from gps_localize.configstore import ConfigStore
@@ -71,7 +72,7 @@ class SafetyWatchdog(Node):
         self.pub_nav_cmd = self.create_publisher(String, NS + '/nav/cmd', 5)
         self.pub_cmd_move = self.create_publisher(Twist, NS + '/cmd_move', 5)
 
-        self.create_subscription(Float32MultiArray, NS + '/telemetry', self.on_telemetry, 5)
+        self.create_subscription(Telemetry, NS + '/telemetry', self.on_telemetry, 5)
         self.create_subscription(Int32, NS + '/web/heartbeat', self.on_web_beat, 5)
         self.create_subscription(Bool, NS + '/estop_request', self.on_estop_request, 5)
         self.create_subscription(String, NS + '/config/updated', self.on_config_updated, 5)

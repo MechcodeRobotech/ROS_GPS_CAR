@@ -1,4 +1,8 @@
-"""Layout of /gps_localize/telemetry (std_msgs/Float32MultiArray).
+"""Field names and derived values for /gps_localize/telemetry.
+
+The robot publishes gps_localize_msgs/Telemetry - named fields, no
+indices. FIELDS is kept as the canonical name list, and the .msg file is
+checked against it by QC so the two cannot drift.
 
 One packed array instead of a dozen small topics: it keeps the micro-ROS
 memory pool small on the ESP32 and gives the web UI a single consistent
@@ -102,10 +106,20 @@ STOP_FLAGS = (
 
 
 def unpack(data):
-    """Float32MultiArray data -> dict. Missing entries default to 0.0."""
+    """Telemetry message -> dict, with the derived names the UI uses.
+
+    Accepts either a gps_localize_msgs/Telemetry (named fields, what the robot
+    publishes now) or the old Float32MultiArray data list. The list form is
+    kept so a recorded bag from before the change still replays - it costs four
+    lines and makes old data readable rather than dead.
+    """
     out = {}
-    for index, key in enumerate(FIELDS):
-        out[key] = float(data[index]) if index < len(data) else 0.0
+    if hasattr(data, 'state'):                      # named message
+        for key in FIELDS:
+            out[key] = float(getattr(data, key, 0.0))
+    else:                                           # legacy packed array
+        for index, key in enumerate(FIELDS):
+            out[key] = float(data[index]) if index < len(data) else 0.0
     out['state_name'] = STATE_NAMES.get(int(out['state']), 'UNKNOWN')
     out['stop_reasons'] = decode_flags(int(out['stop_flags']))
     out['heading_ref_name'] = HEADING_REF_NAMES.get(int(out['heading_ref']), 'unknown')

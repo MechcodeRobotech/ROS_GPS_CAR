@@ -23,7 +23,8 @@ from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import NavSatFix, NavSatStatus
-from std_msgs.msg import Bool, Float32MultiArray, String
+from gps_localize_msgs.msg import Telemetry
+from std_msgs.msg import Bool, String
 
 from gps_localize import geo
 from gps_localize import telemetry as tel
@@ -93,7 +94,7 @@ class WaypointNav(Node):
         self.pub_log = self.create_publisher(String, NS + '/log', 20)
 
         self.create_subscription(NavSatFix, NS + '/gps/fix', self.on_fix, 10)
-        self.create_subscription(Float32MultiArray, NS + '/telemetry', self.on_telemetry, 5)
+        self.create_subscription(Telemetry, NS + '/telemetry', self.on_telemetry, 5)
         self.create_subscription(Bool, NS + '/estop', self.on_estop, latched_qos())
         self.create_subscription(String, NS + '/nav/cmd', self.on_cmd, 10)
         self.create_subscription(String, NS + '/config/updated', self.on_config_updated, 5)
