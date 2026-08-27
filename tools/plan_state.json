@@ -54,6 +54,14 @@
   ],
   "log": [
     {
+      "ts": "2026-08-27 18:30:00",
+      "step": "T100",
+      "what": "Telemetry is now gps_localize_msgs/Telemetry with 44 named fields, verified on the real board at 7.4 Hz with every value correct for a bare ESP32. The web UI needed zero changes because it already read by name. Four traps on the way, all now guarded by QC: micro-ROS skips its entire build if libmicroros.a exists, so nothing took effect until that was deleted; a symlink in extra_packages is not followed since the builder copies directories; lifting the fault-bitfield assignment out of the packed-array code left its local variable undeclared; and port_qc took whichever package.xml sorted first, so with two packages it tested the message package and complained it had no setup.py.",
+      "files": "gps_localize_msgs/, main.cpp, telemetry.py, tools/qc.py, tools/port_qc.py",
+      "promoted": true,
+      "problem": null
+    },
+    {
       "ts": "2026-08-27 17:35:00",
       "step": "T100-T102",
       "what": "Moving telemetry from a packed 44-float array to a named gps_localize_msgs/Telemetry, on your call that ROS 2 stays and should be easy to extend. The array was the exact 'hard to edit' pattern the UDP question was about, living inside ROS: adding a signal meant keeping an index in step across three files. Now it is one line in the .msg. The web UI needed no change at all - it already read fields by name. The .msg was generated from telemetry.py's FIELDS so the names matched at birth, and QC now checks the two copies stay identical, that every declared field is actually assigned (an unset field would publish a silent zero rather than fail), and that no node still subscribes to the old type. telemetry.py still accepts the old array so recorded bags replay.",
@@ -1364,11 +1372,11 @@
       "phase": "X",
       "title": "Custom Telemetry.msg replaces the packed float array",
       "needs": "PC",
-      "state": "IN PROGRESS",
+      "state": "DONE",
       "files": "gps_localize_msgs/, main.cpp, telemetry.py",
       "test": "firmware builds with the type compiled in; 44 named fields both sides",
-      "result": "",
-      "ts": ""
+      "result": "PASS - verified on hardware: one type, 7.4 Hz, +0.4% flash",
+      "ts": "2026-08-27 18:30:00"
     },
     {
       "id": "T101",
