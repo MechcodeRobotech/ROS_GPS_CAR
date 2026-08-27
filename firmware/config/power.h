@@ -60,7 +60,13 @@
 #define INA226_SHUNT_FAN_OHM         0.100f
 #define INA226_MAXA_FAN              1.5f      // 4 fans in parallel
 #define INA226_SHUNT_MOTOR_OHM       0.010f
-#define INA226_MAXA_MOTOR            8.0f
+// 3 A: the module's own limit, not a guess. max_amp sets the calibration
+// register and therefore the current LSB, so overstating it coarsens every
+// reading - and the back-EMF wheel-speed model consumes that current, so a
+// wrong range shows up as a wrong speed whenever GPS is unavailable.
+// At 3 A across the 0.01 ohm shunt the drop is 30 mV, well inside the
+// INA226's +-81.92 mV input range.
+#define INA226_MAXA_MOTOR            3.0f
 
 //------------------------ battery protection -----------------------------//
 // 3S LiPo: 12.6 V full, 11.1 V nominal, 9.9 V empty (3.3 V per cell).

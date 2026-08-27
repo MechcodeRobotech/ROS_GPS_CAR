@@ -863,6 +863,17 @@ static bool wifiConnect(uint32_t timeout_ms = 30000) {
   if (found < 0) found = 0;
   Serial.printf("[WiFi] scan found %d network(s), %u configured\n",
                 (int)found, (unsigned)WIFI_NETWORK_COUNT);
+  // List what is actually in range. Without this, a board that cannot join
+  // tells you nothing about what it COULD join, and setup becomes guesswork.
+  for (int16_t s_i = 0; s_i < found && s_i < 20; ++s_i) {
+    bool known = false;
+    for (size_t k = 0; k < WIFI_NETWORK_COUNT; ++k) {
+      if (WiFi.SSID(s_i) == WIFI_NETWORKS[k].ssid) { known = true; break; }
+    }
+    Serial.printf("       %-32s %4ld dBm  %s\n",
+                  WiFi.SSID(s_i).c_str(), (long)WiFi.RSSI(s_i),
+                  known ? "<- configured" : "");
+  }
 
   bool tried[WIFI_MAX_NETWORKS] = { false };
   const size_t table_n = (WIFI_NETWORK_COUNT < WIFI_MAX_NETWORKS)
@@ -1000,7 +1011,22 @@ void setup() {
   initMessages();
 
 #if defined(MICROROS_TRANSPORT_WIFI)
-  if (!wifiConnect()) { Serial.println("[WiFi] failed, restarting"); delay(2000); ESP.restart(); }
+  if (!wifiConnect()) {
+    // Do NOT reboot. Rebooting on Wi-Fi failure makes a board that knows no
+    // network in range loop forever, and a looping board cannot be configured
+    // - the serial console never stays up long enough to talk to it. Proven on
+    // the bench: with only an out-of-range SSID configured, the board restarted
+    // every few seconds and was unreachable by any means.
+    //
+    // Stay up instead. The console keeps working, the scan result above says
+    // what IS in range, and the retry below picks the network up the moment it
+    // appears. Nothing can move: with no agent the safety manager holds
+    // STOP_AGENT_LOST, so the motors stay disabled the whole time.
+    Serial.println("[WiFi] no network joined - staying up so this board can");
+    Serial.println("       still be reached over USB. Retrying in the background.");
+    Serial.println("       Add a network to firmware/config/network_secrets.h,");
+    Serial.println("       or pick one from the scan list above.");
+  }
   agent_ip = resolveAgentIp();
   set_microros_wifi_transports((char *)wifi_ssid_active, (char *)wifi_pass_active, agent_ip, AGENT_PORT);
 #else
@@ -1012,6 +1038,25 @@ void setup() {
 
 //================================= loop ====================================//
 void loop() {
+  // Keep trying to join a network if we have none. Backed off so a board with
+  // nothing in range does not spend its whole life scanning.
+#if defined(MICROROS_TRANSPORT_WIFI)
+  if (WiFi.status() != WL_CONNECTED) {
+    static uint32_t next_wifi_try_ms = 0;
+    const uint32_t now_wifi = millis();
+    if (now_wifi >= next_wifi_try_ms) {
+      next_wifi_try_ms = now_wifi + 30000;      // every 30 s, not continuously
+      Serial.println("[WiFi] retrying...");
+      if (wifiConnect(15000)) {
+        agent_ip = resolveAgentIp();
+        set_microros_wifi_transports((char *)wifi_ssid_active, (char *)wifi_pass_active,
+                                     agent_ip, AGENT_PORT);
+        Serial.println("[WiFi] back on the air");
+      }
+    }
+  }
+#endif
+
   switch (conn_state) {
     case WAITING_AGENT:
       EXECUTE_EVERY_N_MS(1000, {
