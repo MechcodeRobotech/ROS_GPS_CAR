@@ -394,6 +394,23 @@ def firmware_contract(root: Path) -> tuple[set[str], int]:
     topics = {ns + t for t in re.findall(r'ROS_NS\s+"(/[^"]+)"', src)}
     len_match = re.search(r"#define\s+TELEMETRY_LEN\s+(\d+)", src)
     telem_len = int(len_match.group(1)) if len_match else 0
+
+    # Telemetry used to be a packed float array, so its width was a #define in
+    # main.cpp. It is a named message now, and that #define is gone - which made
+    # this return 0 and silently switched OFF the entire telemetry half of check
+    # 11 while the check still reported PASS. The field count now comes from the
+    # message definition, which is the thing that actually decides the layout.
+    if not telem_len:
+        for msg in (root / "gps_localize_ws/src/gps_localize_msgs/msg/Telemetry.msg",
+                    root / "firmware/extra_packages/gps_localize_msgs/msg/Telemetry.msg"):
+            if msg.exists():
+                body = read_text(msg) or ""
+                telem_len = sum(
+                    1 for line in body.splitlines()
+                    if line.strip() and not line.lstrip().startswith("#")
+                )
+                if telem_len:
+                    break
     return topics, telem_len
 
 
@@ -440,7 +457,14 @@ def check_11_contract_match(root: Path, files: list[Path]) -> Result:
         return Result(11, "firmware contract", False,
                       "no python source to check against the contract",
                       ["host nodes are empty or missing"])
+    # A check that silently checks nothing is worse than one that fails: it
+    # reports PASS. If the firmware is present, its telemetry width must be
+    # discoverable, and not being able to find it is itself the failure.
     bad = []
+    if not telem_len:
+        bad.append("cannot determine the telemetry width from the firmware or "
+                   "the message definition - this check would otherwise pass "
+                   "while verifying nothing")
     for topic in sorted(expected):
         short = topic.rsplit("/", 1)[-1]
         if topic not in py_src and f'"{short}"' not in py_src and f"'{short}'" not in py_src:

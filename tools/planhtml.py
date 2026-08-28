@@ -50,7 +50,7 @@ TOPICS_PUB = [
     ("/gps_localize/odom", "nav_msgs/Odometry"),
     ("/gps_localize/imu/data", "sensor_msgs/Imu"),
     ("/gps_localize/gps/fix", "sensor_msgs/NavSatFix"),
-    ("/gps_localize/telemetry", "std_msgs/Float32MultiArray (40 floats)"),
+    ("/gps_localize/telemetry", "gps_localize_msgs/Telemetry (44 named fields)"),
 ]
 TOPICS_SUB = [
     ("/gps_localize/cmd_move", "geometry_msgs/Twist"),

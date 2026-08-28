@@ -402,7 +402,7 @@ class Viewer:
         ('/gps_localize/odom', 'nav_msgs/msg/Odometry', 1, 1),
         ('/gps_localize/imu/data', 'sensor_msgs/msg/Imu', 1, 0),
         ('/gps_localize/gps/fix', 'sensor_msgs/msg/NavSatFix', 1, 1),
-        ('/gps_localize/telemetry', 'std_msgs/msg/Float32MultiArray', 1, 1),
+        ('/gps_localize/telemetry', 'gps_localize_msgs/msg/Telemetry', 1, 1),
         ('/gps_localize/cmd_move', 'geometry_msgs/msg/Twist', 1, 1),
         ('/gps_localize/cmd_manual', 'geometry_msgs/msg/Twist', 1, 1),
         ('/gps_localize/cmd_vel', 'geometry_msgs/msg/Twist', 0, 1),

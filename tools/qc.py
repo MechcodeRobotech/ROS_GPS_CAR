@@ -622,6 +622,15 @@ def check_docs_current():
             'no doc still describes telemetry as 42 packed floats')
     nowhere(r'Position.*currently.*plain dead reckoning',
             'no doc still says position is uncorrected dead reckoning')
+    # The telemetry TYPE, wherever it is named outside code that legitimately
+    # uses Float32MultiArray for /config/pid.
+    for f in (ROOT / 'docs' / 'topics.md', ROOT / 'tools' / 'planhtml.py',
+              ROOT / 'webapp' / 'viewer_server.py'):
+        if f.exists():
+            bad = [l for l in read(f).splitlines()
+                   if 'telemetry' in l.lower() and 'Float32MultiArray' in l]
+            check(not bad, '%s names the telemetry type correctly %s'
+                  % (f.name, bad[:1] or ''))
 
     # The current values should actually appear where they are documented.
     if cutoff:
@@ -733,6 +742,104 @@ def check_nodes_import():
           % (len(mods), fails[:4] if fails else ''))
 
 
+
+def check_portability():
+    """Nothing committed may be specific to this one machine.
+
+    The systemd unit had User=mannaja and /home/mannaja baked in, and
+    install.sh copied it verbatim - so installing on any other machine would
+    have produced a service pointing at a user and a directory that do not
+    exist there. It is a template with placeholders now, and this keeps it one.
+    """
+    section('portability: nothing machine-specific in git')
+    try:
+        tracked = subprocess.run(['git', 'ls-files'], cwd=ROOT,
+                                 capture_output=True, text=True, timeout=60).stdout.split()
+    except Exception as exc:
+        notes.append('git not available, portability check skipped (%s)' % exc)
+        return
+
+    # Comments and help text may show an example address; code may not depend
+    # on one. Home paths are never acceptable.
+    # Exempt by nature, not by convenience:
+    #   this script      carries the pattern it hunts for, in a literal
+    #   plan_state.json  is a historical record; past log entries name paths
+    #   *.md             documentation legitimately shows example commands
+    EXEMPT = {'tools/qc.py', 'tools/plan_state.json'}
+    offenders = []
+    for rel in tracked:
+        if rel in EXEMPT or rel.endswith('.md'):
+            continue
+        f = ROOT / rel
+        if not f.is_file() or f.suffix in ('.png', '.pdf', '.jpg', '.zip'):
+            continue
+        try:
+            body = f.read_text(encoding='utf-8', errors='replace')
+        except OSError:
+            continue
+        for i, line in enumerate(body.splitlines(), 1):
+            if '/home/' in line and '__PROJECT__' not in line:
+                stripped = line.lstrip()
+                if stripped.startswith(('#', ';', '//', '*', '<!--')):
+                    continue          # documenting a path is fine
+                offenders.append('%s:%d' % (rel, i))
+    check(not offenders,
+          'no committed file hardcodes a home directory outside a comment %s'
+          % (offenders[:5] or ''))
+
+    unit = PKG / 'systemd' / 'gps_localize.service'
+    if unit.exists():
+        body = read(unit)
+        check('__USER__' in body and '__PROJECT__' in body,
+              'the systemd unit is a template, not one machine\'s copy')
+        install = ROOT / 'setup' / 'install.sh'
+        if install.exists():
+            check('__USER__' in read(install),
+                  'install.sh substitutes the placeholders rather than copying')
+
+
+
+def check_microros_library_fresh():
+    """A built micro-ROS library must be newer than the message it compiled.
+
+    micro_ros_platformio SKIPS its entire build when libmicroros.a already
+    exists - it never checks whether the message definitions changed. So after
+    editing Telemetry.msg the firmware keeps linking the OLD type support and
+    fails on a missing header, or worse, links a stale layout. It cost two
+    "successful" 3-second builds and a whole environment before being spotted:
+    the wifi env had been regenerated, serial had not.
+
+    The fix is always the same, so it is printed with the failure.
+    """
+    section('micro-ROS library is not stale')
+    msg = ROOT / 'gps_localize_ws' / 'src' / 'gps_localize_msgs' / 'msg' / 'Telemetry.msg'
+    if not msg.exists():
+        return
+    msg_mtime = msg.stat().st_mtime
+
+    ws = pathlib.Path.home() / '.pio_workspaces' / 'GPS_Localize' / 'libdeps'
+    if not ws.is_dir():
+        notes.append('no PlatformIO workspace yet, staleness check skipped')
+        print('  info   firmware not built here yet, skipped')
+        return
+
+    stale = []
+    for env in sorted(ws.iterdir()):
+        lib = env / 'micro_ros_platformio' / 'libmicroros' / 'libmicroros.a'
+        if not lib.exists():
+            continue                      # not built yet: nothing to be stale
+        if lib.stat().st_mtime < msg_mtime:
+            stale.append(env.name)
+    check(not stale,
+          'every built micro-ROS library is newer than Telemetry.msg %s'
+          % (stale or ''))
+    if stale:
+        for env in stale:
+            problems.append(
+                'fix: rm -rf ~/.pio_workspaces/GPS_Localize/libdeps/%s/'
+                'micro_ros_platformio/libmicroros && pio run -e %s' % (env, env))
+
+
 def main():
     main_cpp = read(FW / 'src' / 'main.cpp')
     telemetry_py = read(PKG / 'gps_localize' / 'telemetry.py')
@@ -743,6 +850,7 @@ def main():
     print('GPS_Localize QC  -  %s' % ROOT)
     check_nodes_import()
     check_telemetry_message()
+    check_microros_library_fresh()
     check_telemetry(main_cpp, telemetry_py)
     check_config_selectors(main_cpp, telemetry_py, web_py)
     check_topics(main_cpp, py_all)
@@ -757,6 +865,7 @@ def main():
     check_compose_merge()
     check_installer()
     check_docs_current()
+    check_portability()
     check_native_tests()
     check_viewer_build()
 

@@ -193,7 +193,11 @@ http://packages.ros.org/ros2/ubuntu \$(. /etc/os-release && echo \$UBUNTU_CODENA
     head "service"
     local unit="$WS/src/gps_localize/systemd/gps_localize.service"
     if [ -f "$unit" ]; then
-        run $SUDO cp "$unit" /etc/systemd/system/gps_localize.service
+        # The unit in git is a template. Copying it verbatim would install one
+        # machine's user and home path onto every other machine, which is wrong
+        # everywhere but here.
+        run bash -c "sed -e 's|__USER__|$(id -un)|g' -e 's|__PROJECT__|$ROOT|g' \
+            '$unit' | $SUDO tee /etc/systemd/system/gps_localize.service >/dev/null"
         run $SUDO systemctl daemon-reload
         run $SUDO systemctl enable --now gps_localize
         ok "gps_localize service enabled - it will start on boot"

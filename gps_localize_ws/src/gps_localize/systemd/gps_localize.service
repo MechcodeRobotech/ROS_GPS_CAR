@@ -5,8 +5,18 @@
 ;   sudo systemctl enable --now gps_localize
 ;   journalctl -u gps_localize -f                          # watch the log
 ;
-; User= and the paths below are already set for this machine
-; (mannaja, /home/mannaja/GPS_Localize). Change them only if the workspace
+;
+; __USER__ and __PROJECT__ are PLACEHOLDERS. setup/install.sh substitutes the
+; real values when it installs this file. They are not filled in here on
+; purpose: a unit with one machine's user and home path baked in is wrong
+; everywhere else, and this file is committed to git.
+;
+; To install by hand:
+;   sed -e "s|__USER__|$USER|g" -e "s|__PROJECT__|$PWD|g" \
+;       gps_localize_ws/src/gps_localize/systemd/gps_localize.service \
+;     | sudo tee /etc/systemd/system/gps_localize.service
+;
+; Change them only if the workspace
 ; moves or another account runs the robot.
 
 [Unit]
@@ -16,8 +26,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=mannaja
-WorkingDirectory=/home/mannaja/GPS_Localize
+User=__USER__
+WorkingDirectory=__PROJECT__
 Environment=ROS_DOMAIN_ID=10
 # The micro-ROS agent lives in its own workspace, built by micro_ros_setup.
 # Without sourcing it the launch file cannot find the agent package, so it
@@ -25,7 +35,7 @@ Environment=ROS_DOMAIN_ID=10
 # works, and the robot can never connect, with nothing in the log saying so.
 # Found on hardware: the board was flashed and joined Wi-Fi, but nothing was
 # listening on UDP 8888.
-ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && [ -f $HOME/uros_ws/install/local_setup.bash ] && source $HOME/uros_ws/install/local_setup.bash; source /home/mannaja/GPS_Localize/gps_localize_ws/install/setup.bash && ros2 launch gps_localize bringup.launch.py'
+ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && [ -f $HOME/uros_ws/install/local_setup.bash ] && source $HOME/uros_ws/install/local_setup.bash; source __PROJECT__/gps_localize_ws/install/setup.bash && ros2 launch gps_localize bringup.launch.py'
 Restart=always
 RestartSec=5
 KillSignal=SIGINT

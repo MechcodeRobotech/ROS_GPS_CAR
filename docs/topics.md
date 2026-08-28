@@ -10,7 +10,7 @@ All ROS topics live under `/gps_localize`. `ROS_DOMAIN_ID = 10` (firmware
 | `/gps_localize/odom` | `nav_msgs/Odometry` | 20 Hz | IMU+GPS dead reckoning, ENU frame `odom` → `base_link` |
 | `/gps_localize/imu/data` | `sensor_msgs/Imu` | 50 Hz | BNO085 quaternion, gyro, gravity-free accel |
 | `/gps_localize/gps/fix` | `sensor_msgs/NavSatFix` | ≤5 Hz | published when a new solution arrives |
-| `/gps_localize/telemetry` | `std_msgs/Float32MultiArray` | 10 Hz | packed snapshot, layout below |
+| `/gps_localize/telemetry` | `gps_localize_msgs/Telemetry` | 10 Hz | 44 named fields, listed below |
 
 ## Subscribed by the firmware
 
