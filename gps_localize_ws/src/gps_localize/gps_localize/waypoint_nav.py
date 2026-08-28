@@ -197,18 +197,13 @@ class WaypointNav(Node):
             self.fix_source = 'dead_reckoning'
 
     def on_telemetry(self, msg):
-        data = msg.data
-        need = tel.FIELDS.index('gps_hdop')
-        if len(data) <= need:
-            return
-        self.heading_deg = float(data[tel.FIELDS.index('heading_deg')])
-        self.speed_mps = float(data[tel.FIELDS.index('speed_mps')])
-        self.fix_quality = int(data[tel.FIELDS.index('gps_fix_quality')])
-        self.satellites = int(data[tel.FIELDS.index('gps_satellites')])
-        self.hdop = float(data[tel.FIELDS.index('gps_hdop')])
-        idx_ref = tel.FIELDS.index('heading_ref')
-        if len(data) > idx_ref:
-            self.heading_ref = int(data[idx_ref])
+        data = tel.unpack(msg)
+        self.heading_deg = data['heading_deg']
+        self.speed_mps = data['speed_mps']
+        self.fix_quality = int(data['gps_fix_quality'])
+        self.satellites = int(data['gps_satellites'])
+        self.hdop = data['gps_hdop']
+        self.heading_ref = int(data['heading_ref'])
 
     def on_estop(self, msg):
         self.estop = bool(msg.data)

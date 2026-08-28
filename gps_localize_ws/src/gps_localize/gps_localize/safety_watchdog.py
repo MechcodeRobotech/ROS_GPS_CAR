@@ -111,10 +111,9 @@ class SafetyWatchdog(Node):
     # --------------------------------------------------------- subscriptions
     def on_telemetry(self, msg):
         self.last_telemetry = self.now()
-        data = msg.data
-        if len(data) > tel.FIELDS.index('stop_flags'):
-            self.firmware_flags = int(data[tel.FIELDS.index('stop_flags')])
-            self.firmware_state = int(data[tel.FIELDS.index('state')])
+        data = tel.unpack(msg)
+        self.firmware_flags = int(data['stop_flags'])
+        self.firmware_state = int(data['state'])
 
     def on_web_beat(self, _msg):
         self.last_web_beat = self.now()

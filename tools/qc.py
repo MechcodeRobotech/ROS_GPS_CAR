@@ -917,8 +917,19 @@ def check_telemetry_consumers():
         body = read(f)
         if not body:
             continue
-        for n, line in enumerate(body.splitlines(), 1):
+        # Two shapes, both fatal: handing .data to unpack(), and binding
+        # `data = msg.data` inside a telemetry callback to index positionally.
+        # The first sweep only looked for the former and left the two safety
+        # nodes - the watchdog and the navigator - still crashing.
+        lines = body.splitlines()
+        in_telemetry_cb = False
+        for n, line in enumerate(lines, 1):
+            stripped = line.strip()
+            if stripped.startswith('def '):
+                in_telemetry_cb = 'telemetry' in stripped
             if 'unpack(' in line and '.data' in line:
+                offenders.append('%s:%d' % (f.name, n))
+            elif in_telemetry_cb and re.search(r'=\s*msg\.data\b', line):
                 offenders.append('%s:%d' % (f.name, n))
     check(not offenders,
           'no node unpacks telemetry from .data %s' % (offenders or ''))
