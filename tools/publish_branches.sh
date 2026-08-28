@@ -125,6 +125,34 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
 # through. Build the firmware with:
 #   docker compose exec gps_localize pio run -e wifi -d /firmware
 # and flash by adding -t upload.
+# Fast DDS prefers shared memory over UDP once it has discovered a peer on the
+# same host, and shared-memory segments do not cross the container boundary.
+# The effect is worse than a plain failure: discovery succeeds, so `ros2 topic
+# list` on the host shows every container topic with the right types and the
+# right subscriber counts, and then not one sample ever arrives. Restricting
+# the container to UDPv4 costs nothing at 10 Hz and makes the host's ros2 CLI
+# work against the container with no setup on the host side.
+RUN printf '%s\n' \
+    '<?xml version="1.0" encoding="UTF-8" ?>' \
+    '<dds xmlns="http://www.eprosima.com">' \
+    '  <profiles>' \
+    '    <transport_descriptors>' \
+    '      <transport_descriptor>' \
+    '        <transport_id>udp_only</transport_id>' \
+    '        <type>UDPv4</type>' \
+    '      </transport_descriptor>' \
+    '    </transport_descriptors>' \
+    '    <participant profile_name="udp_participant" is_default_profile="true">' \
+    '      <rtps>' \
+    '        <userTransports><transport_id>udp_only</transport_id></userTransports>' \
+    '        <useBuiltinTransports>false</useBuiltinTransports>' \
+    '      </rtps>' \
+    '    </participant>' \
+    '  </profiles>' \
+    '</dds>' \
+    > /etc/fastdds_udp_only.xml
+
+ENV FASTRTPS_DEFAULT_PROFILES_FILE=/etc/fastdds_udp_only.xml
 ENV ROS_DOMAIN_ID=10
 ENV PLATFORMIO_CORE_DIR=/root/.platformio
 EXPOSE 8080 8888/udp
