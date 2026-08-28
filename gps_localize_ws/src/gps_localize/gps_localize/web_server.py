@@ -31,7 +31,9 @@ from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import NavSatFix
 from gps_localize_msgs.msg import Telemetry
-from std_msgs.msg import Bool, Int32, String
+# Float32MultiArray is still used for /config/pid, which stays a packed array:
+# it is a short, positional selector list, not a set of named signals.
+from std_msgs.msg import Bool, Float32MultiArray, Int32, String
 
 from gps_localize import telemetry as tel
 from gps_localize.configstore import GROUPS, ConfigStore

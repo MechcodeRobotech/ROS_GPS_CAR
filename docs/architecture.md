@@ -128,7 +128,7 @@ if the two sides ever disagree.
 | `/gps_localize/odom` | `nav_msgs/Odometry` |
 | `/gps_localize/imu/data` | `sensor_msgs/Imu` |
 | `/gps_localize/gps/fix` | `sensor_msgs/NavSatFix` |
-| `/gps_localize/telemetry` | `std_msgs/Float32MultiArray` — **42 floats** |
+| `/gps_localize/telemetry` | `gps_localize_msgs/Telemetry` — **44 named fields** |
 
 **Host → robot**
 
@@ -141,10 +141,17 @@ if the two sides ever disagree.
 | `/gps_localize/estop` | `std_msgs/Bool` |
 | `/gps_localize/config/pid` | `std_msgs/Float32MultiArray` |
 
-The telemetry array is one packed message rather than forty topics because each
-DDS message has real overhead on a microcontroller. Index → meaning is defined
-once in `main.cpp` (`publishTelemetry`) and mirrored in `telemetry.py` as the
-`FIELDS` tuple; QC checks they match, including the length.
+Telemetry is one message rather than forty topics because each DDS message has
+real overhead on a microcontroller. It used to be a packed `Float32MultiArray`
+where meaning came from **position**, which meant an index kept in step across
+three files. It is now `gps_localize_msgs/Telemetry` with **named** fields:
+adding a signal is one line in the `.msg` plus one assignment.
+
+The `.msg` lives in `gps_localize_ws/src/gps_localize_msgs/` and is copied to
+`firmware/extra_packages/` because micro-ROS compiles type support into the
+image and does not follow symlinks. QC checks the two copies stay identical and
+that every declared field is actually assigned — an unassigned field would
+publish a silent zero rather than fail.
 
 ---
 
@@ -192,15 +199,22 @@ GPS course  >  QMC5883 compass  >  BNO085 magnetometer  >  gyro only
 GPS ground speed pulling it to truth, and the motor model (back-EMF from the
 INA226 volts and amps) as the fallback when GPS goes stale.
 
-**Position** — currently **plain dead reckoning**:
+**Position** — a 3-state EKF (`firmware/src/estimator/pose_ekf.h`) over x, y and
+heading. It used to be plain dead reckoning that GPS never corrected, so the
+error grew without bound.
 
-```c
-x_ += speed_ * cosf(h_enu) * dt;
-y_ += speed_ * sinf(h_enu) * dt;
-```
+Speed is an *input* rather than a state: `StateEstimator` already fuses it from
+three sources and knows which one it is using, and two filters disagreeing
+about one quantity is worse than one.
 
-GPS never corrects it, so the error grows without bound. This is the known gap;
-the EKF that fixes it is planned as T20–T25.
+Measurement variance comes from the receiver's own `hdop` and fix quality, so
+the gain follows the data — and an RTK receiver tightens the result with no code
+change. A Mahalanobis gate rejects multipath jumps, but gives in after five
+consecutive rejections so the estimate cannot sit stale and confident if the
+receiver has genuinely moved.
+
+`pos_sigma_m` is published so the UI can show honest accuracy; it grows while
+coasting without GPS and shrinks on a fix.
 
 ---
 
@@ -314,10 +328,15 @@ and losing every off-the-shelf tool — for a robot whose whole point is
 navigation, throwing away rviz and bag files is a bad trade.
 
 And the efficiency argument mostly does not apply here, because the design
-already sidesteps it. Telemetry is **one** `Float32MultiArray` of 42 floats
-rather than 42 topics, which is a packed binary payload wearing a ROS message
-as a wrapper. The per-message DDS overhead people worry about is paid once per
-cycle, not forty-two times.
+already sidesteps it. Telemetry is **one** message of 44 fields rather than 44
+topics, so the per-message DDS overhead people worry about is paid once per
+cycle, not forty-four times.
+
+It used to be a packed `Float32MultiArray` — genuinely a binary payload wearing
+a ROS message as a wrapper, which is the raw-UDP tradeoff smuggled inside ROS:
+the same byte efficiency, and the same manual index bookkeeping. Moving to a
+named `Telemetry` message kept the single-message efficiency and dropped the
+bookkeeping, which is the combination worth having.
 
 The agent being a required extra process is the genuine cost. It is why the
 robot disappears from `ros2 topic list` the moment the agent stops, and why the

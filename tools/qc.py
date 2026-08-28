@@ -617,6 +617,11 @@ def check_docs_current():
     nowhere(r'ros2-agent', 'no doc still uses the old ros2-agent hostname')
     nowhere(r'lib/(estimator|control|safety|power)/',
             'no doc still points at headers that moved to src/')
+    # Superseded by the named Telemetry message and the EKF.
+    nowhere(r'Float32MultiArray.*42 floats|42 floats',
+            'no doc still describes telemetry as 42 packed floats')
+    nowhere(r'Position.*currently.*plain dead reckoning',
+            'no doc still says position is uncorrected dead reckoning')
 
     # The current values should actually appear where they are documented.
     if cutoff:
@@ -687,6 +692,47 @@ def check_telemetry_message():
           % (stale or ''))
 
 
+
+def check_nodes_import():
+    """Every node must actually import.
+
+    Syntax checks pass on a file whose imports are wrong, and the contract
+    checks here only look at subscriptions - so a bulk edit that moved a name
+    into the wrong package sailed through QC and only surfaced as nodes dying
+    at runtime with the service reporting "active". Importing each module for
+    real is the only thing that catches that.
+    """
+    section('nodes import cleanly')
+    install = ROOT / 'gps_localize_ws' / 'install'
+    if not (install / 'setup.bash').exists():
+        notes.append('workspace not built, import check skipped')
+        print('  info   workspace not built, skipped')
+        return
+
+    mods = sorted((PKG / 'gps_localize').glob('*.py'))
+    mods = [m for m in mods if m.name != '__init__.py']
+    script = (
+        'import importlib, sys; '
+        'sys.path.insert(0, %r); '
+        'fails = []\n'
+        'for name in %r:\n'   # qc: allow-windows-path
+        '    try: importlib.import_module("gps_localize." + name)\n'
+        '    except Exception as e: fails.append(name + ": " + type(e).__name__ + ": " + str(e))\n'
+        'print("|".join(fails))\n'
+    ) % (str(PKG), [m.stem for m in mods])
+
+    r = subprocess.run(
+        ['bash', '-lc',
+         'source /opt/ros/humble/setup.bash >/dev/null 2>&1; '
+         'source "%s/setup.bash" >/dev/null 2>&1; '
+         'python3 -c %s' % (install, repr(script))],
+        capture_output=True, text=True, timeout=180)
+    out = (r.stdout or '').strip()
+    fails = [f for f in out.split('|') if f]
+    check(not fails, 'every node module imports (%d checked) %s'
+          % (len(mods), fails[:4] if fails else ''))
+
+
 def main():
     main_cpp = read(FW / 'src' / 'main.cpp')
     telemetry_py = read(PKG / 'gps_localize' / 'telemetry.py')
@@ -695,6 +741,7 @@ def main():
     py_all = '\n'.join(read(p) for p in (PKG / 'gps_localize').glob('*.py'))
 
     print('GPS_Localize QC  -  %s' % ROOT)
+    check_nodes_import()
     check_telemetry_message()
     check_telemetry(main_cpp, telemetry_py)
     check_config_selectors(main_cpp, telemetry_py, web_py)

@@ -19,7 +19,8 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import NavSatFix, NavSatStatus
-from gps_localize_msgs.msg import Telemetry, String
+from gps_localize_msgs.msg import Telemetry
+from std_msgs.msg import String
 
 from gps_localize import geo
 from gps_localize import telemetry as tel
