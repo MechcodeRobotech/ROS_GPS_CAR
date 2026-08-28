@@ -165,6 +165,18 @@ def main() -> int:
         print('  FAIL - nothing decoded the telemetry that was just published')
         return 1
 
+    # The decode must be OF THIS RUN. Without that this reports PASS on whatever
+    # a previous run left behind - which it did, passing on 40-second-old data
+    # while the frames just published were not arriving at all. A probe that
+    # cannot tell "it worked" from "it worked once, earlier" is worth nothing.
+    stale_after = args.seconds + 15.0
+    if age is None or age > stale_after:
+        print('  FAIL - the newest telemetry is %s s old, so nothing published '
+              'in this run arrived' % ('unknown' if age is None else '%.1f' % age))
+        print('         the subscriber is reachable but the data is not '
+              'crossing (check transport, not discovery)')
+        return 1
+
     print('  PASS - every firmware-fed path ran without hardware')
     return 0
 

@@ -155,6 +155,15 @@ services:
     # host network stack.
     network_mode: host
 
+    # Sharing the network stack is not enough on its own. FastDDS discovers
+    # peers over UDP but then moves the actual data over shared memory, and
+    # /dev/shm is per-container by default - so the host and the container find
+    # each other, agree on topics, and then no samples ever cross. `ros2 topic
+    # list` from the host shows every container topic, which makes it look like
+    # it is working right up until nothing arrives. Sharing the IPC namespace
+    # gives both sides the same shared-memory segments.
+    ipc: host
+
     environment:
       - ROS_DOMAIN_ID=10
 

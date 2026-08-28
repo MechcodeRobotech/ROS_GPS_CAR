@@ -1,6 +1,6 @@
 {
   "project": "GPS_Localize",
-  "target": "Ubuntu 22.04.5 jammy  ·  ROS 2 Humble  ·  Python 3.10.12",
+  "target": "Ubuntu 22.04.5 jammy  \u00b7  ROS 2 Humble  \u00b7  Python 3.10.12",
   "staging": "_work/",
   "steps": [
     {
@@ -372,6 +372,14 @@
       "files": "firmware/src/main.cpp, firmware/config/network.h",
       "promoted": false,
       "problem": null
+    },
+    {
+      "ts": "2026-08-28 18:31",
+      "step": 6,
+      "what": "Audited the project for future use. Found five nodes that crashed on the first telemetry frame, a systemd unit that only worked on this machine, a QC check that had gone hollow, a stale Docker image and a stale micro-ROS library. Fixed all of them, added five QC checks, and wrote tools/live_probe.py so hardware-only code paths can be exercised on a bench with no hardware.",
+      "files": "5 host nodes, systemd unit, setup/install.sh, tools/qc.py, tools/port_qc.py, tools/live_probe.py",
+      "promoted": true,
+      "problem": ""
     }
   ],
   "problems": [
@@ -451,6 +459,34 @@
       "what": "The web UI returned 403 forbidden on every file, including index.html, because httpd.py resolved symlinks before its containment check and colcon's --symlink-install points every installed asset back at src/.",
       "state": "RESOLVED 23:31 - containment now checked on the normalised path",
       "impact": "Was a genuine Windows-to-Linux port bug; Windows has no symlink install so it never surfaced there. Traversal is still blocked, verified."
+    },
+    {
+      "ts": "2026-08-28 18:31",
+      "severity": "BLOCKER",
+      "what": "Five host nodes read msg.data from the named telemetry message and died on every frame. safety_watchdog and waypoint_nav were among them, so the watchdog and the navigator would each have been restarting several times a second while the stack reported healthy.",
+      "state": "FIXED",
+      "impact": "Invisible without hardware: with no board the callbacks never run, so every other check passed. Found by publishing synthetic telemetry at the running stack."
+    },
+    {
+      "ts": "2026-08-28 18:31",
+      "severity": "HIGH",
+      "what": "The systemd unit hardcoded User=mannaja and /home/mannaja/GPS_Localize, and install.sh copied it verbatim.",
+      "state": "FIXED",
+      "impact": "Installing on any other PC produced a service pointing at a user and directory that do not exist. The unit is a template now."
+    },
+    {
+      "ts": "2026-08-28 18:31",
+      "severity": "HIGH",
+      "what": "Port QC check 11 derived the telemetry width from a #define that no longer exists, got 0, and silently switched off its own telemetry half while still reporting PASS.",
+      "state": "FIXED",
+      "impact": "A check that verifies nothing is worse than one that fails. It reads the message definition now, and an undeterminable width is a failure rather than a skip."
+    },
+    {
+      "ts": "2026-08-28 18:31",
+      "severity": "MEDIUM",
+      "what": "The Docker image predated the named message and contained no gps_localize_msgs; micro_ros_platformio had likewise skipped rebuilding libmicroros for the serial environment.",
+      "state": "FIXED",
+      "impact": "Both are silent staleness: docker images and pio both reported success. Two freshness checks added, compared against the newest source rather than one file."
     }
   ],
   "tasks": [
@@ -1399,6 +1435,16 @@
       "test": "msg and FIELDS agree; firmware copy is real and identical",
       "result": "PASS - 6 checks green",
       "ts": "2026-08-27 17:35:00"
+    },
+    {
+      "id": "T97",
+      "phase": "W",
+      "title": "Future-proofing audit: portability, stale artifacts, hardware-only paths",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "systemd unit, setup/install.sh, tools/qc.py, tools/port_qc.py, tools/live_probe.py, 5 host nodes",
+      "test": "python3 tools/live_probe.py -> PASS; both QC suites green; 139 host tests; all 3 firmware envs build",
+      "result": "5 real defects found and fixed, 5 new QC checks added"
     }
   ]
 }
