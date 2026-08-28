@@ -380,6 +380,14 @@
       "files": "5 host nodes, systemd unit, setup/install.sh, tools/qc.py, tools/port_qc.py, tools/live_probe.py",
       "promoted": true,
       "problem": ""
+    },
+    {
+      "ts": "2026-08-29 02:43",
+      "step": 6,
+      "what": "Finished the audit. Proved the Docker fix from a host with nothing configured - the probe decodes fresh telemetry in the container and ros2 topic echo reads live values off it. Corrected four stale test counts and made the number machine-checked. Restored the native systemd stack and re-probed it clean.",
+      "files": "tools/publish_branches.sh, tools/live_probe.py, tools/qc.py, CLAUDE.md, README.md, docs/architecture.md, docs/acceptance.md",
+      "promoted": true,
+      "problem": ""
     }
   ],
   "problems": [
@@ -487,6 +495,27 @@
       "what": "The Docker image predated the named message and contained no gps_localize_msgs; micro_ros_platformio had likewise skipped rebuilding libmicroros for the serial environment.",
       "state": "FIXED",
       "impact": "Both are silent staleness: docker images and pio both reported success. Two freshness checks added, compared against the newest source rather than one file."
+    },
+    {
+      "ts": "2026-08-29 02:43",
+      "severity": "HIGH",
+      "what": "Host and container completed DDS discovery but exchanged no samples. Fast DDS prefers shared memory once it finds a peer on the same host, and those segments do not cross the container boundary. ipc: host alone did not fix it because the two sides run different Fast DDS builds.",
+      "state": "FIXED",
+      "impact": "The reassuring kind of failure: ros2 topic list showed all 14 container topics with correct types and subscriber counts, then nothing arrived. Image now pins UDPv4, so a host needs no setup to inspect a containerised stack."
+    },
+    {
+      "ts": "2026-08-29 02:43",
+      "severity": "MEDIUM",
+      "what": "tools/live_probe.py reported PASS on telemetry left over from an earlier run, while the frames it had just published were not arriving.",
+      "state": "FIXED",
+      "impact": "The same hollow-pass fault this audit was created to find, in a tool written during the audit. It now requires the decode to be no older than the run that produced it, and that is what exposed the Docker transport problem."
+    },
+    {
+      "ts": "2026-08-29 02:43",
+      "severity": "LOW",
+      "what": "README.md, docs/architecture.md and docs/acceptance.md claimed 120 or 124 host tests; the suite has 139.",
+      "state": "FIXED",
+      "impact": "Cheapest possible signal that a document has stopped being maintained. The real count is now derived from RUN_TEST calls in the test sources and checked by qc.py."
     }
   ],
   "tasks": [
@@ -1445,6 +1474,26 @@
       "files": "systemd unit, setup/install.sh, tools/qc.py, tools/port_qc.py, tools/live_probe.py, 5 host nodes",
       "test": "python3 tools/live_probe.py -> PASS; both QC suites green; 139 host tests; all 3 firmware envs build",
       "result": "5 real defects found and fixed, 5 new QC checks added"
+    },
+    {
+      "id": "T98",
+      "phase": "W",
+      "title": "Docker: host and container discovered each other but exchanged no data",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "tools/publish_branches.sh (Dockerfile + docker-compose.yml), tools/live_probe.py",
+      "test": "container up; live_probe from a host with no env set -> PASS with fresh data; ros2 topic echo on the host reads live container values",
+      "result": "UDPv4 profile baked into the image; ipc: host added; probe now requires the decode to be from this run"
+    },
+    {
+      "id": "T99",
+      "phase": "W",
+      "title": "Documented host-test counts had drifted (120/124 vs 139)",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "README.md, docs/architecture.md, docs/acceptance.md, CLAUDE.md, tools/qc.py",
+      "test": "python3 tools/qc.py -> counts derived from RUN_TEST calls in the test sources",
+      "result": "four files corrected, drift now machine-checked"
     }
   ]
 }
