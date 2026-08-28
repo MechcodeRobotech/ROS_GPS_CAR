@@ -136,7 +136,7 @@ class WebServerNode(Node):
 
     # =============================== ROS in ================================
     def on_telemetry(self, msg):
-        data = tel.unpack(msg.data)
+        data = tel.unpack(msg)
         now = time.time()
         with self._lock:
             gap = now - self.telemetry_time if self.telemetry_time else 0.0

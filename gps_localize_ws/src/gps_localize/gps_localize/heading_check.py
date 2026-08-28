@@ -39,7 +39,7 @@ class HeadingCheck(Node):
         self.get_logger().info('collecting for %.0f s - keep the robot still' % seconds)
 
     def on_telemetry(self, msg):
-        data = tel.unpack(msg.data)
+        data = tel.unpack(msg)
         self.samples.append(data['heading_deg'])
         self.speeds.append(abs(data['speed_mps']))
         name = data.get('heading_ref_name', 'unknown')

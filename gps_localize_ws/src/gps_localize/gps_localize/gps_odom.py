@@ -73,15 +73,13 @@ class GpsOdom(Node):
 
     # ---------------------------------------------------------------- inputs
     def on_telemetry(self, msg):
-        data = msg.data
-        idx_heading = tel.FIELDS.index('heading_deg')
-        idx_speed = tel.FIELDS.index('speed_mps')
-        if len(data) > idx_speed:
-            self.heading_deg = float(data[idx_heading])
-            self.speed_mps = float(data[idx_speed])
-        idx_y = tel.FIELDS.index('odom_y')
-        if len(data) > idx_y:
-            self.odom_xy = (float(data[tel.FIELDS.index('odom_x')]), float(data[idx_y]))
+        # Named fields now, so the positional indexing this used to do is gone.
+        # unpack() takes the message itself and still understands the old packed
+        # array, which is what lets a bag recorded before the change replay.
+        data = tel.unpack(msg)
+        self.heading_deg = data['heading_deg']
+        self.speed_mps = data['speed_mps']
+        self.odom_xy = (data['odom_x'], data['odom_y'])
 
     def on_cmd(self, msg):
         try:

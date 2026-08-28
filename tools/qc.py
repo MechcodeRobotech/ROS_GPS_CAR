@@ -840,6 +840,108 @@ def check_microros_library_fresh():
                 'micro_ros_platformio/libmicroros && pio run -e %s' % (env, env))
 
 
+
+def check_docker_image_fresh():
+    """A built Docker image must not predate the interfaces it has to carry.
+
+    The image is the whole product on a PC that never installs ROS, so a stale
+    one is not a stale cache - it is a broken install for everyone using that
+    route. The image on this machine was built before telemetry became a named
+    message and simply had no gps_localize_msgs in it, while `docker images`
+    reported it as present and `docker ps` would have called it healthy.
+
+    Compared against the message definition, because that is what changed and
+    what the image has to have compiled.
+    """
+    section('docker image is not older than the interfaces')
+    # Against the newest source the image has to contain, not just the message
+    # definition: the first version of this check compared to Telemetry.msg
+    # alone and would have called an image fresh that was missing a crash fix
+    # in web_server.py made minutes earlier.
+    src_dir = ROOT / 'gps_localize_ws' / 'src'
+    sources = [f for f in src_dir.rglob('*')
+               if f.is_file() and f.suffix in ('.py', '.msg', '.xml', '.yaml')
+               and 'build/' not in str(f) and 'install/' not in str(f)]
+    if not sources:
+        return
+    newest = max(sources, key=lambda f: f.stat().st_mtime)
+    try:
+        r = subprocess.run(
+            ['docker', 'image', 'inspect', 'gps_localize:latest',
+             '--format', '{{.Created}}'],
+            capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        print('  info   docker not available here, skipped')
+        return
+    if r.returncode != 0 or not r.stdout.strip():
+        notes.append('no docker image built here, freshness check skipped')
+        print('  info   image not built on this machine, skipped')
+        return
+    out = r.stdout
+    import datetime
+    stamp = out.strip().split('.')[0].rstrip('Z')
+    try:
+        built = datetime.datetime.fromisoformat(stamp).timestamp()
+    except ValueError:
+        print('  info   could not parse the image timestamp, skipped')
+        return
+    fresh = built >= newest.stat().st_mtime
+    check(fresh, 'gps_localize:latest is newer than every workspace source %s'
+          % ('' if fresh else '(stale against %s)' % newest.name))
+    if not fresh:
+        problems.append('fix: rebuild the image from the docker branch '
+                        '(git worktree add <dir> origin/docker && '
+                        'docker build -t gps_localize:latest <dir>)')
+
+
+
+def check_telemetry_consumers():
+    """Nobody may reach for .data on the telemetry message.
+
+    Telemetry is a named message now. A subscriber that still does
+    unpack(msg.data) or indexes msg.data raises AttributeError inside the
+    callback, which kills the node - and because the whole stack is under
+    systemd, it comes back and dies again on the next frame, forever.
+
+    This is invisible without hardware: no board means no telemetry means the
+    callback never runs and every other check passes. It was found by publishing
+    a synthetic Telemetry message at the running stack, which is the only way to
+    exercise the path on a bench with no robot. Three nodes had it.
+    """
+    section('telemetry consumers use the message, not .data')
+    src_dir = ROOT / 'gps_localize_ws' / 'src'
+    offenders = []
+    for f in sorted(src_dir.rglob('*.py')):
+        if 'build/' in str(f) or 'install/' in str(f):
+            continue
+        body = read(f)
+        if not body:
+            continue
+        for n, line in enumerate(body.splitlines(), 1):
+            if 'unpack(' in line and '.data' in line:
+                offenders.append('%s:%d' % (f.name, n))
+    check(not offenders,
+          'no node unpacks telemetry from .data %s' % (offenders or ''))
+
+    # And the decoder must genuinely accept a real message, not merely look like
+    # it does. Built rather than imagined, so a broken FIELDS list shows up here.
+    sys.path.insert(0, str(src_dir / 'gps_localize'))
+    try:
+        from gps_localize import telemetry as tel
+        class Fake:
+            pass
+        fake = Fake()
+        for key in tel.FIELDS:
+            setattr(fake, key, 1.5)
+        out = tel.unpack(fake)
+        ok = len(out) >= len(tel.FIELDS) and out.get('heading_deg') == 1.5
+        check(ok, 'unpack() decodes a named message (%d fields)' % len(out))
+    except Exception as exc:
+        check(False, 'unpack() handles a named message (%s)' % exc)
+    finally:
+        sys.path.pop(0)
+
+
 def main():
     main_cpp = read(FW / 'src' / 'main.cpp')
     telemetry_py = read(PKG / 'gps_localize' / 'telemetry.py')
@@ -851,6 +953,8 @@ def main():
     check_nodes_import()
     check_telemetry_message()
     check_microros_library_fresh()
+    check_docker_image_fresh()
+    check_telemetry_consumers()
     check_telemetry(main_cpp, telemetry_py)
     check_config_selectors(main_cpp, telemetry_py, web_py)
     check_topics(main_cpp, py_all)
