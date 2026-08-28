@@ -50,13 +50,28 @@ broke exactly once.
 ```bash
 python3 tools/qc.py                        # cross-file contracts
 python3 tools/port_qc.py --static-only .   # port gate
-cd firmware && pio test -e native          # 124 host tests
+cd firmware && pio test -e native          # 139 host tests
 pio run -e wifi                            # firmware still builds
 ```
 
 All four must pass. `port_qc.py` without `--static-only` also builds the
 workspace, smoke-tests the nodes and checks the live link; the link check
 skips itself when no ESP32 is attached rather than failing.
+
+**When the change touches anything a robot feeds**, run the live probe as well,
+against a running stack:
+
+```bash
+python3 tools/live_probe.py
+```
+
+The four checks above all pass on a bench with no hardware, because with no
+board the callbacks that consume telemetry never execute. That is not a
+theoretical gap: moving telemetry to a named message left five nodes reading
+`msg.data`, and each died on the first frame — including `safety_watchdog` and
+`waypoint_nav`, the node that stops the robot and the node that drives it. Every
+other check was green throughout. The probe publishes synthetic firmware frames
+so those paths actually run here.
 
 ## Where work happens
 

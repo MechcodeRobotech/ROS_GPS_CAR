@@ -953,6 +953,44 @@ def check_telemetry_consumers():
         sys.path.pop(0)
 
 
+
+def check_test_count_claims():
+    """Any document naming a host-test count must name the real one.
+
+    Four files claimed 120 or 124 host tests while the suite had grown to 139.
+    Nobody is misled into a bug by a stale count, but it is the cheapest
+    possible signal that a document has stopped being maintained, and the rule
+    in CLAUDE.md is that documentation which disagrees with the code is worse
+    than none. It is also trivially machine-checkable, which is the standard
+    this project applies: check it rather than remember it.
+
+    The real count comes from the test sources, not from a previous run, so
+    this works without PlatformIO installed.
+    """
+    section('documented host-test counts are the real one')
+    test_dir = ROOT / 'firmware' / 'test' / 'test_native'
+    if not test_dir.is_dir():
+        return
+    actual = 0
+    for f in test_dir.glob('*.cpp'):
+        actual += len(re.findall(r'RUN_TEST\s*\(', read(f) or ''))
+    if not actual:
+        print('  info   no RUN_TEST calls found, skipped')
+        return
+
+    wrong = []
+    for f in sorted(ROOT.rglob('*.md')):
+        rel = f.relative_to(ROOT).as_posix()
+        if rel.startswith(('_work/', '_patches/')):
+            continue
+        for n, line in enumerate((read(f) or '').splitlines(), 1):
+            for m in re.finditer(r'(\d{2,4})\s+host tests', line):
+                if int(m.group(1)) != actual:
+                    wrong.append('%s:%d says %s' % (rel, n, m.group(1)))
+    check(not wrong, 'every documented host-test count is %d %s'
+          % (actual, wrong or ''))
+
+
 def main():
     main_cpp = read(FW / 'src' / 'main.cpp')
     telemetry_py = read(PKG / 'gps_localize' / 'telemetry.py')
@@ -966,6 +1004,7 @@ def main():
     check_microros_library_fresh()
     check_docker_image_fresh()
     check_telemetry_consumers()
+    check_test_count_claims()
     check_telemetry(main_cpp, telemetry_py)
     check_config_selectors(main_cpp, telemetry_py, web_py)
     check_topics(main_cpp, py_all)
