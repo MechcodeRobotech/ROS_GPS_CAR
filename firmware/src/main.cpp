@@ -51,6 +51,9 @@
 #include <pose_ekf.h>
 #include <drive_controller.h>
 #include <safety_manager.h>
+#if defined(MICROROS_TRANSPORT_WIFI)
+#include <ota_updater.h>
+#endif
 #include <power_monitor.h>
 
 //============================ helpers ======================================//
@@ -930,6 +933,29 @@ static bool wifiConnect(uint32_t timeout_ms = 30000) {
 }
 #endif
 
+#if defined(MICROROS_TRANSPORT_WIFI)
+OtaUpdater ota;
+
+/**
+ * May an update start right now?
+ *
+ * Only with the motor rails dead and the robot standing still. Reflashing takes
+ * seconds, and for all of them the motors would hold whatever duty they had
+ * with no code running to change it. The contactor is the honest test because
+ * the safety manager owns it: if it is open, the motors have no power at all.
+ */
+static bool otaIsSafe() {
+  return !safety.relayClosed() && fabsf(estimator.speed()) < 0.05f;
+}
+
+/** Stop everything that must not be running while flash is rewritten. */
+static void otaOnBegin() {
+  drive.stop();
+  motor_left.stop();
+  motor_right.stop();
+}
+#endif  // MICROROS_TRANSPORT_WIFI
+
 void setup() {
   Serial.begin(115200);
   delay(50);
@@ -1035,6 +1061,12 @@ void setup() {
   }
   agent_ip = resolveAgentIp();
   set_microros_wifi_transports((char *)wifi_ssid_active, (char *)wifi_pass_active, agent_ip, AGENT_PORT);
+
+  // Wireless flashing, so a board bolted into the robot never needs a cable
+  // again. Only useful once there is a network, hence here rather than earlier.
+  if (WiFi.status() == WL_CONNECTED) {
+    ota.begin(WIFI_HOSTNAME, otaIsSafe, otaOnBegin);
+  }
 #else
   set_microros_serial_transports(Serial);
 #endif
@@ -1044,6 +1076,12 @@ void setup() {
 
 //================================= loop ====================================//
 void loop() {
+#if defined(MICROROS_TRANSPORT_WIFI)
+  // Serviced first and every pass: an update must be able to land even when the
+  // agent is unreachable, which is exactly when a board most needs reflashing.
+  ota.handle();
+#endif
+
   // Keep trying to join a network if we have none. Backed off so a board with
   // nothing in range does not spend its whole life scanning.
 #if defined(MICROROS_TRANSPORT_WIFI)

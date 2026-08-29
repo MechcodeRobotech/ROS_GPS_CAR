@@ -29,4 +29,12 @@ static const WifiNetwork WIFI_NETWORKS[] = {
     // { "OpenGuestWiFi",    ""            },
 };
 
+
+// Password for wireless firmware updates. Anything on the network can reach the
+// OTA port, and an unauthenticated one is a way to put arbitrary code on a
+// machine that drives itself around - so this is not decoration. Change it.
+#ifndef OTA_PASSWORD
+#define OTA_PASSWORD "CHANGE_ME"
+#endif
+
 #endif  // NETWORK_SECRETS_H
