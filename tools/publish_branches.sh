@@ -326,6 +326,24 @@ flashing all behave exactly as they do in a native install.
 docker compose -f docker-compose.yml -f docker-compose.windows.yml up -d
 ```
 
+## Reaching it by name
+
+The container serves the UI, but the two services that make the robot reachable
+by NAME run on the host, not in here:
+
+    gps_localize_mdns.service       publishes gps-robot-web.local
+    gps_localize_netwatch.service   restarts the stack when the address changes
+
+With `network_mode: host` on Linux you can install those on the host and they
+cover the container too:
+
+    sudo apt install avahi-daemon avahi-utils
+    sudo ./setup/install.sh --native      # or install just those two units
+
+Without them the UI is still served, just only at the host's IP address - which
+changes whenever the machine moves network. The Help tab in the UI shows
+whichever addresses are actually available.
+
 `network_mode: host` does not exist on Docker Desktop - the container sits in
 a VM, so "host" is that VM rather than your PC. The override publishes the two
 ports that actually need to cross the boundary instead:

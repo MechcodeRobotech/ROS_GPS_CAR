@@ -428,6 +428,14 @@
       "files": "firmware/config/power.h, firmware/src/safety/safety_manager.h, firmware/src/main.cpp, docs/",
       "promoted": true,
       "problem": ""
+    },
+    {
+      "ts": "2026-08-30 00:45",
+      "step": 8,
+      "what": "Made the robot reachable by name with a QR for phones, added a Help tab explaining how the connection actually works, and made switching networks self-healing on both sides.",
+      "files": "gps_localize/qr.py, web/*, setup/netwatch.sh, setup/mdns_alias.sh, systemd/*",
+      "promoted": true,
+      "problem": ""
     }
   ],
   "problems": [
@@ -605,6 +613,13 @@
       "what": "INA226 PROCESSOR and MOTOR_A addresses were swapped against the built hardware.",
       "state": "FIXED and verified on hardware",
       "impact": "Pack voltage came out right by luck - packVoltage() discards any rail below PACK_RAIL_MIN_VALID_V and the 5.18 V processor rail fails that test. Motor A's CURRENT did not: the back-EMF model was being fed the processor's 0.89 A as the left wheel's, which would have corrupted its speed estimate the moment the robot drove. A wrong number that looks plausible."
+    },
+    {
+      "ts": "2026-08-30 00:45",
+      "severity": "HIGH",
+      "what": "Changing the PC's network silently orphaned the ROS stack, three times.",
+      "state": "FIXED - now automatic",
+      "impact": "The quiet kind of failure: topics still listed, node list empty, subscriber counts zero, and the web UI serving minutes-old data while the board was linked and publishing fine. gps_localize_netwatch.service now restarts the stack on an address change."
     }
   ],
   "tasks": [
@@ -1673,6 +1688,36 @@
       "files": "firmware/src/safety/safety_manager.h, firmware/src/main.cpp, firmware/src/net/ota_updater.h",
       "test": "flashed with the emergency RELEASED and stop_flags 0: accepted, 26 s, board rebooted into the new image and returned to IDLE with the pack at 12.09 V",
       "result": "the firmware drops the contactor on acceptance instead of demanding someone walk over and press the mushroom. A MOVING robot is still refused - cutting power to a machine in motion, remotely, is an unannounced e-stop rather than an update."
+    },
+    {
+      "id": "T101",
+      "phase": "W",
+      "title": "Web UI reachable by name, with a QR for phones",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "gps_localize/qr.py, httpd.py, web_server.py, viewer_server.py, web/*, setup/mdns_alias.sh, systemd/gps_localize_mdns.service",
+      "test": "http://gps-robot-web.local:8080 -> HTTP 200; 8 QR tests, every version round-tripped through zbarimg",
+      "result": "dependency-free QR encoder, verified by decoding rather than by eye - which caught a non-monic Reed-Solomon generator and transposed format info, both of which produced codes that looked correct and scanned as nothing. Name uses hyphens: an underscore is illegal in a hostname and resolvers reject it."
+    },
+    {
+      "id": "T102",
+      "phase": "W",
+      "title": "Help tab: how to connect, and what to do when it will not",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "web/index.html, web/app.js, web/style.css, tools/qc.py",
+      "test": "/api/connect and /api/qr answer on both the robot server and the Windows viewer (parity enforced)",
+      "result": "documents the mDNS -> DNS -> fixed-address ladder the robot actually uses, and the traps behind each"
+    },
+    {
+      "id": "T103",
+      "phase": "W",
+      "title": "Switching networks needs no intervention",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "setup/netwatch.sh, systemd/gps_localize_netwatch.service, setup/install.sh, CLAUDE.md",
+      "test": "netwatch reports the current address and fires on a change; mdns republished automatically across two real network moves today",
+      "result": "netwatch restarts the stack so DDS rebinds, mdns republishes the name, and the firmware already re-resolves the agent after five failed pings. Triggered by address change rather than network events, because Wi-Fi noise would otherwise restart the stack constantly."
     }
   ]
 }
