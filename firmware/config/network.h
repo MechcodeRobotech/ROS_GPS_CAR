@@ -71,15 +71,20 @@ static const char* WIFI_HOSTNAME = "esp32-gps-localize";
 //
 //   Check what your PC is called:   hostname        (prints just the name)
 //   Check it answers on the network: avahi-resolve -n mannaja.local
-// NOTE on this machine: avahi answers "mannaja.local" with a link-local IPv6
-// address only, and the firmware asks for an IPv4 A record, so step 1 will miss
-// and resolution falls through to the AGENT_IP below. That fallback is now
-// correct, so the link still comes up. If you want step 1 to work, give the
-// Ubuntu PC a reserved IPv4 lease in the router and check with:
-//     avahi-resolve -n mannaja.local        (should print 192.168.x.x)
+// NOTE on this machine: step 1 works. Plain "avahi-resolve -n mannaja.local"
+// prints a link-local IPv6 address, which looks like a failure, but the
+// firmware asks for an IPv4 A record specifically and that resolves:
+//     avahi-resolve -4 -n mannaja.local     ->  192.168.100.16
+// Check the IPv4 form, not the default one, before believing mDNS is broken.
+//
+// The fallback below is a last resort and goes stale on its own: it is a DHCP
+// address, so it changes whenever the lease does. It was 192.168.100.64 and the
+// machine had already moved to .16, which would have left the board dialling an
+// address nobody answers if mDNS ever missed. Re-check it with `hostname -I`,
+// or give the PC a reserved lease so it stops moving.
 #define USE_AGENT_HOSTNAME 1
 static const char*     AGENT_HOSTNAME = "mannaja";      // hostname of the Ubuntu PC
-static const IPAddress AGENT_IP(192, 168, 100, 64);     // fallback
+static const IPAddress AGENT_IP(192, 168, 100, 16);     // fallback, DHCP - verify
 static const uint16_t  AGENT_PORT = 8888;
 #define AGENT_RESOLVE_TIMEOUT_MS 3000
 

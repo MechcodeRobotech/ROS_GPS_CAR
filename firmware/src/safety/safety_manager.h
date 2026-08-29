@@ -31,8 +31,27 @@ public:
   };
 
   void begin() {
-    pinMode(PIN_E_EMER, INPUT);
+    // The pull MUST oppose the active level, or an unconnected pin reads as
+    // permanently asserted. Both of these were wrong on the bench: the button
+    // is active HIGH (ESP_EMER_SW_ACTIVE_LOW 0) but had a pull-UP, so with no
+    // button fitted IO13 floated high, read as pressed, and held the board in
+    // STOP_ESP_BUTTON forever - state ESTOP from boot, motors never enabled,
+    // and nothing in the log to say why. The emergency line had no pull at all,
+    // so it was reading "not tripped" only by luck of a floating input.
+    //
+    // Deriving the pull from the polarity is what stops the two disagreeing
+    // again: change the ACTIVE_LOW define and the pull follows it.
+#if E_EMER_ACTIVE_LOW
+    pinMode(PIN_E_EMER, INPUT_PULLUP);
+#else
+    pinMode(PIN_E_EMER, INPUT_PULLDOWN);
+#endif
+
+#if ESP_EMER_SW_ACTIVE_LOW
     pinMode(PIN_ESP_EMER_SW, INPUT_PULLUP);
+#else
+    pinMode(PIN_ESP_EMER_SW, INPUT_PULLDOWN);
+#endif
     if (PIN_LED_RED >= 0) { pinMode(PIN_LED_RED, OUTPUT); digitalWrite(PIN_LED_RED, LOW); }
     if (PIN_LED_GREEN >= 0) { pinMode(PIN_LED_GREEN, OUTPUT); digitalWrite(PIN_LED_GREEN, HIGH); }
     if (PIN_FAN_CTRL >= 0) { pinMode(PIN_FAN_CTRL, OUTPUT); digitalWrite(PIN_FAN_CTRL, HIGH); }

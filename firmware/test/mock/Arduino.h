@@ -27,11 +27,12 @@ inline void mock_advance_ms(unsigned long ms) {
 inline void mock_reset_clock() { mock_millis_value = 0; mock_micros_value = 0; }
 
 // ---- pin API (recorded, never touches hardware) --------------------------
-#define INPUT        0x0
-#define OUTPUT       0x1
-#define INPUT_PULLUP 0x2
-#define LOW          0x0
-#define HIGH         0x1
+#define INPUT          0x0
+#define OUTPUT         0x1
+#define INPUT_PULLUP   0x2
+#define INPUT_PULLDOWN 0x3
+#define LOW            0x0
+#define HIGH           0x1
 
 extern int mock_pin_state[64];
 extern int mock_pin_mode[64];

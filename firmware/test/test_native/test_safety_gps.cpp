@@ -456,7 +456,45 @@ void test_safety_battery_clear_threshold(void) {
     TEST_ASSERT_FALSE(safety.batteryLatched());
 }
 
+void test_safety_input_pulls_oppose_the_active_level(void) {
+    // An input's pull must oppose its active level. Get this backwards and an
+    // unconnected pin sits permanently asserted: the board came up on the bench
+    // with no e-stop button fitted, IO13 floated high against its own pull-up,
+    // read as pressed, and held STOP_ESP_BUTTON from boot. State ESTOP, motors
+    // never enabled, and nothing in the log naming the cause.
+    //
+    // Asserted against the polarity defines rather than hardcoded modes, so
+    // flipping a polarity keeps this honest instead of needing an edit.
+    SafetyManager safety;
+    safety.begin();
+
+#if ESP_EMER_SW_ACTIVE_LOW
+    TEST_ASSERT_EQUAL_INT(INPUT_PULLUP, mock_pin_mode[PIN_ESP_EMER_SW]);
+#else
+    TEST_ASSERT_EQUAL_INT(INPUT_PULLDOWN, mock_pin_mode[PIN_ESP_EMER_SW]);
+#endif
+
+#if E_EMER_ACTIVE_LOW
+    TEST_ASSERT_EQUAL_INT(INPUT_PULLUP, mock_pin_mode[PIN_E_EMER]);
+#else
+    TEST_ASSERT_EQUAL_INT(INPUT_PULLDOWN, mock_pin_mode[PIN_E_EMER]);
+#endif
+}
+
+void test_safety_unwired_button_does_not_estop(void) {
+    // The behaviour that failure produced: with nothing wired, the board must
+    // come up able to move, not latched into a stop it cannot explain.
+    SafetyManager safety;
+    set_hardware_clear();
+    arm(safety);
+    SafetyManager::Inputs in = healthy();
+    for (int i = 0; i < 30; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_EQUAL_UINT32(0u, safety.flags() & STOP_ESP_BUTTON);
+}
+
 int run_safety_gps_tests(void) {
+    RUN_TEST(test_safety_input_pulls_oppose_the_active_level);
+    RUN_TEST(test_safety_unwired_button_does_not_estop);
     RUN_TEST(test_safety_blocks_during_startup_lockout);
     RUN_TEST(test_safety_allows_motion_when_everything_is_fine);
     RUN_TEST(test_safety_stops_on_heartbeat_timeout);

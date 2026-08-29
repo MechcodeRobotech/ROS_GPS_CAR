@@ -50,7 +50,7 @@ broke exactly once.
 ```bash
 python3 tools/qc.py                        # cross-file contracts
 python3 tools/port_qc.py --static-only .   # port gate
-cd firmware && pio test -e native          # 139 host tests
+cd firmware && pio test -e native          # 141 host tests
 pio run -e wifi                            # firmware still builds
 ```
 
@@ -106,3 +106,15 @@ is necessary but never sufficient: it is not marked done from a sim result.
 - On Docker Desktop `network_mode: host` does nothing, and `devices: []` does
   **not** clear a device list — Compose merges it. Only `devices: !reset []`
   removes it.
+- **Changing the PC's network orphans the running ROS stack.** DDS binds its
+  interfaces when a node starts, so after switching Wi-Fi (or any address
+  change) the nodes keep advertising the old address and silently vanish from
+  the graph — `ros2 node list` comes back empty and subscriber counts drop to
+  zero while topics still look present. `systemctl restart gps_localize` fixes
+  it. Seen for real: the board linked to the agent and published telemetry that
+  `ros2 topic echo` could read, while the web UI sat on data seven minutes old.
+- An input pin's pull must **oppose** its active level. `PIN_ESP_EMER_SW` is
+  active HIGH and had `INPUT_PULLUP`, so with no button fitted it floated high,
+  read as pressed, and held the board in `STOP_ESP_BUTTON` from boot with
+  nothing in the log to say why. The pull is derived from the polarity define
+  now, and `test_safety_input_pulls_oppose_the_active_level` enforces it.
