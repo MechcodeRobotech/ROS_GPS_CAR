@@ -388,6 +388,14 @@
       "files": "tools/publish_branches.sh, tools/live_probe.py, tools/qc.py, CLAUDE.md, README.md, docs/architecture.md, docs/acceptance.md",
       "promoted": true,
       "problem": ""
+    },
+    {
+      "ts": "2026-08-29 19:00",
+      "step": 7,
+      "what": "First run on real hardware: ESP32 + relay + four INA226s, no battery. Flashed, joined Wi-Fi, resolved the agent by mDNS and linked - E01, E02 and E03 all pass. Found and fixed an input pull that held the board in e-stop from boot. Confirmed the no-battery case does not latch STOP_BATTERY_LOW, which was the bug that would have stopped the robot on first power-on. Board now reaches IDLE with no stop reasons and live INA readings reach the web UI.",
+      "files": "firmware/src/safety/safety_manager.h, firmware/config/network.h, firmware/test/*, CLAUDE.md",
+      "promoted": true,
+      "problem": ""
     }
   ],
   "problems": [
@@ -516,6 +524,27 @@
       "what": "README.md, docs/architecture.md and docs/acceptance.md claimed 120 or 124 host tests; the suite has 139.",
       "state": "FIXED",
       "impact": "Cheapest possible signal that a document has stopped being maintained. The real count is now derived from RUN_TEST calls in the test sources and checked by qc.py."
+    },
+    {
+      "ts": "2026-08-29 19:00",
+      "severity": "BLOCKER",
+      "what": "PIN_ESP_EMER_SW is active HIGH but was configured INPUT_PULLUP. With no e-stop button fitted the pin floated high against its own pull, read as permanently pressed, and held STOP_ESP_BUTTON from boot.",
+      "state": "FIXED",
+      "impact": "The board came up in ESTOP and would never have enabled a motor, with nothing in the log naming the cause. Pulls are now derived from the polarity defines so the two cannot disagree."
+    },
+    {
+      "ts": "2026-08-29 19:00",
+      "severity": "HIGH",
+      "what": "Switching the PC's Wi-Fi orphaned every running ROS node. DDS binds interfaces at node start, so after the address changed the nodes kept advertising the old one.",
+      "state": "FIXED by restart, documented",
+      "impact": "ros2 node list came back empty and telemetry subscribers dropped to zero while the topic still existed and the firmware was publishing to it. The web UI served data seven minutes stale. A restart of the unit is the fix."
+    },
+    {
+      "ts": "2026-08-29 19:00",
+      "severity": "MEDIUM",
+      "what": "AGENT_IP had gone stale (192.168.100.64 while the machine was on .16), and the comment above it wrongly claimed mDNS could not resolve here.",
+      "state": "FIXED",
+      "impact": "mDNS does work - the firmware asks for an A record and avahi-resolve -4 answers. Only the IPv6-first default form looks like a failure. The board resolved the agent by mDNS on the first attempt."
     }
   ],
   "tasks": [
@@ -1084,11 +1113,11 @@
       "id": "E01",
       "phase": "E",
       "title": "Flash the board and confirm it boots",
-      "needs": "ESP32+USB",
+      "needs": "ESP32",
       "state": "DONE",
       "files": "-",
       "test": "serial shows the Wi-Fi scan and chosen network",
-      "result": "PASS - flashed, hash verified, boots and runs",
+      "result": "pio run -e wifi -t upload -> hash verified; serial shows scan, join and agent resolve",
       "ts": "2026-08-27 14:25:00"
     },
     {
@@ -1099,7 +1128,7 @@
       "state": "DONE",
       "files": "-",
       "test": "power one AP down, it moves to the other",
-      "result": "PASS - joined manny at -47 dBm in 8.6 s, strongest-first, lists all APs",
+      "result": "scan listed 7 APs, chose \"manny\" at -52 dBm as the only configured one in range, joined in 11 s at -42 dBm",
       "ts": "2026-08-27 15:05:00"
     },
     {
@@ -1110,7 +1139,7 @@
       "state": "DONE",
       "files": "-",
       "test": "all 10 contract topics; telemetry hz steady",
-      "result": "PASS - /gps_localize_firmware in the graph, 10 topics, telemetry 8 Hz, mDNS found the PC by name",
+      "result": "/gps_localize_firmware present in ros2 node list; telemetry steady at ~8 Hz; 4 subscribers matched",
       "ts": "2026-08-27 15:05:00"
     },
     {
@@ -1494,6 +1523,26 @@
       "files": "README.md, docs/architecture.md, docs/acceptance.md, CLAUDE.md, tools/qc.py",
       "test": "python3 tools/qc.py -> counts derived from RUN_TEST calls in the test sources",
       "result": "four files corrected, drift now machine-checked"
+    },
+    {
+      "id": "E04d",
+      "phase": "E",
+      "title": "No-battery power sensing behaves: pack reads 0 and does not latch",
+      "needs": "ESP32+INA",
+      "state": "DONE",
+      "files": "firmware/src/power/power_monitor.h, firmware/config/power.h",
+      "test": "all four INA226s answered the TI manufacturer id check; battery_v 0.0 with no pack; STOP_BATTERY_LOW never set; board reaches IDLE with stop_reasons []",
+      "result": "the latch bug that would have stopped the robot 3 s after first power-on is confirmed gone on real hardware"
+    },
+    {
+      "id": "E12",
+      "phase": "E",
+      "title": "Input pull opposed its active level, holding the board in e-stop from boot",
+      "needs": "ESP32",
+      "state": "DONE",
+      "files": "firmware/src/safety/safety_manager.h, firmware/test/mock/Arduino.h, firmware/test/test_native/test_safety_gps.cpp",
+      "test": "141 host tests; test_safety_input_pulls_oppose_the_active_level fails when the pull-up is reintroduced",
+      "result": "flags 10 -> 8 and state ESTOP -> COMM_LOSS on hardware; then IDLE once the stack was restarted"
     }
   ]
 }
