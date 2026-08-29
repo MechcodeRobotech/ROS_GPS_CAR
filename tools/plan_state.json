@@ -420,6 +420,14 @@
       "files": "firmware/src/net/ota_updater.h, firmware/src/main.cpp, firmware/platformio.ini, firmware/config/pins.h",
       "promoted": true,
       "problem": ""
+    },
+    {
+      "ts": "2026-08-30 00:15",
+      "step": 7,
+      "what": "Live pack on the robot. Corrected the INA address map from measurement and verified it on hardware. Made a wireless flash cut the motor rails itself, then proved it by flashing with the emergency released. Relay, mushroom input and pack sensing all confirmed working on the real machine.",
+      "files": "firmware/config/power.h, firmware/src/safety/safety_manager.h, firmware/src/main.cpp, docs/",
+      "promoted": true,
+      "problem": ""
     }
   ],
   "problems": [
@@ -590,6 +598,13 @@
       "what": "ROS_DOMAIN_ID was assigned without export in ~/.bashrc, so no launched program inherited it.",
       "state": "FIXED",
       "impact": "rqt_graph, rviz and ros2 all ran on domain 0 and showed an empty graph with nothing to explain why - the documented ROS_DOMAIN_ID trap, arriving through a missing keyword rather than a wrong value."
+    },
+    {
+      "ts": "2026-08-30 00:15",
+      "severity": "HIGH",
+      "what": "INA226 PROCESSOR and MOTOR_A addresses were swapped against the built hardware.",
+      "state": "FIXED and verified on hardware",
+      "impact": "Pack voltage came out right by luck - packVoltage() discards any rail below PACK_RAIL_MIN_VALID_V and the 5.18 V processor rail fails that test. Motor A's CURRENT did not: the back-EMF model was being fed the processor's 0.89 A as the left wheel's, which would have corrupted its speed estimate the moment the robot drove. A wrong number that looks plausible."
     }
   ],
   "tasks": [
@@ -1594,10 +1609,10 @@
       "phase": "E",
       "title": "Battery cutoff latches until power cycle (no auto-recovery)",
       "needs": "USB flash",
-      "state": "TODO",
+      "state": "DONE",
       "files": "firmware/src/safety/safety_manager.h, firmware/config/power.h, docs/hardware.md",
       "test": "142 host tests; verified by restoring the auto-clear and confirming both new tests fail",
-      "result": "code done and committed - NOT on the board yet, no OTA and no USB attached"
+      "result": "on the board via OTA; latch-until-power-cycle confirmed by 147 host tests"
     },
     {
       "id": "E14",
@@ -1614,10 +1629,10 @@
       "phase": "E",
       "title": "INA address map does not match the built hardware",
       "needs": "USB flash",
-      "state": "BLOCKED",
+      "state": "DONE",
       "files": "firmware/config/power.h",
       "test": "with the relay closed, the pack rails must be the two INAs reading 11-12 V",
-      "result": "0x45 is the fan as configured, but the other 5 V rail is the processor at 0x41 - power.h calls 0x41 MOTOR A and 0x40 processor, so those two are swapped. Left alone until the relay is closed and it can be read off the hardware rather than inferred."
+      "result": "measured on a live 12.14 V pack: 0x40 and 0x44 are the motor rails, 0x41 is the processor (5.18 V, 0.89 A), 0x45 the fan. PROCESSOR and MOTOR_A were swapped. Verified on hardware after the fix: esp32_rail_v reads 5.18 V where it used to report 12.14, and motor_a_v reads the pack."
     },
     {
       "id": "E16",
@@ -1634,10 +1649,10 @@
       "phase": "E",
       "title": "Relay contactor driven from IO14 with the staged battery check",
       "needs": "USB flash",
-      "state": "TODO",
+      "state": "DONE",
       "files": "firmware/config/pins.h, firmware/src/safety/safety_manager.h, docs/hardware.md, docs/safety.md, README.md",
       "test": "146 host tests; 4 contactor tests verified against a relay broken in both directions",
-      "result": "code done and committed - needs a cable flash, and the relay is not connected yet"
+      "result": "flashed over Wi-Fi and confirmed: the contactor closes after the lockout, opens on the mushroom (motor_b_v 12.14 -> 1.40 V), and the pack reads 12.10 V only while it is closed."
     },
     {
       "id": "T100",
@@ -1648,6 +1663,16 @@
       "files": "~/.bashrc (outside the repo)",
       "test": "1 node visible without the variable exported, 5 with it",
       "result": "~/.bashrc had a bare ROS_DOMAIN_ID=10. Without export it is a shell variable that bash sees but no program it launches inherits, so rqt_graph, rviz and ros2 all started on domain 0 and showed an empty graph with no error. Fix: export ROS_DOMAIN_ID=10"
+    },
+    {
+      "id": "E18",
+      "phase": "E",
+      "title": "Wireless flash cuts the motor rails itself - no e-stop needed first",
+      "needs": "ESP32",
+      "state": "DONE",
+      "files": "firmware/src/safety/safety_manager.h, firmware/src/main.cpp, firmware/src/net/ota_updater.h",
+      "test": "flashed with the emergency RELEASED and stop_flags 0: accepted, 26 s, board rebooted into the new image and returned to IDLE with the pack at 12.09 V",
+      "result": "the firmware drops the contactor on acceptance instead of demanding someone walk over and press the mushroom. A MOVING robot is still refused - cutting power to a machine in motion, remotely, is an unannounced e-stop rather than an update."
     }
   ]
 }
