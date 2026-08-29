@@ -396,6 +396,14 @@
       "files": "firmware/src/safety/safety_manager.h, firmware/config/network.h, firmware/test/*, CLAUDE.md",
       "promoted": true,
       "problem": ""
+    },
+    {
+      "ts": "2026-08-29 23:30",
+      "step": 7,
+      "what": "Ran on a real 3S pack with no USB. Pack reads 0 and does not latch because the mushroom is engaged and the relay is open, which is correct. Made the hard cutoff latch until power cycle as asked. Found two mapping problems to settle against the hardware rather than guess: the relay sense appears to be on IO13 rather than IO14, and the processor INA is at 0x41 where power.h expects motor A.",
+      "files": "firmware/src/safety/safety_manager.h, firmware/config/power.h, docs/hardware.md, firmware/test/test_native/test_safety_gps.cpp",
+      "promoted": true,
+      "problem": ""
     }
   ],
   "problems": [
@@ -545,6 +553,13 @@
       "what": "AGENT_IP had gone stale (192.168.100.64 while the machine was on .16), and the comment above it wrongly claimed mDNS could not resolve here.",
       "state": "FIXED",
       "impact": "mDNS does work - the firmware asks for an A record and avahi-resolve -4 answers. Only the IPv6-first default form looks like a failure. The board resolved the agent by mDNS on the first attempt."
+    },
+    {
+      "ts": "2026-08-29 23:30",
+      "severity": "HIGH",
+      "what": "The hard battery cutoff released itself once the pack recovered above BATT_CUTOFF_CLEAR_V.",
+      "state": "FIXED in code, pending flash",
+      "impact": "A LiPo at the cutoff sags under load and springs back when the load comes off, so the threshold acted as an oscillator: stop, un-latch, drive, sag, stop - draining the cells past damage automatically. The cutoff now clears only by switching the robot off and on."
     }
   ],
   "tasks": [
@@ -1543,6 +1558,46 @@
       "files": "firmware/src/safety/safety_manager.h, firmware/test/mock/Arduino.h, firmware/test/test_native/test_safety_gps.cpp",
       "test": "141 host tests; test_safety_input_pulls_oppose_the_active_level fails when the pull-up is reintroduced",
       "result": "flags 10 -> 8 and state ESTOP -> COMM_LOSS on hardware; then IDLE once the stack was restarted"
+    },
+    {
+      "id": "E13",
+      "phase": "E",
+      "title": "Battery cutoff latches until power cycle (no auto-recovery)",
+      "needs": "USB flash",
+      "state": "TODO",
+      "files": "firmware/src/safety/safety_manager.h, firmware/config/power.h, docs/hardware.md",
+      "test": "142 host tests; verified by restoring the auto-clear and confirming both new tests fail",
+      "result": "code done and committed - NOT on the board yet, no OTA and no USB attached"
+    },
+    {
+      "id": "E14",
+      "phase": "E",
+      "title": "Confirm which pin the relay/mushroom sense actually lands on",
+      "needs": "ESP32 + release the mushroom",
+      "state": "BLOCKED",
+      "files": "firmware/config/pins.h",
+      "test": "release the mushroom and watch stop_flags: bit 1 clearing means the sense is on IO13, not IO14",
+      "result": "the mushroom is engaged and the relay is provably open, yet bit 0 STOP_HW_EMERGENCY is clear while bit 1 STOP_ESP_BUTTON is set - the two inputs look swapped"
+    },
+    {
+      "id": "E15",
+      "phase": "E",
+      "title": "INA address map does not match the built hardware",
+      "needs": "USB flash",
+      "state": "BLOCKED",
+      "files": "firmware/config/power.h",
+      "test": "with the relay closed, the pack rails must be the two INAs reading 11-12 V",
+      "result": "0x45 is the fan as configured, but the other 5 V rail is the processor at 0x41 - power.h calls 0x41 MOTOR A and 0x40 processor, so those two are swapped. Left alone until the relay is closed and it can be read off the hardware rather than inferred."
+    },
+    {
+      "id": "E16",
+      "phase": "E",
+      "title": "Identify motor A vs motor B INA by driving each motor",
+      "needs": "ROBOT (motor driver)",
+      "state": "HW-BLOCKED",
+      "files": "firmware/config/power.h",
+      "test": "drive one motor at a time and see which INA current rises",
+      "result": "deferred by decision - the A/B assignment cannot be told apart until a motor can actually be spun"
     }
   ]
 }
