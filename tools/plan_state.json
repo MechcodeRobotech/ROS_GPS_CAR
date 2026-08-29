@@ -412,6 +412,14 @@
       "files": "firmware/config/pins.h, firmware/src/safety/safety_manager.h, firmware/test/test_native/test_safety_gps.cpp, docs/",
       "promoted": true,
       "problem": ""
+    },
+    {
+      "ts": "2026-08-29 23:55",
+      "step": 7,
+      "what": "Built and proved OTA on real hardware: flashed once by cable to get an OTA-capable image on, then flashed over Wi-Fi successfully. The robot no longer needs a USB cable for firmware. Also corrected the emergency input polarity from the schematic, and found why rqt_graph was empty.",
+      "files": "firmware/src/net/ota_updater.h, firmware/src/main.cpp, firmware/platformio.ini, firmware/config/pins.h",
+      "promoted": true,
+      "problem": ""
     }
   ],
   "problems": [
@@ -575,6 +583,13 @@
       "what": "No code anywhere in the firmware drove a relay. IO14 was declared as an emergency SENSE input while the hardware uses it to switch the contactor.",
       "state": "FIXED in code, pending flash",
       "impact": "The coil was never energized, so the motor rails were never powered, so the pack - which sits behind the relay - read 0 V and could not be measured at all. The visible symptom was that the relay never clicked."
+    },
+    {
+      "ts": "2026-08-29 23:55",
+      "severity": "MEDIUM",
+      "what": "ROS_DOMAIN_ID was assigned without export in ~/.bashrc, so no launched program inherited it.",
+      "state": "FIXED",
+      "impact": "rqt_graph, rviz and ros2 all ran on domain 0 and showed an empty graph with nothing to explain why - the documented ROS_DOMAIN_ID trap, arriving through a missing keyword rather than a wrong value."
     }
   ],
   "tasks": [
@@ -979,10 +994,10 @@
       "phase": "D",
       "title": "OTA over Wi-Fi via Update.h, rollback on bad verification",
       "needs": "ESP32",
-      "state": "HW-BLOCKED",
+      "state": "DONE",
       "files": "firmware, httpd.py",
-      "test": "bench flash succeeds; corrupt image rolls back",
-      "result": "",
+      "test": "flashed over USB once, then flashed again over Wi-Fi: 100%, Result OK, board returned with all 5 nodes in the graph",
+      "result": "ArduinoOTA behind a password, refusing any update unless the contactor is open and the robot is still. Rollback comes from writing the inactive partition and switching only on a verified MD5. First OTA-capable image must still arrive by cable - the running firmware is what accepts the update.",
       "ts": ""
     },
     {
@@ -1623,6 +1638,16 @@
       "files": "firmware/config/pins.h, firmware/src/safety/safety_manager.h, docs/hardware.md, docs/safety.md, README.md",
       "test": "146 host tests; 4 contactor tests verified against a relay broken in both directions",
       "result": "code done and committed - needs a cable flash, and the relay is not connected yet"
+    },
+    {
+      "id": "T100",
+      "phase": "W",
+      "title": "rqt_graph showed nothing: ROS_DOMAIN_ID was assigned but never exported",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "~/.bashrc (outside the repo)",
+      "test": "1 node visible without the variable exported, 5 with it",
+      "result": "~/.bashrc had a bare ROS_DOMAIN_ID=10. Without export it is a shell variable that bash sees but no program it launches inherits, so rqt_graph, rviz and ros2 all started on domain 0 and showed an empty graph with no error. Fix: export ROS_DOMAIN_ID=10"
     }
   ]
 }
