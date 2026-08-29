@@ -202,3 +202,14 @@ journalctl -u gps_localize -f
 | Heading drifts / robot circles | see [tuning.md](tuning.md) — IMU mounting signs first, then the heading PID |
 | Web UI unreachable from a phone | `web.host` must be `0.0.0.0`, port 8080 open in the firewall, same subnet |
 | `Address already in use` on start | another copy is running: `systemctl stop gps_localize` or change `web.port` |
+
+## Reaching the web UI
+
+    http://gps-robot-web.local:8080
+
+`install.sh` enables `gps_localize_mdns.service`, which publishes that name and
+follows the machine when its address changes. It needs avahi:
+
+    sudo apt install avahi-daemon avahi-utils
+
+Without avahi the UI is still served, just only by IP address.

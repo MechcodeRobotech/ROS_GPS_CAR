@@ -226,3 +226,21 @@ http://<ไอพีของเครื่องหุ่นยนต์>:8080
 
 พฤติกรรมนี้ตั้งใจให้ปลอดภัยไว้ก่อน — ถ้าต้องการให้หุ่นวิ่งต่อได้แม้ปิดหน้าเว็บ
 ให้ปิด `safety.require_web_heartbeat` (ไม่แนะนำ)
+
+## Opening the UI without knowing an IP address
+
+    http://gps-robot-web.local:8080
+
+Published by `gps_localize_mdns.service`, which re-checks the address and
+republishes when it changes - so the name keeps working after the PC moves
+network, which a written-down IP does not. Needs `avahi-daemon` and
+`avahi-utils`; the installer says so if they are missing.
+
+The name uses **hyphens, not underscores**. `gps_robot_web.local` looks more
+natural and does not resolve: RFC 1123 does not allow an underscore in a
+hostname. avahi will publish one, and then browsers and system resolvers refuse
+to look it up - correct everywhere except where it is typed.
+
+The **Help** tab carries a QR of that URL for phones, the addresses behind it,
+and the order the robot uses to find this PC. Android below 12 has no mDNS in
+the browser, so the IP address is shown alongside for those.
