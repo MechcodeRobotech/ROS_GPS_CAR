@@ -173,7 +173,11 @@ void test_safety_battery_cutoff_needs_to_persist(void) {
     TEST_ASSERT_TRUE(safety.batteryLatched());
 }
 
-void test_safety_battery_recovers_above_hysteresis(void) {
+void test_safety_battery_cutoff_never_unlatches_by_itself(void) {
+    // A LiPo at the cutoff recovers as soon as the load comes off. If that
+    // recovery cleared the latch the robot would stop, restart, sag and stop
+    // again, draining the cells past damage while doing it. Nothing the pack
+    // does may release this - only starting the robot again.
     mock_reset_clock();
     set_hardware_clear();
     SafetyManager safety;
@@ -183,8 +187,24 @@ void test_safety_battery_recovers_above_hysteresis(void) {
     for (int i = 0; i < 60; ++i) { mock_advance_ms(100); safety.update(in); }
     TEST_ASSERT_TRUE(safety.batteryLatched());
 
-    in.battery_v = BATT_CUTOFF_V + 1.0f;
-    for (int i = 0; i < 10; ++i) { mock_advance_ms(100); safety.update(in); }
+    // Recovered, and well above anything that used to count as clear.
+    in.battery_v = 12.6f;                       // a freshly charged pack
+    for (int i = 0; i < 100; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_TRUE(safety.batteryLatched());
+}
+
+void test_safety_battery_cutoff_clears_on_restart(void) {
+    // The documented recovery, and the only one: switch it off and on again.
+    mock_reset_clock();
+    set_hardware_clear();
+    SafetyManager safety;
+    arm(safety);
+    SafetyManager::Inputs in = healthy();
+    in.battery_v = BATT_CUTOFF_V - 0.5f;
+    for (int i = 0; i < 60; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_TRUE(safety.batteryLatched());
+
+    safety.begin();                             // stands for the power cycle
     TEST_ASSERT_FALSE(safety.batteryLatched());
 }
 
@@ -437,7 +457,7 @@ void test_safety_battery_tiers(void) {
     }
 }
 
-/** Hysteresis: recovery needs BATT_CUTOFF_CLEAR_V, not just cutoff + a hair. */
+/** The cutoff holds through any recovery the pack manages on its own. */
 void test_safety_battery_clear_threshold(void) {
     SafetyManager safety;
     set_hardware_clear();
@@ -447,13 +467,13 @@ void test_safety_battery_clear_threshold(void) {
     for (int i = 0; i < 60; ++i) { mock_advance_ms(100); safety.update(in); }
     TEST_ASSERT_TRUE(safety.batteryLatched());
 
-    in.battery_v = 10.9f;                       // above cutoff, below clear
+    in.battery_v = 10.9f;                       // back above the cutoff
     for (int i = 0; i < 30; ++i) { mock_advance_ms(100); safety.update(in); }
     TEST_ASSERT_TRUE(safety.batteryLatched());
 
-    in.battery_v = 11.2f;                       // above BATT_CUTOFF_CLEAR_V
+    in.battery_v = 11.2f;                       // and further still
     for (int i = 0; i < 30; ++i) { mock_advance_ms(100); safety.update(in); }
-    TEST_ASSERT_FALSE(safety.batteryLatched());
+    TEST_ASSERT_TRUE(safety.batteryLatched());
 }
 
 void test_safety_input_pulls_oppose_the_active_level(void) {
@@ -505,7 +525,8 @@ int run_safety_gps_tests(void) {
     RUN_TEST(test_safety_button_is_debounced);
     RUN_TEST(test_safety_release_needs_hold_time);
     RUN_TEST(test_safety_battery_cutoff_needs_to_persist);
-    RUN_TEST(test_safety_battery_recovers_above_hysteresis);
+    RUN_TEST(test_safety_battery_cutoff_never_unlatches_by_itself);
+    RUN_TEST(test_safety_battery_cutoff_clears_on_restart);
     RUN_TEST(test_safety_invalid_battery_reading_is_ignored);
     RUN_TEST(test_safety_rail_voltage_is_not_treated_as_pack);
     RUN_TEST(test_safety_genuinely_low_pack_still_latches);

@@ -78,8 +78,15 @@
 #define BATT_WARN_V             11.4f     // 3.80 V/cell -> orange on the web UI, keep driving
 #define BATT_SOFT_STOP_V        11.0f     // 3.67 V/cell -> stop driving, stay powered
 #define BATT_CUTOFF_V           10.7f     // 3.57 V/cell -> latch STOP_BATTERY_LOW
-#define BATT_CUTOFF_CLEAR_V     11.1f     // 3.70 V/cell -> hysteresis, unlatch above this
 #define BATT_CUTOFF_HOLD_MS     3000      // must stay low this long (ignore load dips)
+
+// There is deliberately NO unlatch voltage. The cutoff is cleared by switching
+// the robot off and starting it again, and by nothing else. A pack sitting at
+// the cutoff sags under load and springs back the moment the load comes off, so
+// any recovery threshold just makes the robot stop, un-latch, drive, sag and
+// stop again while it drains the cells past the point where they take damage.
+// No voltage means "this pack is fine now" - only a person deciding to charge
+// or swap it does. BATT_CUTOFF_CLEAR_V used to live here and was removed.
 
 // Below this the motor rail is not powered (mushroom switch or relay open), so
 // the pack voltage is unknown rather than low. Never latch on that.

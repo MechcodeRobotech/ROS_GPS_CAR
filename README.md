@@ -50,7 +50,7 @@ firmware/                 ESP32 firmware (PlatformIO, micro-ROS)
                           gps, power, control, safety, network (index: config.h)
   lib/                    motor, INA226, GPS NMEA, IMU, compass, estimator, PIDF, safety
   src/main.cpp            100 Hz control loop + micro-ROS entities
-  test/                   141 host tests (pio test -e native)
+  test/                   142 host tests (pio test -e native)
 gps_localize_ws/src/gps_localize/
   gps_localize/           ROS 2 nodes (waypoint_nav, gps_odom, safety_watchdog, web_server)
   config/                 one YAML per topic: robot, nav, pid, motor, estimator,
@@ -135,7 +135,7 @@ turns onto the bearing.
 
 ```bash
 python3 tools/qc.py                    # cross-file contract check, no build needed
-cd firmware && pio test -e native      # 141 host tests: PID, fusion, ramp, motor model, safety, NMEA
+cd firmware && pio test -e native      # 142 host tests: PID, fusion, ramp, motor model, safety, NMEA
 ```
 
 ## Web UI

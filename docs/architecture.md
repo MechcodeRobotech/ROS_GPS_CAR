@@ -252,7 +252,7 @@ firmware/          ESP32, PlatformIO
   config/          tunables and the pin map
   lib/             reusable drivers: INA226, BNO085, TB6612, QMC5883, NMEA, PIDF
   src/             this robot: estimator, control, safety, power
-  test/            141 host tests, run with pio test -e native
+  test/            142 host tests, run with pio test -e native
 gps_localize_ws/   ROS 2 Humble workspace
   .../gps_localize/  the five nodes, web UI, launch files, config
 webapp/            the no-ROS viewer, for a PC with no robot

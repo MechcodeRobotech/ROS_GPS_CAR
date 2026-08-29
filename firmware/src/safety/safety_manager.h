@@ -57,6 +57,13 @@ public:
     if (PIN_FAN_CTRL >= 0) { pinMode(PIN_FAN_CTRL, OUTPUT); digitalWrite(PIN_FAN_CTRL, HIGH); }
     boot_ms_ = millis();
     last_clear_ms_ = 0;
+
+    // A battery cutoff is cleared by starting the robot again and by nothing
+    // else, so this is the one place it is released. Stated explicitly rather
+    // than left to the member initialiser, because "off and on again" IS the
+    // documented recovery and it should be visible in the code that performs it.
+    batt_latched_   = false;
+    batt_low_since_ = 0;
   }
 
   void update(const Inputs &in) {
@@ -85,12 +92,22 @@ public:
     // That is not a flat battery, so nothing latches. Reading the ESP32 +5 V
     // rail here by mistake is exactly what latched the robot into e-stop three
     // seconds after every boot; see power.h.
+    // The hard cut LATCHES UNTIL POWER OFF. It used to clear itself once the
+    // pack came back above BATT_CUTOFF_CLEAR_V, and on a LiPo that is the wrong
+    // behaviour: a pack at the cutoff sags under load and recovers the moment
+    // the load comes off, so the robot would stop, un-latch a second later,
+    // drive, sag, stop again - cycling while it drained the cells past the point
+    // where they take damage. There is no voltage that means "this pack is fine
+    // again"; only a human deciding to swap or charge it does.
+    //
+    // So the only way out is switching the robot off and starting it again. That
+    // is deliberate: it forces someone to look at the battery instead of letting
+    // the machine talk itself back into driving.
     if (in.battery_valid && in.battery_v < BATT_CUTOFF_V) {
       if (batt_low_since_ == 0) batt_low_since_ = now;
       if (now - batt_low_since_ > BATT_CUTOFF_HOLD_MS) batt_latched_ = true;
     } else {
       batt_low_since_ = 0;
-      if (in.battery_valid && in.battery_v > BATT_CUTOFF_CLEAR_V) batt_latched_ = false;
     }
     if (batt_latched_) f |= STOP_BATTERY_LOW;
 

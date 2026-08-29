@@ -100,9 +100,16 @@ for the processor and fan rails, too small for the motors. Fit 0.01 Ω on the
 two motor sensors and keep `INA226_SHUNT_MOTOR_OHM` in sync.
 
 Battery protection lives in `power.h`, as 3S LiPo tiers: warn at 11.4 V
-(3.80 V/cell), soft stop at 11.0 V, hard cut at 10.7 V held for 3 s, and
-recovery above 11.1 V. A cell is damaged below about 3.0 V/cell (9.0 V pack),
-so these sit well clear of it.
+(3.80 V/cell), soft stop at 11.0 V, and hard cut at 10.7 V held for 3 s. A cell
+is damaged below about 3.0 V/cell (9.0 V pack), so these sit well clear of it.
+
+The warning and the soft stop follow the voltage back up on their own. **The
+hard cut does not: it is cleared by switching the robot off and starting it
+again, and by nothing else.** A pack at the cutoff sags under load and springs
+back as soon as the load comes off, so a recovery threshold would only make the
+robot stop, un-latch, drive, sag and stop again while draining the cells past
+the point where they take damage. No voltage means "this pack is fine now" -
+only a person deciding to charge or swap it does.
 
 The diode drops above are measured, not datasheet figures - at ~12 V a 1.8 V
 drop is 15% of the rail, and the back-EMF wheel-speed model uses it, so a

@@ -28,7 +28,10 @@
  *
  * Reading the +5 V rail as if it were the pack is what latched the robot into
  * e-stop three seconds after every boot: 5 V is below any sane 3S cutoff, and
- * the hysteresis needed a voltage the rail could never reach.
+ * back then the latch could only be released by a voltage the rail could never
+ * reach. The cutoff is cleared by a power cycle now, so an unmeasurable pack
+ * must never be allowed to latch it in the first place - which is exactly what
+ * packValid() is for.
  */
 #ifndef POWER_MONITOR_H
 #define POWER_MONITOR_H
