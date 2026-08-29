@@ -404,6 +404,14 @@
       "files": "firmware/src/safety/safety_manager.h, firmware/config/power.h, docs/hardware.md, firmware/test/test_native/test_safety_gps.cpp",
       "promoted": true,
       "problem": ""
+    },
+    {
+      "ts": "2026-08-29 23:39",
+      "step": 7,
+      "what": "Found that the firmware never drove the relay: IO14 was an input in the config and no relay output existed anywhere. Corrected the pin roles to match the built hardware (IO13 mushroom in, IO14 contactor out) and implemented the staged sequence - rails dead through the lockout, close to make the pack measurable, open and stay open on a flat pack.",
+      "files": "firmware/config/pins.h, firmware/src/safety/safety_manager.h, firmware/test/test_native/test_safety_gps.cpp, docs/",
+      "promoted": true,
+      "problem": ""
     }
   ],
   "problems": [
@@ -560,6 +568,13 @@
       "what": "The hard battery cutoff released itself once the pack recovered above BATT_CUTOFF_CLEAR_V.",
       "state": "FIXED in code, pending flash",
       "impact": "A LiPo at the cutoff sags under load and springs back when the load comes off, so the threshold acted as an oscillator: stop, un-latch, drive, sag, stop - draining the cells past damage automatically. The cutoff now clears only by switching the robot off and on."
+    },
+    {
+      "ts": "2026-08-29 23:39",
+      "severity": "BLOCKER",
+      "what": "No code anywhere in the firmware drove a relay. IO14 was declared as an emergency SENSE input while the hardware uses it to switch the contactor.",
+      "state": "FIXED in code, pending flash",
+      "impact": "The coil was never energized, so the motor rails were never powered, so the pack - which sits behind the relay - read 0 V and could not be measured at all. The visible symptom was that the relay never clicked."
     }
   ],
   "tasks": [
@@ -1574,10 +1589,10 @@
       "phase": "E",
       "title": "Confirm which pin the relay/mushroom sense actually lands on",
       "needs": "ESP32 + release the mushroom",
-      "state": "BLOCKED",
+      "state": "DONE",
       "files": "firmware/config/pins.h",
       "test": "release the mushroom and watch stop_flags: bit 1 clearing means the sense is on IO13, not IO14",
-      "result": "the mushroom is engaged and the relay is provably open, yet bit 0 STOP_HW_EMERGENCY is clear while bit 1 STOP_ESP_BUTTON is set - the two inputs look swapped"
+      "result": "resolved by the user's wiring: IO13 is the mushroom input, IO14 drives the relay. The firmware had IO14 as an input and drove no relay at all, which is why it never clicked and the pack could never be measured."
     },
     {
       "id": "E15",
@@ -1598,6 +1613,16 @@
       "files": "firmware/config/power.h",
       "test": "drive one motor at a time and see which INA current rises",
       "result": "deferred by decision - the A/B assignment cannot be told apart until a motor can actually be spun"
+    },
+    {
+      "id": "E17",
+      "phase": "E",
+      "title": "Relay contactor driven from IO14 with the staged battery check",
+      "needs": "USB flash",
+      "state": "TODO",
+      "files": "firmware/config/pins.h, firmware/src/safety/safety_manager.h, docs/hardware.md, docs/safety.md, README.md",
+      "test": "146 host tests; 4 contactor tests verified against a relay broken in both directions",
+      "result": "code done and committed - needs a cable flash, and the relay is not connected yet"
     }
   ]
 }
