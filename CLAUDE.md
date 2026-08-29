@@ -120,6 +120,10 @@ is necessary but never sufficient: it is not marked done from a sim result.
   zero while topics still look present. `systemctl restart gps_localize` fixes
   it. Seen for real: the board linked to the agent and published telemetry that
   `ros2 topic echo` could read, while the web UI sat on data seven minutes old.
+  `gps_localize_netwatch.service` now does that restart automatically, and
+  `gps_localize_mdns.service` republishes `gps-robot-web.local` at the new
+  address, so switching networks needs no intervention. The firmware handles its
+  own half: after five failed agent pings it re-resolves the agent by mDNS.
 - An input pin's pull must **oppose** its active level, or an unconnected pin
   reads as permanently asserted. A pull-up on an active-HIGH input held the board
   in e-stop from boot with nothing in the log to say why. The pull is derived

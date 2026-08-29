@@ -219,6 +219,19 @@ http://packages.ros.org/ros2/ubuntu \$(. /etc/os-release && echo \$UBUNTU_CODENA
         warn "avahi-utils is missing, so gps-robot-web.local will not resolve"
         warn "  sudo apt install avahi-utils avahi-daemon"
     fi
+
+    # Restarts the stack when this machine's address changes. DDS binds its
+    # interfaces at node start-up, so without this a change of network leaves
+    # every node advertising an address that no longer reaches it - and nothing
+    # reports an error.
+    local netwatch="$WS/src/gps_localize/systemd/gps_localize_netwatch.service"
+    if [ -f "$netwatch" ]; then
+        run bash -c "sed -e 's|__USER__|$(id -un)|g' -e 's|__PROJECT__|$ROOT|g' \
+            '$netwatch' | $SUDO tee /etc/systemd/system/gps_localize_netwatch.service >/dev/null"
+        run $SUDO systemctl daemon-reload
+        run $SUDO systemctl enable --now gps_localize_netwatch
+        ok "the stack will follow this machine onto other networks by itself"
+    fi
 }
 
 # ---------------------------------------------------------------- docker ----
@@ -254,8 +267,10 @@ do_uninstall() {
     if systemctl list-unit-files 2>/dev/null | grep -q '^gps_localize'; then
         run $SUDO systemctl disable --now gps_localize
         run $SUDO systemctl disable --now gps_localize_mdns 2>/dev/null || true
+        run $SUDO systemctl disable --now gps_localize_netwatch 2>/dev/null || true
         run $SUDO rm -f /etc/systemd/system/gps_localize.service \
-                        /etc/systemd/system/gps_localize_mdns.service
+                        /etc/systemd/system/gps_localize_mdns.service \
+                        /etc/systemd/system/gps_localize_netwatch.service
         run $SUDO systemctl daemon-reload
         ok "service removed"
     else

@@ -1,0 +1,19 @@
+[Unit]
+# Restarts the ROS stack when this machine's address changes, because DDS binds
+# its interfaces at node start-up and silently keeps advertising the old one.
+# See setup/netwatch.sh for what that failure actually looks like - it is the
+# kind where everything easy to check says the system is healthy.
+Description=GPS_Localize network change watcher
+Documentation=file://__PROJECT__/setup/netwatch.sh
+After=network.target
+
+[Service]
+Type=simple
+# Runs as root: its whole job is to restart another unit, and asking for a
+# polkit rule instead would only move the same privilege somewhere less obvious.
+ExecStart=__PROJECT__/setup/netwatch.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
