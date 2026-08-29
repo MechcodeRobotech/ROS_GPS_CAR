@@ -204,6 +204,21 @@ http://packages.ros.org/ros2/ubuntu \$(. /etc/os-release && echo \$UBUNTU_CODENA
     else
         warn "no systemd unit found, skipping autostart"
     fi
+
+    # The web UI's name on the network. Without it the only way in is the PC's
+    # IP address, which is a DHCP lease and moves - the same trap that left the
+    # firmware dialling an agent that had changed address.
+    local mdns="$WS/src/gps_localize/systemd/gps_localize_mdns.service"
+    if [ -f "$mdns" ] && command -v avahi-publish-address >/dev/null 2>&1; then
+        run bash -c "sed -e 's|__USER__|$(id -un)|g' -e 's|__PROJECT__|$ROOT|g' \
+            '$mdns' | $SUDO tee /etc/systemd/system/gps_localize_mdns.service >/dev/null"
+        run $SUDO systemctl daemon-reload
+        run $SUDO systemctl enable --now gps_localize_mdns
+        ok "web UI reachable at http://gps-robot-web.local:8080"
+    elif [ -f "$mdns" ]; then
+        warn "avahi-utils is missing, so gps-robot-web.local will not resolve"
+        warn "  sudo apt install avahi-utils avahi-daemon"
+    fi
 }
 
 # ---------------------------------------------------------------- docker ----
@@ -238,7 +253,9 @@ do_uninstall() {
     head "removing"
     if systemctl list-unit-files 2>/dev/null | grep -q '^gps_localize'; then
         run $SUDO systemctl disable --now gps_localize
-        run $SUDO rm -f /etc/systemd/system/gps_localize.service
+        run $SUDO systemctl disable --now gps_localize_mdns 2>/dev/null || true
+        run $SUDO rm -f /etc/systemd/system/gps_localize.service \
+                        /etc/systemd/system/gps_localize_mdns.service
         run $SUDO systemctl daemon-reload
         ok "service removed"
     else

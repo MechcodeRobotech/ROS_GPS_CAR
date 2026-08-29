@@ -1,0 +1,25 @@
+[Unit]
+# Publishes gps-robot-web.local so nobody has to know the PC's IP address.
+# Separate from gps_localize.service on purpose: the name should be claimed even
+# when the ROS stack is being restarted, so a phone pointed at the robot gets a
+# page that is briefly unavailable rather than a name that does not exist.
+Description=GPS_Localize web UI mDNS name
+Documentation=file://__PROJECT__/docs/web_ui.md
+After=network-online.target avahi-daemon.service
+Wants=network-online.target
+Requires=avahi-daemon.service
+
+[Service]
+Type=simple
+User=__USER__
+ExecStart=__PROJECT__/setup/mdns_alias.sh
+Restart=always
+RestartSec=5
+
+# avahi-publish holds the record only while it runs, which is what we want: if
+# this machine is off, the name should stop resolving rather than send someone
+# to an address that answers nothing.
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

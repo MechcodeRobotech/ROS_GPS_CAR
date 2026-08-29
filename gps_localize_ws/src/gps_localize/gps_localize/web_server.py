@@ -37,7 +37,9 @@ from std_msgs.msg import Bool, Float32MultiArray, Int32, String
 
 from gps_localize import telemetry as tel
 from gps_localize.configstore import GROUPS, ConfigStore
-from gps_localize.httpd import SseBroadcaster, WebApp, WebServer, urls_for
+from gps_localize import qr
+from gps_localize.httpd import (
+    SseBroadcaster, WebApp, WebServer, connect_info, urls_for)
 
 NS = '/gps_localize'
 
@@ -245,6 +247,8 @@ class WebServerNode(Node):
         route('GET', '/api/state', self.api_state)
         route('GET', '/api/logs', self.api_logs)
         route('GET', '/api/topics', self.api_topics)
+        route('GET', '/api/connect', self.api_connect)
+        route('GET', '/api/qr', self.api_qr)
         route('GET', '/api/topic', self.api_topic_echo)
         route('GET', '/api/config', self.api_config_get)
         route('POST', '/api/config', self.api_config_set)
@@ -273,6 +277,18 @@ class WebServerNode(Node):
     # There is no ros2 CLI on a Windows or Docker Desktop machine, so the
     # browser has to be able to show the whole graph: every topic, its type,
     # how many nodes are on each end, the rate, and the live value.
+
+    def api_connect(self, _body, _query):
+        """How to reach this web UI, so the Help tab never invents an address."""
+        return 200, {'ok': True, 'connect': connect_info(self.host, self.port)}
+
+    def api_qr(self, _body, query):
+        """A QR of the best URL, as SVG so it scales and needs no image library."""
+        target = (query.get('url') or [''])[0] or connect_info(self.host, self.port)['best']
+        try:
+            return 200, {'ok': True, 'url': target, 'svg': qr.to_svg(target)}
+        except ValueError as exc:
+            return 400, {'ok': False, 'error': str(exc)}
 
     def api_topics(self, _body, _query):
         """Every topic in the graph, not just the ones this robot defines."""

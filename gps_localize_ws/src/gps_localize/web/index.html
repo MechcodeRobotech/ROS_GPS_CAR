@@ -56,6 +56,7 @@
   <button class="tab" data-tab="cfg">ตั้งค่า<small>Settings</small></button>
   <button class="tab" data-tab="topics">หัวข้อ ROS<small>Topics</small></button>
   <button class="tab" data-tab="log">บันทึก<small>Log</small></button>
+  <button class="tab" data-tab="help">วิธีเชื่อมต่อ<small>Help</small></button>
 </nav>
 
 <!-- Simple hides the engineering numbers. Someone who just drives the robot
@@ -346,6 +347,68 @@
   <div class="card">
     <h3>บันทึกเหตุการณ์ / Event log</h3>
     <div id="logBox" class="logbox" role="log" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="tab-help" class="tabpage">
+  <div class="card">
+    <h3>เปิดหน้านี้จากมือถือ / Open this page on a phone</h3>
+    <p class="muted">สแกน QR หรือพิมพ์ที่อยู่ด้านล่าง &middot; Scan the code, or type the address below.
+       The phone must be on the same Wi-Fi as the robot.</p>
+    <div class="qrwrap">
+      <div id="qrBox" class="qrbox" aria-live="polite">…</div>
+      <div class="qrside">
+        <div class="kv"><span>ชื่อเครือข่าย / Name</span><code id="cxMdns">—</code></div>
+        <div class="kv"><span>ที่อยู่ IP / Address</span><code id="cxLan">—</code></div>
+        <div class="kv"><span>บนเครื่องนี้ / This machine</span><code id="cxLocal">—</code></div>
+        <p class="muted" id="cxNote"></p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>หุ่นยนต์หาเครื่องนี้เจอได้อย่างไร / How the robot finds this PC</h3>
+    <p class="muted">ใช้ mDNS ก่อน แล้วค่อย DNS &middot; It tries three things in order and
+       takes the first that answers.</p>
+    <ol class="steps">
+      <li><b>mDNS</b> — <code>mannaja.local</code>. No router setup, no DNS server; the
+        PC answers for its own name. <b>This is the one that works here.</b>
+        <span class="muted">Checking it by hand is a trap: plain
+        <code>avahi-resolve -n mannaja.local</code> prints an IPv6 address and looks
+        broken. The firmware asks for an IPv4 A record, so use
+        <code>avahi-resolve -4 -n mannaja.local</code>.</span></li>
+      <li><b>DNS</b> — a plain lookup of the same name. Only works if your router
+        registers DHCP client names, which many do not.</li>
+      <li><b>Fixed address</b> — <code>AGENT_IP</code> in the firmware. Last resort, and
+        it goes stale on its own: it is a DHCP lease, so it changes. It had already
+        drifted once here, pointing at an address nobody answered.</li>
+    </ol>
+    <p class="muted">The board publishes itself as <code>esp32-gps-localize.local</code>,
+       which is also how wireless firmware updates find it.</p>
+  </div>
+
+  <div class="card">
+    <h3>เชื่อมต่อไม่ได้ / When it will not connect</h3>
+    <table class="help">
+      <tr><th>อาการ / Symptom</th><th>สาเหตุที่พบบ่อย / Usual cause</th></tr>
+      <tr><td>Page will not load on the phone</td>
+          <td>Phone is on a different Wi-Fi, or on mobile data. Both devices must be
+              on the same network — mDNS does not cross networks.</td></tr>
+      <tr><td><code>gps-robot-web.local</code> does not resolve</td>
+          <td>Android below 12 has no mDNS support in the browser. Use the IP address
+              shown above. iOS, macOS, Windows 10+ and Linux all resolve it.</td></tr>
+      <tr><td>Page loads but every value is stale</td>
+          <td>The PC changed network after the stack started. DDS binds its interfaces
+              at start-up, so the nodes keep advertising the old address:
+              <code>systemctl restart gps_localize</code>.</td></tr>
+      <tr><td><code>ros2</code> or rqt shows nothing</td>
+          <td><code>ROS_DOMAIN_ID</code> must be <b>exported</b>, not just assigned.
+              Without <code>export</code> the shell sees it and nothing it launches
+              does, so every tool starts on domain 0 and shows an empty graph.</td></tr>
+      <tr><td>Robot is connected but will not move</td>
+          <td>Check the stop reasons on the dashboard. With the mushroom pressed the
+              contactor is open and the motors have no power at all.</td></tr>
+    </table>
   </div>
 </section>
 

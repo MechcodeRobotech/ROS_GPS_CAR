@@ -59,6 +59,7 @@ WEB_DIR, CONFIG_DEFAULTS_DIR, APP_DIR = _find_assets()
 sys.path.insert(0, os.path.normpath(os.path.join(HERE, '..', 'gps_localize_ws', 'src', 'gps_localize')))
 try:
     from gps_localize.configstore import GROUPS, ConfigStore
+    from gps_localize import qr
     from gps_localize.httpd import SseBroadcaster, WebApp, WebServer, urls_for
 except ImportError as exc:
     # Only fall back when it is OUR package that is missing. A broad except
@@ -86,6 +87,7 @@ except ImportError as exc:
         ) from exc
     try:                                   # frozen build: modules are bundled flat
         from configstore import GROUPS, ConfigStore            # type: ignore
+        import qr                                              # type: ignore
         from httpd import SseBroadcaster, WebApp, WebServer, urls_for   # type: ignore
     except ImportError as inner:
         raise SystemExit(
@@ -269,6 +271,8 @@ class Viewer:
         route('GET', '/api/logs', lambda body, query: (200, {'ok': True, 'logs': list(self.logs)}))
         route('POST', '/api/heartbeat', lambda body, query: (200, {'ok': True, 'state': 'VIEWER', 'estop': False}))
         route('GET', '/api/topics', self.topics_list)
+        route('GET', '/api/connect', self.api_connect)
+        route('GET', '/api/qr', self.api_qr)
         route('GET', '/api/topic', self.topic_echo)
         route('GET', '/api/config', self.config_get)
         route('POST', '/api/config', self.config_set)
@@ -412,6 +416,27 @@ class Viewer:
         ('/gps_localize/log', 'std_msgs/msg/String', 1, 1),
         ('/gps_localize/safety', 'std_msgs/msg/Int32', 1, 1),
     ]
+
+    def api_connect(self, _body, _query):
+        """Same shape as the robot server, so the Help tab needs no special case.
+
+        The viewer runs on a Windows PC with no avahi, so there is no mDNS name
+        to offer - saying so plainly is better than printing an address that
+        will not resolve.
+        """
+        return 200, {'ok': True, 'connect': {
+            'local': 'http://localhost:%d' % self.port,
+            'lan': None, 'mdns': None, 'mdns_name': None,
+            'best': 'http://localhost:%d' % self.port,
+            'ip': None, 'port': self.port,
+        }}
+
+    def api_qr(self, _body, query):
+        target = (query.get('url') or [''])[0] or 'http://localhost:%d' % self.port
+        try:
+            return 200, {'ok': True, 'url': target, 'svg': qr.to_svg(target)}
+        except ValueError as exc:
+            return 400, {'ok': False, 'error': str(exc)}
 
     def topics_list(self, _body, _query):
         topics = [{'name': n, 'types': [t], 'publishers': p, 'subscribers': sc,

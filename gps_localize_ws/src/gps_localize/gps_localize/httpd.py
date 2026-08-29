@@ -51,6 +51,32 @@ def lan_address():
     return address
 
 
+# The name the web UI answers to on the local network, published by
+# gps_localize_mdns.service. Hyphens, not underscores: an underscore is not
+# legal in a hostname (RFC 1123), and while avahi will happily publish one,
+# browsers and resolvers reject it - the name would look right everywhere
+# except where it is typed.
+MDNS_WEB_NAME = 'gps-robot-web.local'
+
+
+def connect_info(host, port):
+    """Every way to reach this web UI, best first, with a QR for the phone."""
+    local, lan = urls_for(host, port)
+    mdns = 'http://%s:%d' % (MDNS_WEB_NAME, port) if lan else None
+    # The QR encodes whichever URL a phone can actually use: the mDNS name
+    # survives the PC changing address, so it is preferred over the raw IP.
+    best = mdns or lan or local
+    return {
+        'local': local,
+        'lan': lan,
+        'mdns': mdns,
+        'mdns_name': MDNS_WEB_NAME if lan else None,
+        'best': best,
+        'ip': lan_address() if lan else None,
+        'port': port,
+    }
+
+
 def urls_for(host, port):
     """(local url, lan url) - lan is None when bound to loopback only."""
     local = 'http://localhost:%d' % port

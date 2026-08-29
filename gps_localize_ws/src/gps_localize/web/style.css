@@ -681,3 +681,31 @@ table.topics tr:last-child td { border-bottom: none; }
 }
 .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
 .mut { color: var(--mut); }
+
+
+/* ------------------------------------------------------- help / connect --
+   The QR sits beside its addresses on a laptop and above them on a phone,
+   which is the width where someone is most likely to be reading it. */
+.qrwrap { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.qrbox { flex: 0 0 auto; background: #fff; padding: 10px; border-radius: 10px;
+         line-height: 0; border: 1px solid var(--line); }
+.qrbox svg { width: 190px; height: 190px; display: block; }
+.qrside { flex: 1 1 260px; min-width: 0; }
+.qrside .kv { display: flex; justify-content: space-between; gap: 12px;
+              padding: 7px 0; border-bottom: 1px solid var(--line); }
+.qrside .kv span { color: var(--mut); font-size: var(--fs-1); }
+.qrside .kv code { font-size: var(--fs-1); word-break: break-all;
+                   text-align: right; }
+.steps { margin: 8px 0 0; padding-left: 20px; line-height: 1.65; }
+.steps li { margin-bottom: 10px; }
+.steps .muted { display: block; margin-top: 3px; font-size: var(--fs-1); }
+table.help { width: 100%; border-collapse: collapse; font-size: var(--fs-2); }
+table.help th, table.help td { text-align: left; padding: 8px 10px;
+                               border-bottom: 1px solid var(--line);
+                               vertical-align: top; }
+table.help th { color: var(--mut); font-weight: 600; font-size: var(--fs-1); }
+table.help td:first-child { white-space: nowrap; }
+@media (max-width: 560px) {
+  .qrbox svg { width: 150px; height: 150px; }
+  table.help td:first-child { white-space: normal; }
+}

@@ -120,7 +120,7 @@ def check_web_assets(app_js, html, css):
         got = html.count(marker)
         check(got == want, 'index.html contains %s exactly %d time(s) (found %d)'
               % (marker, want, got))
-    for tab in ('dash', 'map', 'wp', 'cfg', 'topics', 'log'):
+    for tab in ('dash', 'map', 'wp', 'cfg', 'topics', 'log', 'help'):
         check(html.count('id="tab-%s"' % tab) == 1, 'exactly one #tab-%s section' % tab)
     ids_html = set(re.findall(r'id="([A-Za-z0-9_]+)"', html))
     ids_js = set(re.findall(r"\$\('([A-Za-z0-9_]+)'\)", app_js))
