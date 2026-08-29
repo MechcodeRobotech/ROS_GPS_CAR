@@ -16,6 +16,10 @@
  * open before a single byte is accepted - and because the safety manager owns
  * the contactor, asking it is how we know.
  *
+ * In practice that means pressing the e-stop before flashing. The refusal is
+ * silent by design: the port is not serviced, the uploader times out, and a
+ * running robot is never interrupted by someone attempting an update.
+ *
  * The password is not decoration. Anything on the network can reach port 3232,
  * and an unauthenticated OTA port is a way to put arbitrary code on a machine
  * that drives itself around. It comes from network_secrets.h, which is
@@ -44,10 +48,10 @@ class OtaUpdater {
    * Advertise the board for wireless flashing.
    *
    * @param hostname   what the board answers to, e.g. "esp32-gps-localize"
-   * @param is_safe    called before an update is allowed to begin. Return false
-   *                   whenever the robot could move - the update is then
-   *                   refused rather than deferred, so the person flashing gets
-   *                   an error instead of a silent wait.
+   * @param is_safe    consulted every loop. Return false whenever the robot
+   *                   could move: the OTA port is then simply not serviced, so
+   *                   the uploader reports that the device did not respond and
+   *                   the robot is not disturbed in any way.
    * @param on_begin   called once an update has been accepted, to shut down
    *                   anything that must not run while flash is being rewritten.
    */
@@ -59,18 +63,6 @@ class OtaUpdater {
     ArduinoOTA.setPassword(OTA_PASSWORD);
 
     ArduinoOTA.onStart([this]() {
-      // Last gate before the flash is rewritten. Refusing here is the whole
-      // point: an update that starts while the robot can move leaves the motors
-      // holding their last command with no code running to change it.
-      if (is_safe_ && !is_safe_()) {
-        Serial.println("[OTA] refused - the robot is not in a safe state "
-                       "(motor rails must be dead and the robot still)");
-        // No clean "reject" exists in the callback, so make it fail loudly and
-        // leave the running image alone rather than flash in an unsafe state.
-        ArduinoOTA.end();
-        ESP.restart();
-        return;
-      }
       if (on_begin_) on_begin_();
       updating_ = true;
       Serial.printf("[OTA] update starting (%s)\n",
@@ -114,9 +106,34 @@ class OtaUpdater {
                   hostname, WiFi.localIP().toString().c_str());
   }
 
-  /** Service the OTA server. Cheap when no update is in progress. */
+  /**
+   * Service the OTA server, but ONLY while an update would be safe to accept.
+   *
+   * The gate lives here rather than in onStart because by the time onStart runs
+   * the transfer has already been accepted, and ArduinoOTA offers no way to
+   * decline it. The first version of this refused there and called
+   * ESP.restart() to avoid flashing in an unsafe state - which meant anyone
+   * running the upload command could reboot a live robot. Rebooting a machine
+   * because someone asked it an unwelcome question is not a safety measure.
+   *
+   * Simply not servicing the port is a clean refusal: no packet is answered,
+   * the uploader reports that the device did not respond, and the robot carries
+   * on undisturbed.
+   */
   void handle() {
-    if (ready_) ArduinoOTA.handle();
+    if (!ready_) return;
+    if (!updating_ && is_safe_ && !is_safe_()) {
+      // Say why, but rarely - this runs every loop.
+      static uint32_t last_note_ms = 0;
+      const uint32_t now = millis();
+      if (now - last_note_ms > 30000) {
+        last_note_ms = now;
+        Serial.println("[OTA] not accepting updates: the motor rails are live "
+                       "or the robot is moving. Press the e-stop to flash.");
+      }
+      return;
+    }
+    ArduinoOTA.handle();
   }
 
   /** True while an image is being received, so the caller can stay out of the way. */

@@ -16,7 +16,7 @@
  * once cost us a robot that latched into e-stop three seconds after boot, so
  * it is spelled out:
  *
- *   PROCESSOR 0x40  voltage : the ESP32 +5 V rail, AFTER the LM2596
+ *   PROCESSOR 0x41  voltage : the ESP32 +5 V rail, AFTER the LM2596
  *                   current : from the battery side, so it includes the buck
  *                   => V and I are different nodes. V*I is NOT a power figure.
  *                   => this is NOT the pack voltage. It reads about 5 V.
@@ -24,7 +24,7 @@
  *   FAN       0x45  voltage : the fan +5 V rail, after its own LM2596
  *                   current : from source, including that buck
  *
- *   MOTOR A   0x41  voltage : VCC EMER, the pack behind the fuse, mushroom
+ *   MOTOR A   0x40  voltage : VCC EMER, the pack behind the fuse, mushroom
  *   MOTOR B   0x44            switch and relay - so this IS the pack voltage
  *                   current : source -> driver -> motor
  *                   The series diode sits AFTER the sensor, so the driver sees
@@ -46,8 +46,27 @@
 #define POWER_CONFIG_H
 
 //---------------------------- addresses ----------------------------------//
-#define INA226_ADDR_PROCESSOR   0x40      // VCC ON MODULE -> processor buck (= pack voltage)
-#define INA226_ADDR_MOTOR_A     0x41      // VCC EMER -> motor A rail
+// MEASURED on the built robot with a live 12.14 V pack and the contactor
+// closed, not taken from the schematic:
+//
+//     0x40  12.142 V           -> a motor rail, at pack voltage
+//     0x41   5.178 V, 0.89 A   -> the processor rail, whole-module draw
+//     0x44  12.141 V           -> the other motor rail
+//     0x45   5.174 V           -> the fan rail
+//
+// PROCESSOR and MOTOR_A were the wrong way round. The pack voltage still came
+// out right by luck: packVoltage() ignores any motor rail below
+// PACK_RAIL_MIN_VALID_V, and 5.18 V fails that test, so it fell through to the
+// one genuine motor rail. What was NOT right is motor A's current - the model
+// was being fed the processor's 0.89 A as if it were motor A's, which would
+// have corrupted the left wheel's back-EMF speed estimate the moment the robot
+// drove. A silent error in a number that looks plausible.
+//
+// A/B is still unproven: 0x40 and 0x44 are both motor rails and read the same
+// voltage with no motors fitted. Which one is A is settled by driving one motor
+// and seeing whose current rises - see E16.
+#define INA226_ADDR_PROCESSOR   0x41      // measured: the ESP32 +5 V rail
+#define INA226_ADDR_MOTOR_A     0x40      // measured: a motor rail at pack voltage
 #define INA226_ADDR_MOTOR_B     0x44      // VCC EMER -> motor B rail
 #define INA226_ADDR_FAN         0x45      // VCC ON MODULE -> fan buck   (draft_5, new)
 

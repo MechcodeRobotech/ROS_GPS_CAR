@@ -163,9 +163,9 @@ at different points**, which caused a real bug and is documented in
 
 | Sensor | Voltage measured at | Current measured at |
 |---|---|---|
-| processor `0x40` | the ESP32 **+5 V rail**, after the buck | the **battery** side, including the buck |
+| processor `0x41` | the ESP32 **+5 V rail**, after the buck | the **battery** side, including the buck |
 | fan `0x45` | the fan +5 V rail | source, through the fan buck |
-| motor A `0x41` | **VCC EMER — this is the pack voltage** | source → driver → motor |
+| motor A `0x40` | **VCC EMER — this is the pack voltage** | source → driver → motor |
 | motor B `0x44` | same node as A | source → driver → motor |
 
 **Pack voltage comes from the motor rails, never from the processor sensor.**

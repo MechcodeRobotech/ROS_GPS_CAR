@@ -64,8 +64,8 @@ VCC BATT ─ fuse ─ mushroom ─ relay ─ VCC EMER ─┬─[MOTOR_A_SENSOR]�
 
 | Sensor | Measures | Default address | Shunt |
 |---|---|---|---|
-| PROCESSOR_SENSOR | VCC ON MODULE → processor buck (= pack voltage) | 0x40 | 0.1 Ω / 0.8 A |
-| MOTOR_A_SENSOR | VCC EMER → motor A rail, **before the diode** | 0x41 | 0.01 Ω / 3 A |
+| PROCESSOR_SENSOR | ESP32 +5 V rail, current from the battery side | 0x41 | 0.1 Ω / 0.8 A |
+| MOTOR_A_SENSOR | VCC EMER → motor A rail, **before the diode** | 0x40 | 0.01 Ω / 3 A |
 | MOTOR_B_SENSOR | VCC EMER → motor B rail, **before the diode** | 0x44 | 0.01 Ω / 3 A |
 | FAN_SENSOR | VCC ON MODULE → fan buck (draft_5, new) | 0x45 | 0.1 Ω / 1.5 A |
 
