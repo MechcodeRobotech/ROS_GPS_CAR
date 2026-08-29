@@ -47,11 +47,24 @@ public:
     pinMode(PIN_E_EMER, INPUT_PULLDOWN);
 #endif
 
+    // Optional: this build has no separate on-board button, PIN_ESP_EMER_SW -1.
+    if (PIN_ESP_EMER_SW >= 0) {
 #if ESP_EMER_SW_ACTIVE_LOW
-    pinMode(PIN_ESP_EMER_SW, INPUT_PULLUP);
+      pinMode(PIN_ESP_EMER_SW, INPUT_PULLUP);
 #else
-    pinMode(PIN_ESP_EMER_SW, INPUT_PULLDOWN);
+      pinMode(PIN_ESP_EMER_SW, INPUT_PULLDOWN);
 #endif
+    }
+
+    // The contactor comes up OPEN and is driven closed only once this class has
+    // decided the robot may be powered. Set low BEFORE the pin becomes an
+    // output, so configuring it cannot produce a brief closed pulse.
+    relay_closed_ = false;
+    if (PIN_RELAY_MAIN >= 0) {
+      digitalWrite(PIN_RELAY_MAIN, RELAY_MAIN_ACTIVE_LOW ? HIGH : LOW);
+      pinMode(PIN_RELAY_MAIN, OUTPUT);
+      digitalWrite(PIN_RELAY_MAIN, RELAY_MAIN_ACTIVE_LOW ? HIGH : LOW);
+    }
     if (PIN_LED_RED >= 0) { pinMode(PIN_LED_RED, OUTPUT); digitalWrite(PIN_LED_RED, LOW); }
     if (PIN_LED_GREEN >= 0) { pinMode(PIN_LED_GREEN, OUTPUT); digitalWrite(PIN_LED_GREEN, HIGH); }
     if (PIN_FAN_CTRL >= 0) { pinMode(PIN_FAN_CTRL, OUTPUT); digitalWrite(PIN_FAN_CTRL, HIGH); }
@@ -111,6 +124,7 @@ public:
     }
     if (batt_latched_) f |= STOP_BATTERY_LOW;
 
+
     // Soft stop: stop driving but stay powered, so the pack is not run down to
     // the hard cut on every outing. Not latched - it follows the voltage back
     // up once the load comes off.
@@ -119,6 +133,29 @@ public:
 
     // --- boot lockout ---
     if (now - boot_ms_ < STARTUP_LOCKOUT_MS) f |= STOP_STARTUP;
+
+    // ---- main contactor -----------------------------------------------------
+    //
+    // The pack sits BEHIND this relay, so nothing can measure the battery until
+    // the relay is closed. That forces the order:
+    //
+    //   1. hold the rails dead through the start-up lockout
+    //   2. close the relay - only now does a pack voltage exist to read
+    //   3. read it, and if it is genuinely flat, open the relay and stay open
+    //
+    // Step 3 is why the cutoff latches until a power cycle. Opening the relay
+    // removes the very measurement that justified opening it: the pack reads 0
+    // and unmeasurable the moment the contactor drops out. Anything that
+    // re-closed on "the voltage looks fine now" would therefore close every
+    // time, chatter the contactor, and drain the flat pack it was protecting.
+    //
+    // A heartbeat or agent loss does NOT open the contactor. Those stop the
+    // robot driving through allowMotion(), and cutting rail power on a brief
+    // network hiccup would only power-cycle the motor supply and make the
+    // battery reading flap.
+    const bool safe_to_power = !(f & STOP_STARTUP) && !emergencyLatched()
+                               && !batt_latched_;
+    setRelay(safe_to_power);
 
     // --- release needs the inputs to stay clear for a moment ---
     if (f == 0) {
@@ -140,6 +177,8 @@ public:
   bool linkLost() const {
     return (flags_ & (STOP_HEARTBEAT_LOST | STOP_CMD_TIMEOUT | STOP_AGENT_LOST)) != 0;
   }
+  /** True when the main contactor is closed and the motor rails are live. */
+  bool relayClosed() const { return relay_closed_; }
   bool batteryLatched() const { return batt_latched_; }
   bool batterySoftStop() const { return batt_soft_stop_; }
   bool hwEmergency() const { return hw_emer_; }
@@ -154,6 +193,15 @@ public:
   }
 
 private:
+  void setRelay(bool close) {
+    if (relay_closed_ == close) return;         // only write on a real change
+    relay_closed_ = close;
+    if (PIN_RELAY_MAIN < 0) return;
+    const int level = RELAY_MAIN_ACTIVE_LOW ? (close ? LOW : HIGH)
+                                            : (close ? HIGH : LOW);
+    digitalWrite(PIN_RELAY_MAIN, level);
+  }
+
   static bool readEmergencyLine() {
     int v = digitalRead(PIN_E_EMER);
 #if E_EMER_ACTIVE_LOW
@@ -164,6 +212,7 @@ private:
   }
 
   static bool readEspButton() {
+    if (PIN_ESP_EMER_SW < 0) return false;      // not fitted: never asserted
     int v = digitalRead(PIN_ESP_EMER_SW);
 #if ESP_EMER_SW_ACTIVE_LOW
     return v == LOW;
@@ -208,6 +257,7 @@ private:
   uint32_t batt_low_since_ = 0;
   bool     batt_latched_ = false;
   bool     batt_soft_stop_ = false;
+  bool     relay_closed_ = false;
   bool     led_on_ = false;
 };
 

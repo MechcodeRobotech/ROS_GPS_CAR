@@ -6,7 +6,7 @@ to work. Read this before the first outdoor test.
 | # | Layer | Trigger | Reaction | Recovery |
 |---|---|---|---|---|
 | 1 | Hardware relay | mushroom switch SW3 | motor power (EMER VCC) physically cut | release the switch |
-| 2 | Firmware inputs | `E-EMER` (IO14), on-board button (IO13) | PWM off, red LED solid | clear the input, wait 400 ms |
+| 2 | Firmware inputs | `E-EMER` (IO13) from the mushroom switch | PWM off, contactor opens, red LED solid | clear the input, wait 400 ms |
 | 3 | Link watchdog | no `/gps_localize/heartbeat` for 600 ms | motors braked, red LED fast blink | heartbeat returns |
 | 4 | Command watchdog | no `cmd_move`/`cmd_manual` for 500 ms while moving | motors braked, targets zeroed | send a new command |
 | 5 | Web heartbeat | browser silent for `web_heartbeat_timeout_s` | `safety_watchdog` stops the heartbeat → layer 3 fires, navigation paused | reconnect **and** press START/RESUME |

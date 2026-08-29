@@ -92,7 +92,7 @@ Mirror of `firmware/src/main.cpp::publishTelemetry` and
 
 | Bit | Name | Cause |
 |---|---|---|
-| 0 | `hardware_emergency` | E-EMER line (mushroom switch / relay) |
+| 0 | `hardware_emergency` | E-EMER line (IO13, mushroom switch) |
 | 1 | `esp_button` | on-board button SW4 |
 | 2 | `software_estop` | web UI e-stop |
 | 3 | `heartbeat_lost` | no ROS heartbeat (network) |

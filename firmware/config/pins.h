@@ -32,8 +32,29 @@
 #define PIN_GPS_TX              17        // IO17 -> GPS RX
 
 //------------------------ safety and indicators --------------------------//
-#define PIN_E_EMER              14        // IO14 <- "E-EMER" emergency relay sense
-#define PIN_ESP_EMER_SW         13        // IO13 <- on-board e-stop button
+// IO13 is the emergency INPUT from the mushroom switch, and IO14 is the relay
+// OUTPUT that powers the motor rails. These were the other way round in the
+// firmware - IO14 was read as an "emergency relay sense" and nothing ever drove
+// a relay at all. The coil was therefore never energized, the relay never
+// closed, the motor rails stayed dead, and the pack (which sits behind the
+// relay) read 0 V and could not be measured. The symptom on the bench was
+// simply that the relay never clicked.
+#define PIN_E_EMER              13        // IO13 <- mushroom switch, HIGH = tripped
+#define PIN_ESP_EMER_SW         -1        // no separate on-board button in this build
+
+// Relay driving the motor rails - the main contactor. Active HIGH: the pin is
+// driven high to close the relay, and the firmware holds it low until it has
+// decided the robot is safe to power.
+//
+// Drive it through a MOSFET or transistor, never straight from the GPIO: a 5 V
+// coil wants 70-100 mA and an ESP32 pin is good for about 20 mA.
+//
+// Give the gate a PULL-DOWN, not a pull-up. During reset, boot and any crash
+// the pin is high impedance, so whatever the resistor does IS the relay state.
+// A pull-down leaves the rails dead until firmware deliberately powers them; a
+// pull-up would close the contactor before any code has run.
+#define PIN_RELAY_MAIN          14        // IO14 -> motor rail relay coil
+#define RELAY_MAIN_ACTIVE_LOW   0         // 0 = drive HIGH to close
 // Input polarity of the two emergency inputs: 1 = the pin reads LOW while the
 // emergency is ASSERTED, 0 = it reads HIGH. safety_manager.h tests these with
 // #if, so an undefined name would silently mean "active high" there while

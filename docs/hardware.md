@@ -29,7 +29,8 @@ ESP32 pin map, GPS and IMU are unchanged from draft_2.
 | IO22 | SCL | I²C | 3.3 k pull-ups on the board |
 | IO16 | GPS RX (net) | in | ESP RX ← GPS TX |
 | IO17 | GPS TX (net) | out | ESP TX → GPS RX |
-| IO14 | E-EMER | in | emergency relay line sense |
+| IO13 | E-EMER | in | mushroom switch, HIGH = tripped |
+| IO14 | RELAY | out | motor rail contactor, HIGH = closed |
 | IO13 | ESP CHECK EMER | in | on-board e-stop button (10 k pull-up, LOW = pressed) |
 | IO34 | MOTOR A ALER | in | INA226 alert (input-only pin) |
 | IO35 | MOTOR B ALER | in | INA226 alert |
@@ -146,12 +147,26 @@ them, it only reports the rail on the dashboard. If you later add a MOSFET, set
 ## Emergency stop wiring
 
 ```
-VCC BATT ─ 10 A fuse ─ SW3 (mushroom, latching) ─ relay coil ─┐
-                                                              ├─► EMER VCC ──► motor rails
-                                                E-EMER sense ─┘   (INA226 motor A/B measure here)
+VCC BATT ─ 10 A fuse ─ relay contacts ──► EMER VCC ──► motor rails
+                            ▲                     (INA226 motor A/B measure here)
+                            │
+                       relay coil ── MOSFET ◄── IO14  (firmware drives HIGH to close)
+                                        │
+                                    pull-down     so the rails stay dead through
+                                        │         reset, boot and any crash
+                                       GND
+
+SW3 (mushroom, latching) ──► IO13   HIGH = tripped; firmware opens the contactor
 ```
 
-* `E-EMER` (IO14) tells the firmware whether the emergency loop is closed.
+* `E-EMER` (IO13) tells the firmware whether the mushroom switch is tripped.
+* `RELAY` (IO14) is an **output**: the firmware drives it high to close the
+  main contactor and power the motor rails. Drive it through a MOSFET, never
+  straight from the GPIO - a 5 V coil wants 70-100 mA and the pin is good for
+  about 20 mA - and give the gate a **pull-down**. During reset, boot and any
+  crash the pin is high impedance, so the resistor decides the relay state: a
+  pull-down leaves the rails dead until firmware powers them deliberately,
+  where a pull-up would close the contactor before any code has run.
   `E_EMER_ACTIVE_LOW` in `safety.h` is set to 1 — **verify the real
   polarity on the bench** with a multimeter before the first drive test and
   change the define if the LED lights the wrong way round.

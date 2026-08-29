@@ -124,17 +124,32 @@ void test_safety_hardware_emergency_input(void) {
     TEST_ASSERT_TRUE(safety.hwEmergency());
 }
 
-void test_safety_button_is_debounced(void) {
+void test_safety_emergency_input_is_debounced(void) {
+    // Debounce is asserted on the emergency input, because that is the input
+    // this build has - IO13 from the mushroom switch. The separate on-board
+    // button is not fitted (PIN_ESP_EMER_SW is -1).
     mock_reset_clock();
     set_hardware_clear();
     SafetyManager safety;
     arm(safety);
-    mock_set_pin(PIN_ESP_EMER_SW, ESP_EMER_SW_ACTIVE_LOW ? LOW : HIGH);
+    mock_set_pin(PIN_E_EMER, E_EMER_ACTIVE_LOW ? LOW : HIGH);
     mock_advance_ms(5);
     safety.update(healthy());
-    TEST_ASSERT_FALSE(safety.espButton());          // too short, bounced
+    TEST_ASSERT_FALSE(safety.hwEmergency());        // too short, bounced
     for (int i = 0; i < 5; ++i) { mock_advance_ms(20); safety.update(healthy()); }
-    TEST_ASSERT_TRUE(safety.espButton());
+    TEST_ASSERT_TRUE(safety.hwEmergency());
+}
+
+void test_safety_absent_button_never_reads_as_pressed(void) {
+    // A pin that is not fitted must read as not-asserted, never as a stuck
+    // e-stop. Reading digitalRead(-1) and believing it is how a board with no
+    // button ends up permanently stopped.
+    mock_reset_clock();
+    set_hardware_clear();
+    SafetyManager safety;
+    arm(safety);
+    TEST_ASSERT_FALSE(safety.espButton());
+    TEST_ASSERT_EQUAL_UINT32(0u, safety.flags() & STOP_ESP_BUTTON);
 }
 
 void test_safety_release_needs_hold_time(void) {
@@ -171,6 +186,71 @@ void test_safety_battery_cutoff_needs_to_persist(void) {
     for (int i = 0; i < 60; ++i) { mock_advance_ms(100); safety.update(in); }
     TEST_ASSERT_TRUE(safety.flags() & STOP_BATTERY_LOW);
     TEST_ASSERT_TRUE(safety.batteryLatched());
+}
+
+static bool relay_is_closed() {
+    const int level = mock_pin_written[PIN_RELAY_MAIN];
+    return RELAY_MAIN_ACTIVE_LOW ? (level == LOW) : (level == HIGH);
+}
+
+void test_relay_is_open_until_the_lockout_expires(void) {
+    // The pack sits behind this relay, so the rails must come up dead and only
+    // close once the safety manager has decided the robot may be powered.
+    mock_reset_clock();
+    set_hardware_clear();
+    SafetyManager safety;
+    safety.begin();
+    TEST_ASSERT_FALSE(relay_is_closed());
+    mock_advance_ms(100);
+    safety.update(healthy());
+    TEST_ASSERT_FALSE(relay_is_closed());        // still inside the lockout
+
+    for (int i = 0; i < 40; ++i) { mock_advance_ms(100); safety.update(healthy()); }
+    TEST_ASSERT_TRUE(relay_is_closed());         // now the pack is measurable
+}
+
+void test_relay_opens_on_emergency_and_battery_cutoff(void) {
+    mock_reset_clock();
+    set_hardware_clear();
+    SafetyManager safety;
+    arm(safety);
+    TEST_ASSERT_TRUE(relay_is_closed());
+
+    // The mushroom drops the contactor.
+    mock_set_pin(PIN_E_EMER, E_EMER_ACTIVE_LOW ? LOW : HIGH);
+    for (int i = 0; i < 5; ++i) { mock_advance_ms(20); safety.update(healthy()); }
+    TEST_ASSERT_FALSE(relay_is_closed());
+}
+
+void test_relay_stays_open_after_a_flat_pack_even_when_it_recovers(void) {
+    // Opening the relay removes the measurement that justified opening it - the
+    // pack reads 0 and unmeasurable the moment the contactor drops out. So a
+    // rule of "close again when the voltage looks fine" would close every time
+    // and chatter the contactor against the flat pack it is protecting.
+    mock_reset_clock();
+    set_hardware_clear();
+    SafetyManager safety;
+    arm(safety);
+    TEST_ASSERT_TRUE(relay_is_closed());
+
+    SafetyManager::Inputs in = healthy();
+    in.battery_v = BATT_CUTOFF_V - 0.5f;
+    for (int i = 0; i < 60; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_TRUE(safety.batteryLatched());
+    TEST_ASSERT_FALSE(relay_is_closed());
+
+    // Rails dead, so the pack is unmeasurable again - exactly what the hardware
+    // reports once the contactor opens. It must stay open.
+    in.battery_valid = false;
+    in.battery_v = 0.0f;
+    for (int i = 0; i < 60; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_FALSE(relay_is_closed());
+
+    // And a fully recovered pack must not talk it back into closing.
+    in.battery_valid = true;
+    in.battery_v = 12.6f;
+    for (int i = 0; i < 60; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_FALSE(relay_is_closed());
 }
 
 void test_safety_battery_cutoff_never_unlatches_by_itself(void) {
@@ -488,11 +568,15 @@ void test_safety_input_pulls_oppose_the_active_level(void) {
     SafetyManager safety;
     safety.begin();
 
+    // Only when the build actually has a separate button. This one does not:
+    // IO13 is the mushroom input and IO14 drives the relay.
+    if (PIN_ESP_EMER_SW >= 0) {
 #if ESP_EMER_SW_ACTIVE_LOW
-    TEST_ASSERT_EQUAL_INT(INPUT_PULLUP, mock_pin_mode[PIN_ESP_EMER_SW]);
+        TEST_ASSERT_EQUAL_INT(INPUT_PULLUP, mock_pin_mode[PIN_ESP_EMER_SW]);
 #else
-    TEST_ASSERT_EQUAL_INT(INPUT_PULLDOWN, mock_pin_mode[PIN_ESP_EMER_SW]);
+        TEST_ASSERT_EQUAL_INT(INPUT_PULLDOWN, mock_pin_mode[PIN_ESP_EMER_SW]);
 #endif
+    }
 
 #if E_EMER_ACTIVE_LOW
     TEST_ASSERT_EQUAL_INT(INPUT_PULLUP, mock_pin_mode[PIN_E_EMER]);
@@ -522,9 +606,13 @@ int run_safety_gps_tests(void) {
     RUN_TEST(test_safety_stops_when_agent_is_lost);
     RUN_TEST(test_safety_software_estop);
     RUN_TEST(test_safety_hardware_emergency_input);
-    RUN_TEST(test_safety_button_is_debounced);
+    RUN_TEST(test_safety_emergency_input_is_debounced);
+    RUN_TEST(test_safety_absent_button_never_reads_as_pressed);
     RUN_TEST(test_safety_release_needs_hold_time);
     RUN_TEST(test_safety_battery_cutoff_needs_to_persist);
+    RUN_TEST(test_relay_is_open_until_the_lockout_expires);
+    RUN_TEST(test_relay_opens_on_emergency_and_battery_cutoff);
+    RUN_TEST(test_relay_stays_open_after_a_flat_pack_even_when_it_recovers);
     RUN_TEST(test_safety_battery_cutoff_never_unlatches_by_itself);
     RUN_TEST(test_safety_battery_cutoff_clears_on_restart);
     RUN_TEST(test_safety_invalid_battery_reading_is_ignored);
