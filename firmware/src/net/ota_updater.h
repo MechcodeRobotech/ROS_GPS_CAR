@@ -9,16 +9,19 @@
  *
  * WHAT IT WILL NOT DO
  *
- * It refuses to start an update unless the robot is standing still with its
- * motor rails dead. Rewriting the program while wheels are turning means the
- * motors keep their last duty cycle for the seconds it takes to flash and
- * reboot, with nothing running that could stop them. So the contactor must be
- * open before a single byte is accepted - and because the safety manager owns
- * the contactor, asking it is how we know.
+ * It refuses to start an update while the robot is MOVING. Rewriting the
+ * program while wheels are turning means the motors keep their last duty cycle
+ * for the seconds it takes to flash and reboot, with nothing running that could
+ * stop them.
  *
- * In practice that means pressing the e-stop before flashing. The refusal is
- * silent by design: the port is not serviced, the uploader times out, and a
- * running robot is never interrupted by someone attempting an update.
+ * A robot that is merely powered and standing still is fine: the caller cuts the
+ * motor rails itself the moment an update is accepted, so no one has to walk
+ * over and press the e-stop first. What is deliberately NOT automatic is cutting
+ * power to a machine in motion - that stops being an update and becomes an
+ * unannounced e-stop, so a moving robot simply does not answer.
+ *
+ * The refusal is silent by design: the port is not serviced, the uploader
+ * reports no response, and a driving robot is never interrupted.
  *
  * The password is not decoration. Anything on the network can reach port 3232,
  * and an unauthenticated OTA port is a way to put arbitrary code on a machine
@@ -128,8 +131,8 @@ class OtaUpdater {
       const uint32_t now = millis();
       if (now - last_note_ms > 30000) {
         last_note_ms = now;
-        Serial.println("[OTA] not accepting updates: the motor rails are live "
-                       "or the robot is moving. Press the e-stop to flash.");
+        Serial.println("[OTA] not accepting updates while the robot is moving. "
+                       "Stop it and try again.");
       }
       return;
     }

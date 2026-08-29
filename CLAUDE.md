@@ -50,7 +50,7 @@ broke exactly once.
 ```bash
 python3 tools/qc.py                        # cross-file contracts
 python3 tools/port_qc.py --static-only .   # port gate
-cd firmware && pio test -e native          # 146 host tests
+cd firmware && pio test -e native          # 147 host tests
 pio run -e wifi                            # firmware still builds
 ```
 
@@ -99,6 +99,13 @@ is necessary but never sufficient: it is not marked done from a sim result.
 - Pack voltage comes from the **motor rail** INA226s, never the processor one —
   that measures the ESP32 +5 V rail and reading it as the pack latches e-stop
   three seconds after boot.
+- **The INA addresses were measured, not read off the schematic**, and two of
+  them were the wrong way round: `0x41` is the processor (5.18 V, 0.89 A) and
+  `0x40` is a motor rail (12.14 V). Pack voltage still came out right by luck,
+  because `packVoltage()` discards any rail below `PACK_RAIL_MIN_VALID_V`. Motor
+  A's *current* did not — the back-EMF model was being fed the processor's
+  current, a wrong number that looks entirely plausible. Which motor rail is A
+  and which is B is still unproven and needs a motor to spin.
 - `ROS_DOMAIN_ID` is **10** and must match on both sides. A mismatch shows an
   empty topic list with no error.
 - The firmware **node** in the graph proves a board is connected. A topic being
@@ -113,8 +120,14 @@ is necessary but never sufficient: it is not marked done from a sim result.
   zero while topics still look present. `systemctl restart gps_localize` fixes
   it. Seen for real: the board linked to the agent and published telemetry that
   `ros2 topic echo` could read, while the web UI sat on data seven minutes old.
-- An input pin's pull must **oppose** its active level. `PIN_ESP_EMER_SW` is
-  active HIGH and had `INPUT_PULLUP`, so with no button fitted it floated high,
-  read as pressed, and held the board in `STOP_ESP_BUTTON` from boot with
-  nothing in the log to say why. The pull is derived from the polarity define
-  now, and `test_safety_input_pulls_oppose_the_active_level` enforces it.
+- An input pin's pull must **oppose** its active level, or an unconnected pin
+  reads as permanently asserted. A pull-up on an active-HIGH input held the board
+  in e-stop from boot with nothing in the log to say why. The pull is derived
+  from the polarity define now, and
+  `test_safety_input_pulls_oppose_the_active_level` enforces it.
+- **IO13 is the emergency input and IO14 drives the relay** — the firmware had
+  them the other way round and drove no relay at all, so the coil was never
+  energized, the rails stayed dead, and the pack behind them could never be
+  measured. The only symptom was that the relay never clicked. IO13 is active
+  **LOW** (R2 pulls it up, SW2 pulls it down); IO14 is active HIGH and wants a
+  **pull-down**, never a pull-up, or the contactor closes during reset and boot.

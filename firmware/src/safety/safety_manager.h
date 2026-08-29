@@ -77,6 +77,11 @@ public:
     // documented recovery and it should be visible in the code that performs it.
     batt_latched_   = false;
     batt_low_since_ = 0;
+
+    // Same rule for the update lockout: a reboot is what ends it, and finishing
+    // a flash reboots the board. Cleared here rather than relying on the object
+    // being reconstructed, so "restart" means the same thing to both latches.
+    update_lockout_ = false;
   }
 
   void update(const Inputs &in) {
@@ -154,7 +159,7 @@ public:
     // network hiccup would only power-cycle the motor supply and make the
     // battery reading flap.
     const bool safe_to_power = !(f & STOP_STARTUP) && !emergencyLatched()
-                               && !batt_latched_;
+                               && !batt_latched_ && !update_lockout_;
     setRelay(safe_to_power);
 
     // --- release needs the inputs to stay clear for a moment ---
@@ -179,6 +184,28 @@ public:
   }
   /** True when the main contactor is closed and the motor rails are live. */
   bool relayClosed() const { return relay_closed_; }
+
+  /**
+   * Cut motor power for a firmware update, immediately and for good.
+   *
+   * Requiring a person to walk over and press the e-stop before every wireless
+   * flash defeats the point of flashing wirelessly. The firmware owns the
+   * contactor, so it can do that part itself: this drops the rails at once and
+   * holds them down, and only a reboot clears it - which is exactly what
+   * finishing an update does anyway.
+   *
+   * The pin is written here rather than left to the next update(), because a
+   * flash blocks the main loop: waiting for the next pass would mean the rails
+   * were still live while the program was being rewritten.
+   *
+   * It is still refused while the robot is MOVING. Yanking power from a machine
+   * in motion, remotely, on someone else's say-so is not something to do
+   * quietly - and the caller checks that before getting here.
+   */
+  void beginUpdateLockout() {
+    update_lockout_ = true;
+    setRelay(false);
+  }
   bool batteryLatched() const { return batt_latched_; }
   bool batterySoftStop() const { return batt_soft_stop_; }
   bool hwEmergency() const { return hw_emer_; }
@@ -258,6 +285,7 @@ private:
   bool     batt_latched_ = false;
   bool     batt_soft_stop_ = false;
   bool     relay_closed_ = false;
+  bool     update_lockout_ = false;
   bool     led_on_ = false;
 };
 

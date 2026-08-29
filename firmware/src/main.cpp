@@ -939,20 +939,35 @@ OtaUpdater ota;
 /**
  * May an update start right now?
  *
- * Only with the motor rails dead and the robot standing still. Reflashing takes
- * seconds, and for all of them the motors would hold whatever duty they had
- * with no code running to change it. The contactor is the honest test because
- * the safety manager owns it: if it is open, the motors have no power at all.
+ * The only thing that must be true beforehand is that the robot is STANDING
+ * STILL. It does not have to be e-stopped first: the firmware owns the
+ * contactor, so it drops the motor rails itself in otaOnBegin() below. An
+ * earlier version demanded the contactor already be open, which meant every
+ * wireless flash began with a walk over to the robot to press the mushroom -
+ * defeating the point of flashing wirelessly at all.
+ *
+ * Motion is the line that is not crossed automatically. Cutting power to a
+ * machine that is moving, remotely, because someone somewhere started an
+ * upload, is not a decision to take quietly - it stops being an update and
+ * becomes an unannounced e-stop. So a moving robot simply does not answer.
  */
 static bool otaIsSafe() {
-  return !safety.relayClosed() && fabsf(estimator.speed()) < 0.05f;
+  return fabsf(estimator.speed()) < 0.05f;
 }
 
-/** Stop everything that must not be running while flash is rewritten. */
+/**
+ * Make the robot safe, then let the flash proceed.
+ *
+ * Ordered deliberately: commands first so nothing re-applies a duty cycle, then
+ * the motors, then the contactor - which removes the power those motors would
+ * have used even if everything above somehow failed.
+ */
 static void otaOnBegin() {
   drive.stop();
   motor_left.stop();
   motor_right.stop();
+  safety.beginUpdateLockout();      // rails dead for the rest of this boot
+  Serial.println("[OTA] motor rails cut for the update");
 }
 #endif  // MICROROS_TRANSPORT_WIFI
 

@@ -253,6 +253,31 @@ void test_relay_stays_open_after_a_flat_pack_even_when_it_recovers(void) {
     TEST_ASSERT_FALSE(relay_is_closed());
 }
 
+void test_relay_update_lockout_cuts_power_and_holds(void) {
+    // A wireless flash cuts the motor rails itself, so nobody has to walk over
+    // and press the e-stop first. Once cut they stay cut for the rest of the
+    // boot - finishing an update reboots the board anyway, and a half-flashed
+    // program must never be able to re-energize the motors.
+    mock_reset_clock();
+    set_hardware_clear();
+    SafetyManager safety;
+    arm(safety);
+    TEST_ASSERT_TRUE(relay_is_closed());
+
+    safety.beginUpdateLockout();
+    TEST_ASSERT_FALSE(relay_is_closed());       // immediately, not next update()
+
+    // A flash blocks the main loop, so the pin must already be low rather than
+    // waiting for a pass that will not come for two minutes.
+    SafetyManager::Inputs in = healthy();
+    for (int i = 0; i < 60; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_FALSE(relay_is_closed());
+
+    safety.begin();                             // the reboot that ends an update
+    for (int i = 0; i < 40; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_TRUE(relay_is_closed());
+}
+
 void test_safety_battery_cutoff_never_unlatches_by_itself(void) {
     // A LiPo at the cutoff recovers as soon as the load comes off. If that
     // recovery cleared the latch the robot would stop, restart, sag and stop
@@ -611,6 +636,7 @@ int run_safety_gps_tests(void) {
     RUN_TEST(test_safety_release_needs_hold_time);
     RUN_TEST(test_safety_battery_cutoff_needs_to_persist);
     RUN_TEST(test_relay_is_open_until_the_lockout_expires);
+    RUN_TEST(test_relay_update_lockout_cuts_power_and_holds);
     RUN_TEST(test_relay_opens_on_emergency_and_battery_cutoff);
     RUN_TEST(test_relay_stays_open_after_a_flat_pack_even_when_it_recovers);
     RUN_TEST(test_safety_battery_cutoff_never_unlatches_by_itself);
