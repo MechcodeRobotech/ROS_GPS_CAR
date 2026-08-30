@@ -444,6 +444,14 @@
       "files": "gps_localize_msgs/msg/*, telemetry_split.py, setup/netwatch.sh, docs/topics.md",
       "promoted": true,
       "problem": ""
+    },
+    {
+      "ts": "2026-08-30 11:55",
+      "step": 8,
+      "what": "Short address with no port, a terminal QR that survives networks blocking mDNS, and a motion guard that refuses every move while the robot is stopped and says which stop is responsible.",
+      "files": "httpd.py, web_server.py, web/app.js, tools/robot_qr.py, setup/mdns_alias.sh, docs/web_ui.md",
+      "promoted": true,
+      "problem": ""
     }
   ],
   "problems": [
@@ -1743,6 +1751,36 @@
       "files": "gps_localize_msgs/msg/{RailStatus,MotorStatus,GpsStatus,EstimatorStatus,SafetyStatus}.msg, gps_localize/telemetry_split.py, launch/*, docs/topics.md",
       "test": "all six topics received with correct types, working constants and host timestamps; open contactor reports NaN and present=false rather than 0 V",
       "result": "power/battery uses the standard sensor_msgs/BatteryState; the other five are custom with real integer types and named constants. Split runs on the host: raising the ESP32 publisher limit 8->12 costs only 976 bytes of RAM, but six messages per cycle cost ~60% more bytes over Wi-Fi than one, and the board has no clock worth stamping with."
+    },
+    {
+      "id": "T105",
+      "phase": "W",
+      "title": "Web UI on http://gps-robot-web.local with no port",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "httpd.py, web_server.py, config/web.yaml, systemd/gps_localize.service, docs/web_ui.md",
+      "test": "HTTP 200 on port 80 and 8080, native and in Docker; with port 80 held by another server the UI still comes up on 8080 and logs why",
+      "result": "binds 80 and 8080 to the same app so nothing pointing at 8080 breaks. CAP_NET_BIND_SERVICE granted by the unit; without it the UI degrades to 8080 rather than failing to start."
+    },
+    {
+      "id": "T106",
+      "phase": "W",
+      "title": "Terminal QR, and the QR stops trusting .local",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "tools/robot_qr.py, gps_localize/qr.py, httpd.py, webapp/viewer_server.py",
+      "test": "printed matrix decoded back to the right address with zbarimg; 8 QR tests pass",
+      "result": "python3 tools/robot_qr.py prints the address and a scannable code. The QR carries the IP, not the .local name: mDNS is dropped by guest Wi-Fi, corporate multicast filtering, VLANs and VPNs, and a QR is scanned by someone with no way to diagnose a name that will not resolve. Terminal colours are explicit, because block characters inherit the theme and invert on a dark one."
+    },
+    {
+      "id": "T107",
+      "phase": "W",
+      "title": "Every movement command refused while the robot is stopped",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "web/app.js, web_server.py, docs/web_ui.md",
+      "test": "start and jog return 409 with a reason under every stop flag and when telemetry is missing; stop returns 200 in all of them",
+      "result": "enforced server-side, not only in the browser - a stale tab or a direct API call could otherwise still command a robot with its mushroom down. The message names the actual fix, because a hardware emergency must be released by hand while a software e-stop is cleared from the page."
     }
   ]
 }
