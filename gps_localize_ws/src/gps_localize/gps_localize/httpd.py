@@ -59,21 +59,36 @@ def lan_address():
 MDNS_WEB_NAME = 'gps-robot-web.local'
 
 
-def connect_info(host, port):
-    """Every way to reach this web UI, best first, with a QR for the phone."""
+def connect_info(host, port, friendly_port=None):
+    """Every way to reach this web UI, best first, with a QR for the phone.
+
+    `friendly_port` is 80 when the server managed to bind it. Port 80 is the
+    only way a URL can have no port at all, which is the difference between
+    something a person can be told over the phone and something they have to be
+    sent. Everything keeps working on `port` regardless.
+    """
     local, lan = urls_for(host, port)
-    mdns = 'http://%s:%d' % (MDNS_WEB_NAME, port) if lan else None
-    # The QR encodes whichever URL a phone can actually use: the mDNS name
-    # survives the PC changing address, so it is preferred over the raw IP.
+    short = friendly_port == 80
+
+    if lan:
+        mdns = ('http://%s' % MDNS_WEB_NAME if short
+                else 'http://%s:%d' % (MDNS_WEB_NAME, port))
+    else:
+        mdns = None
+
+    # The QR encodes whichever URL a phone can actually use. The mDNS name is
+    # preferred over the raw IP because it survives the PC changing address -
+    # which this machine does routinely.
     best = mdns or lan or local
     return {
-        'local': local,
+        'local': 'http://localhost' if short else local,
         'lan': lan,
         'mdns': mdns,
         'mdns_name': MDNS_WEB_NAME if lan else None,
         'best': best,
         'ip': lan_address() if lan else None,
         'port': port,
+        'friendly_port': friendly_port,
     }
 
 

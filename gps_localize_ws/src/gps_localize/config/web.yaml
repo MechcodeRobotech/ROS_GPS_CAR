@@ -3,6 +3,14 @@
 web:
   host: 0.0.0.0                # 0.0.0.0 = reachable from the network, 127.0.0.1 = this PC only
   port: 8080
+
+  # A second port serving the same UI, so the address can be typed without one:
+  #     http://gps-robot-web.local
+  # Port 80 is the only value that achieves that. Binding it needs
+  # CAP_NET_BIND_SERVICE, which the systemd unit grants; when that is missing
+  # the UI simply stays on `port` above and says so in the log. Set to 0 to turn
+  # the second listener off entirely.
+  friendly_port: 80
   telemetry_rate_hz: 5.0       # how often the browser is updated
   heartbeat_rate_hz: 4.0       # how often the browser must call /api/heartbeat
   max_clients: 8               # simultaneous browser streams (keeps RAM bounded)

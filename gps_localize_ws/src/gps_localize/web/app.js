@@ -322,6 +322,84 @@
   /* Says what the robot is doing in plain words and offers the single action
    * that makes sense next, so nobody has to work out whether they want START,
    * RESUME or NEXT. */
+
+  /* ------------------------------------------------- motion guard ---------
+   * Why a command did nothing, in words, before it is sent.
+   *
+   * Without this a press of START while the mushroom is down is simply
+   * ignored: the firmware refuses it, correctly, and the person is left
+   * pressing a button that does nothing with no idea why. Worse, the two
+   * blockers need OPPOSITE actions - a hardware emergency has to be released
+   * by hand at the robot and no amount of clicking will clear it, while a
+   * software e-stop is cleared from this page. Saying "stopped" for both would
+   * send someone to the wrong place.
+   *
+   * Returns null when the robot may move, otherwise {title, detail, clearable}.
+   */
+  function motionBlocker(snap) {
+    snap = snap || state.snap || {};
+    var t = snap.telemetry || {};
+    var safety = snap.safety || {};
+    var reasons = t.stop_reasons || safety.firmware_stop_reasons || [];
+    var has = function (name) { return reasons.indexOf(name) >= 0; };
+
+    if (has('hardware_emergency') || has('esp_button')) {
+      return {
+        clearable: false,
+        title: 'ปุ่มฉุกเฉินถูกกด / the emergency button is pressed',
+        detail: 'ต้องไปบิดปุ่มฉุกเฉินที่ตัวหุ่นยนต์ให้เด้งขึ้นก่อน — กดปุ่มในหน้านี้ไม่ช่วย\n\n'
+              + 'Twist the emergency button on the robot until it pops back up. '
+              + 'This page cannot clear a hardware emergency, by design - the '
+              + 'motor rails are physically open while it is down.'
+      };
+    }
+    if (has('software_estop') || safety.estop) {
+      return {
+        clearable: true,
+        title: 'หยุดฉุกเฉินจากหน้าเว็บ / software e-stop is latched',
+        detail: 'กดปุ่ม "ปลดหยุดฉุกเฉิน / Clear e-stop" ในหน้านี้ก่อน แล้วจึงสั่งงานได้\n\n'
+              + 'Clear it from this page, then start again.'
+      };
+    }
+    if (has('battery_low')) {
+      return {
+        clearable: false,
+        title: 'แบตเตอรี่ต่ำ / the battery cutoff is latched',
+        detail: 'ต้องปิดหุ่นยนต์แล้วเปิดใหม่เท่านั้น หลังจากชาร์จหรือเปลี่ยนแบตแล้ว\n\n'
+              + 'Charge or swap the pack, then switch the robot off and on again. '
+              + 'Nothing else clears this - a LiPo at the cutoff recovers on its '
+              + 'own when the load comes off, so an automatic release would let '
+              + 'the robot drive it flat.'
+      };
+    }
+    if (has('agent_lost')) {
+      return {
+        clearable: false,
+        title: 'ไม่ได้เชื่อมต่อหุ่นยนต์ / the robot is not connected',
+        detail: 'The micro-ROS agent cannot reach the board. Check that it is '
+              + 'powered and on the same network.'
+      };
+    }
+    if (has('startup_lockout')) {
+      return {
+        clearable: false,
+        title: 'กำลังเริ่มระบบ / still starting up',
+        detail: 'The boot lockout has not expired yet. Try again in a moment.'
+      };
+    }
+    return null;
+  }
+
+  /* Show the reason and refuse to send. Called by every control path, so a
+   * blocked robot explains itself once rather than swallowing the command. */
+  function blockedByEmergency() {
+    var blocker = motionBlocker();
+    if (!blocker) return false;
+    window.alert(blocker.title + '\n\n' + blocker.detail);
+    toast(blocker.title, true);
+    return true;
+  }
+
   function renderHero(snap) {
     var t = snap.telemetry || {};
     var nav = snap.nav || {};
@@ -645,6 +723,7 @@
   /* ----------------------------------------------------------- navigation */
   Array.prototype.forEach.call(document.querySelectorAll('[data-nav]'), function (button) {
     button.addEventListener('click', function () {
+      if (blockedByEmergency()) return;
       api('/api/nav', { action: button.dataset.nav });
     });
   });
@@ -654,6 +733,7 @@
     // full scale: the speed the operator set is the speed the robot drives.
     // There used to be a second "power" multiplier here, which meant the
     // 0.18 m/s preset actually produced 0.11 m/s.
+    if (blockedByEmergency()) return;
     api('/api/manual', { forward: state.jog.forward, turn: state.jog.turn });
   }
 
@@ -1460,6 +1540,7 @@
 
       if (button.dataset.map === 'goto') {
         if (blockedInViewer()) return;
+        if (blockedByEmergency()) return;
         api('/api/nav', { action: 'goto_point', lat: world.lat, lon: world.lon })
           .then(function (response) {
             toast(response && response.ok
@@ -1573,7 +1654,10 @@
           }
           else if (act === 'up' && index > 0) { swap(state.waypoints, index, index - 1); markWaypointsDirty(); }
           else if (act === 'down' && index < state.waypoints.length - 1) { swap(state.waypoints, index, index + 1); markWaypointsDirty(); }
-          else if (act === 'go') { api('/api/nav', { action: 'goto', index: index }); return; }
+          else if (act === 'go') {
+            if (blockedByEmergency()) return;
+            api('/api/nav', { action: 'goto', index: index }); return;
+          }
           renderWaypoints();
         });
       });

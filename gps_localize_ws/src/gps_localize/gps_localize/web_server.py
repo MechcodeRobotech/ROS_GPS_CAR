@@ -77,6 +77,9 @@ class WebServerNode(Node):
         self.manual_speed = float(cfg.get('manual_speed_mps', 0.18))
         self.manual_turn = float(cfg.get('manual_turn_dps', 45.0))
         self.allow_config_edit = bool(cfg.get('allow_config_edit', True))
+        # Port 80 as well as the usual one, so the address is just
+        # http://gps-robot-web.local with nothing after it. Set to 0 to skip.
+        self.friendly_port = int(cfg.get('friendly_port', 80))
         self.max_speed = float(self.store.load('robot').get('robot', {}).get('max_speed_mps', 0.42))
 
         # ------------------------------------------------------------ state
@@ -119,16 +122,50 @@ class WebServerNode(Node):
         self.server = WebServer(self.host, self.port, self.app)
         self.server.start()
 
+        # A second listener on port 80, serving the SAME app. Port 80 is the
+        # only way a URL can carry no port at all, which is what makes it
+        # something you can tell someone rather than something you have to send
+        # them. The original port keeps working either way, so nothing that
+        # already points at it breaks.
+        #
+        # Binding below 1024 needs CAP_NET_BIND_SERVICE, which the systemd unit
+        # grants. When it is missing - running by hand, or an old unit - this
+        # must NOT take the web UI down with it: losing the short address is a
+        # small loss, losing the UI entirely is not.
+        self.friendly_server = None
+        if self.friendly_port and self.friendly_port != self.port:
+            try:
+                self.friendly_server = WebServer(self.host, self.friendly_port, self.app)
+                self.friendly_server.start()
+            except PermissionError:
+                self.get_logger().warn(
+                    'no permission to bind port %d, so the address needs its '
+                    'port. Grant it with: sudo setcap '
+                    "'cap_net_bind_service=+ep' $(readlink -f $(which python3))"
+                    ' - or reinstall the systemd unit, which asks for it.'
+                    % self.friendly_port)
+                self.friendly_port = None
+            except OSError as exc:
+                self.get_logger().warn(
+                    'port %d is not available (%s), carrying on without it'
+                    % (self.friendly_port, exc))
+                self.friendly_port = None
+        else:
+            self.friendly_port = None
+
         self.create_timer(1.0 / max(0.5, self.telemetry_rate), self.push_telemetry)
         self._pid_pushed = False
         self._boot_timer = self.create_timer(2.0, self.push_pid_to_firmware_once)
 
         # Print the address a phone can actually reach, not just localhost.
-        self.local_url, self.lan_url = urls_for(self.host, self.port)
+        info = connect_info(self.host, self.port, self.friendly_port)
+        self.local_url, self.lan_url = info['local'], info['lan']
         self.add_log('web', 'web UI on %s%s'
                      % (self.local_url, (' · ' + self.lan_url) if self.lan_url else ''))
         self.get_logger().info('web UI ready')
         self.get_logger().info('    on this machine : %s' % self.local_url)
+        if info['mdns']:
+            self.get_logger().info('    by name         : %s' % info['mdns'])
         if self.lan_url:
             self.get_logger().info('    from a phone    : %s' % self.lan_url)
         else:
@@ -280,11 +317,13 @@ class WebServerNode(Node):
 
     def api_connect(self, _body, _query):
         """How to reach this web UI, so the Help tab never invents an address."""
-        return 200, {'ok': True, 'connect': connect_info(self.host, self.port)}
+        return 200, {'ok': True,
+                     'connect': connect_info(self.host, self.port, self.friendly_port)}
 
     def api_qr(self, _body, query):
         """A QR of the best URL, as SVG so it scales and needs no image library."""
-        target = (query.get('url') or [''])[0] or connect_info(self.host, self.port)['best']
+        target = ((query.get('url') or [''])[0]
+                  or connect_info(self.host, self.port, self.friendly_port)['best'])
         try:
             return 200, {'ok': True, 'url': target, 'svg': qr.to_svg(target)}
         except ValueError as exc:
@@ -499,11 +538,68 @@ class WebServerNode(Node):
         return self.api_waypoints_set({'waypoints': points}, {})
 
     # ------------------------------------------------------------ commands
+    # Movement commands the guard applies to. Anything that makes the robot
+    # SAFER is deliberately absent: stop and pause must work at all times, and
+    # so must clearing a software e-stop, or the guard would block the only way
+    # out of the condition it is guarding against.
+    MOTION_ACTIONS = ('start', 'resume', 'next', 'goto', 'goto_point')
+
+    def motion_blocker(self):
+        """Why the robot may not move, or None. Server-side, deliberately.
+
+        The browser refuses these too, with a clearer message, but a browser
+        guard is advice rather than enforcement: a stale tab, a page that missed
+        the last frame, or anything talking to the API directly would otherwise
+        still be able to ask a robot with its mushroom down to drive. The
+        firmware would refuse it, correctly and silently - and silence is what
+        leaves someone pressing a button that does nothing.
+        """
+        with self._lock:
+            reasons = list(self.telemetry.get('stop_reasons') or [])
+            estop = bool(self.safety.get('estop'))
+            age = time.time() - self.telemetry_time if self.telemetry_time else None
+
+        # No telemetry at all means the state is unknown, not safe. Refusing is
+        # the only honest answer: the last thing to do with a robot whose state
+        # we cannot read is command it to move.
+        if age is None or age > 5.0:
+            return {'reason': 'no_telemetry', 'clearable': False,
+                    'message': 'no telemetry from the robot, so its state is '
+                               'unknown - not commanding motion'}
+
+        if 'hardware_emergency' in reasons or 'esp_button' in reasons:
+            return {'reason': 'hardware_emergency', 'clearable': False,
+                    'message': 'the emergency button is pressed - twist it on '
+                               'the robot until it pops back up. This cannot be '
+                               'cleared from software.'}
+        if 'software_estop' in reasons or estop:
+            return {'reason': 'software_estop', 'clearable': True,
+                    'message': 'the software e-stop is latched - clear it first'}
+        if 'battery_low' in reasons:
+            return {'reason': 'battery_low', 'clearable': False,
+                    'message': 'the battery cutoff is latched - charge or swap '
+                               'the pack, then switch the robot off and on'}
+        if 'agent_lost' in reasons:
+            return {'reason': 'agent_lost', 'clearable': False,
+                    'message': 'the robot is not connected'}
+        if 'startup_lockout' in reasons:
+            return {'reason': 'startup_lockout', 'clearable': False,
+                    'message': 'still starting up, try again in a moment'}
+        return None
+
     def api_nav(self, body, _query):
         action = body.get('action')
         if action not in ('start', 'pause', 'resume', 'stop', 'next', 'goto',
                           'goto_point', 'reload', 'set_datum'):
             return 400, {'ok': False, 'error': 'unknown action'}
+
+        if action in self.MOTION_ACTIONS:
+            blocker = self.motion_blocker()
+            if blocker:
+                self.add_log('web', 'refused %s: %s' % (action, blocker['message']))
+                return 409, {'ok': False, 'error': blocker['message'],
+                             'blocked_by': blocker['reason'],
+                             'clearable': blocker['clearable']}
         if action == 'goto_point':
             try:
                 lat = float(body['lat'])
@@ -517,9 +613,17 @@ class WebServerNode(Node):
         return 200, {'ok': True}
 
     def api_manual(self, body, _query):
+        # Stop first and unconditionally: it is the one command that must never
+        # be refused, whatever else is wrong.
         if body.get('action') == 'stop':
             self.pub_manual.publish(Twist())
             return 200, {'ok': True, 'speed': 0.0, 'turn': 0.0}
+
+        blocker = self.motion_blocker()
+        if blocker:
+            return 409, {'ok': False, 'error': blocker['message'],
+                         'blocked_by': blocker['reason'],
+                         'clearable': blocker['clearable']}
 
         try:
             forward = float(body.get('forward', 0.0))
