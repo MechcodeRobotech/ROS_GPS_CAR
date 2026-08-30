@@ -428,11 +428,14 @@ class Viewer:
             'local': 'http://localhost:%d' % self.port,
             'lan': None, 'mdns': None, 'mdns_name': None,
             'best': 'http://localhost:%d' % self.port,
-            'ip': None, 'port': self.port,
+            'ip': None, 'port': self.port, 'friendly_port': None,
+            'qr_url': 'http://localhost:%d' % self.port,
+            'mdns_may_be_blocked': False,
         }}
 
     def api_qr(self, _body, query):
-        target = (query.get('url') or [''])[0] or 'http://localhost:%d' % self.port
+        target = ((query.get('url') or [''])[0]
+                  or 'http://localhost:%d' % self.port)
         try:
             return 200, {'ok': True, 'url': target, 'svg': qr.to_svg(target)}
         except ValueError as exc:

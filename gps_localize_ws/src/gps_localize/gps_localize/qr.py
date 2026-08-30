@@ -436,6 +436,30 @@ def to_svg(text: str, module: int = 6, quiet: int = 4) -> str:
     return ''.join(parts)
 
 
+def to_ansi(text: str, quiet: int = 3) -> str:
+    """A QR for a terminal, with the colours stated rather than inherited.
+
+    A scanner needs dark modules on a light quiet zone. Drawing with block
+    characters inherits the terminal's own colours, so the same code comes out
+    correct on a light theme and INVERTED on a dark one - and an inverted code
+    is rejected by many phone cameras. Setting the background explicitly costs
+    two characters per module and works on either.
+    """
+    m = encode(text)
+    dark = '\033[40m  \033[0m'          # black background, two spaces wide
+    light = '\033[107m  \033[0m'        # bright white background
+
+    width = len(m) + quiet * 2
+    blank = light * width
+    rows = [blank] * quiet
+    for row in m:
+        rows.append(light * quiet
+                    + ''.join(dark if cell else light for cell in row)
+                    + light * quiet)
+    rows += [blank] * quiet
+    return '\n'.join(rows)
+
+
 def to_ascii(text: str, quiet: int = 2) -> str:
     """A QR for a terminal, two modules per character cell so it stays square."""
     m = encode(text)

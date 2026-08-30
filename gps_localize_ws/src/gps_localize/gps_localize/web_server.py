@@ -323,7 +323,7 @@ class WebServerNode(Node):
     def api_qr(self, _body, query):
         """A QR of the best URL, as SVG so it scales and needs no image library."""
         target = ((query.get('url') or [''])[0]
-                  or connect_info(self.host, self.port, self.friendly_port)['best'])
+                  or connect_info(self.host, self.port, self.friendly_port)['qr_url'])
         try:
             return 200, {'ok': True, 'url': target, 'svg': qr.to_svg(target)}
         except ValueError as exc:

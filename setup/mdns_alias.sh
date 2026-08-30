@@ -51,10 +51,19 @@ current_ip() {
 }
 
 publisher_pid=""
+service_pid=""
 published_ip=""
+
+# A browser typing http://name.local ALWAYS uses port 80 - there is no way to
+# make a bare hostname imply another port, SRV record or not. This service
+# record is therefore not a substitute for binding 80; it is what makes the
+# robot appear correctly in service discovery (avahi-browse, Bonjour browsers,
+# phone apps), carrying whichever port the UI is really on.
+WEB_PORT="${WEB_PORT:-8080}"
 
 cleanup() {
     [ -n "$publisher_pid" ] && kill "$publisher_pid" 2>/dev/null
+    [ -n "$service_pid" ] && kill "$service_pid" 2>/dev/null
     exit 0
 }
 trap cleanup INT TERM
@@ -77,6 +86,15 @@ while true; do
         avahi-publish-address -R "$NAME" "$ip_now" &
         publisher_pid=$!
         published_ip="$ip_now"
+
+        # Advertise the UI as a discoverable HTTP service as well, so it can be
+        # found without knowing the name at all.
+        [ -n "$service_pid" ] && kill "$service_pid" 2>/dev/null
+        if command -v avahi-publish-service >/dev/null 2>&1; then
+            avahi-publish-service "GPS_Localize robot" _http._tcp "$WEB_PORT" \
+                "path=/" >/dev/null 2>&1 &
+            service_pid=$!
+        fi
     fi
 
     sleep "$INTERVAL"

@@ -70,16 +70,36 @@ def connect_info(host, port, friendly_port=None):
     local, lan = urls_for(host, port)
     short = friendly_port == 80
 
+    # When port 80 bound, every address drops its port - including the IP one,
+    # which is what the QR carries. Showing :8080 there while the page is also
+    # on 80 is not wrong, but it is longer to read back and invites the question
+    # of which one is right.
+    if short and lan:
+        lan = 'http://%s' % lan_address()
+
     if lan:
         mdns = ('http://%s' % MDNS_WEB_NAME if short
                 else 'http://%s:%d' % (MDNS_WEB_NAME, port))
     else:
         mdns = None
 
-    # The QR encodes whichever URL a phone can actually use. The mDNS name is
-    # preferred over the raw IP because it survives the PC changing address -
-    # which this machine does routinely.
     best = mdns or lan or local
+
+    # The QR encodes the IP, NOT the name, and the difference matters.
+    #
+    # A .local name needs multicast DNS, and plenty of networks drop it: guest
+    # and public Wi-Fi with client isolation, corporate networks that filter
+    # multicast, anything crossing a VLAN, most VPNs. On those the name simply
+    # does not resolve, and a QR is scanned by someone standing there right now
+    # who gets no second chance to guess why.
+    #
+    # An IP works wherever the two devices can reach each other at all, which is
+    # a strictly weaker requirement. It goes stale when this machine changes
+    # address - but a QR is a moment in time, so staleness costs nothing: scan
+    # it again. The name is still the better thing to TYPE or remember, and the
+    # page shows both.
+    qr_url = lan or local
+
     return {
         'local': 'http://localhost' if short else local,
         'lan': lan,
@@ -89,6 +109,8 @@ def connect_info(host, port, friendly_port=None):
         'ip': lan_address() if lan else None,
         'port': port,
         'friendly_port': friendly_port,
+        'qr_url': qr_url,
+        'mdns_may_be_blocked': bool(mdns),
     }
 
 
