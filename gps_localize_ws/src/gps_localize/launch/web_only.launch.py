@@ -20,6 +20,11 @@ def generate_launch_description():
         DeclareLaunchArgument('runtime_config_dir', default_value='~/.gps_localize'),
         Node(package='gps_localize', executable='web_server', name='web_server',
              parameters=params, output='screen'),
+        # Turns the board's one compact frame into six typed topics. Runs
+        # here rather than on the ESP32 so the Wi-Fi link carries a single
+        # message per cycle instead of six.
+        Node(package='gps_localize', executable='telemetry_split', name='telemetry_split',
+             parameters=params, output='screen', respawn=True, respawn_delay=2.0),
         Node(package='gps_localize', executable='safety_watchdog', name='safety_watchdog',
              parameters=params, output='screen'),
     ])

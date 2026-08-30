@@ -31,6 +31,7 @@ setup(
             'safety_watchdog = gps_localize.safety_watchdog:main',
             'web_server = gps_localize.web_server:main',
             'heading_check = gps_localize.heading_check:main',
+            'telemetry_split = gps_localize.telemetry_split:main',
         ],
     },
 )

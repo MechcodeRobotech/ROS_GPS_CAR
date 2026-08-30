@@ -67,33 +67,48 @@ restart_stack() {
         echo "[netwatch] $UNIT is not installed here, nothing to restart"
         return
     fi
-    # Only restart once the address has settled. Joining a network produces a
-    # burst of events and the first address is often not the final one.
-    sleep "$DEBOUNCE"
-    local settled
-    settled="$(primary_ip)"
-    if [ "$settled" != "$to" ]; then
-        echo "[netwatch] still settling (${to} -> ${settled}), waiting for the next event"
-        return
-    fi
-    echo "[netwatch] restarting $UNIT so DDS rebinds to $settled"
+    echo "[netwatch] restarting $UNIT so DDS rebinds to $to"
     systemctl restart "$UNIT" \
         && echo "[netwatch] $UNIT restarted" \
         || echo "[netwatch] could not restart $UNIT" >&2
 }
 
-current="$(primary_ip)"
-echo "[netwatch] watching for address changes; currently ${current:-none}"
+# The address DDS is bound to, which is what every comparison below is
+# against - not whatever transient value an event happens to report.
+bound="$(primary_ip)"
+echo "[netwatch] watching for address changes; bound to ${bound:-none}"
 
 # `ip monitor` streams for as long as it runs, so this loop only turns over when
 # something actually happened on an interface.
 ip -4 monitor address 2>/dev/null | while read -r _; do
     latest="$(primary_ip)"
-    if [ "$latest" != "$current" ]; then
-        was="$current"
-        current="$latest"
-        restart_stack "$was" "$latest"
-        # Re-read: the restart above may have taken longer than another change.
-        current="$(primary_ip)"
+    [ "$latest" = "$bound" ] && continue
+
+    # Something moved. Wait for it to settle before acting: joining a network
+    # produces a burst of events, and the first address handed out is often not
+    # the final one.
+    #
+    # The comparison that matters is against the address DDS is actually BOUND
+    # to, not against the intermediate value that triggered this pass. An
+    # earlier version compared to the intermediate, so a change that went
+    # 192.168.100.16 -> none -> 10.126.95.220 was dismissed as "still settling"
+    # and waited for a next event that never came - leaving the stack orphaned,
+    # which is the exact failure this script exists to prevent. Caught by
+    # reading its own log after a real network switch.
+    sleep "$DEBOUNCE"
+    settled="$(primary_ip)"
+
+    if [ -z "$settled" ]; then
+        # No route out yet. Do nothing: the event that brings one back will
+        # arrive, and restarting into no network would achieve nothing.
+        continue
     fi
+    if [ "$settled" = "$bound" ]; then
+        # A blip that came back to the same address. DDS is still bound
+        # correctly, so a restart would drop the robot's link for nothing.
+        continue
+    fi
+
+    restart_stack "$bound" "$settled"
+    bound="$settled"
 done

@@ -7,8 +7,14 @@
     Message definitions shared by the GPS_Localize firmware and the ROS 2 host.
 
     Kept in its own package because micro-ROS has to compile the type support
-    into the firmware image, and a message package must not depend on anything
-    the microcontroller cannot build.
+    into the firmware image.
+
+    Telemetry.msg is the only message the firmware knows about, and it is
+    deliberately all float32 with no dependencies, so the microcontroller can
+    build it. The five *Status messages are host-side only: they carry a Header,
+    real integer types and named constants, and telemetry_split fans one
+    Telemetry frame out into them. That keeps the link from the board to a
+    single message per cycle rather than six, which matters on Wi-Fi.
   </description>
   <maintainer email="manman7852078520@gmail.com">Mannaja78520</maintainer>
   <license>MIT</license>
@@ -16,6 +22,7 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>rosidl_default_generators</buildtool_depend>
   <exec_depend>rosidl_default_runtime</exec_depend>
+  <depend>std_msgs</depend>
   <member_of_group>rosidl_interface_packages</member_of_group>
 
   <test_depend>ament_lint_auto</test_depend>

@@ -12,6 +12,40 @@ All ROS topics live under `/gps_localize`. `ROS_DOMAIN_ID = 10` (firmware
 | `/gps_localize/gps/fix` | `sensor_msgs/NavSatFix` | ≤5 Hz | published when a new solution arrives |
 | `/gps_localize/telemetry` | `gps_localize_msgs/Telemetry` | 10 Hz | 44 named fields, listed below |
 
+## Split out by `telemetry_split` — subscribe to these, not to `/telemetry`
+
+`/telemetry` is the board's wire format: one compact frame, all `float32`, no
+timestamp. `telemetry_split` turns each frame into six properly typed topics, so
+nothing has to know the layout of a 44-field message to read a battery voltage.
+
+| Topic | Type | Carries |
+|---|---|---|
+| `/gps_localize/power/battery` | `sensor_msgs/BatteryState` | pack volts, amps, charge estimate |
+| `/gps_localize/power/rails` | `gps_localize_msgs/RailStatus` | all four INA226 rails |
+| `/gps_localize/motors` | `gps_localize_msgs/MotorStatus` | duty, wheel and back-EMF speeds, faults |
+| `/gps_localize/estimator` | `gps_localize_msgs/EstimatorStatus` | fused heading and speed, position, and their sources |
+| `/gps_localize/safety/status` | `gps_localize_msgs/SafetyStatus` | run state, stop flags, contactor, heap |
+| `/gps_localize/gps/status` | `gps_localize_msgs/GpsStatus` | fix quality, satellites, HDOP, course |
+
+These carry real types and named constants, so `msg.fix_quality ==
+GpsStatus.FIX_RTK_FIXED` replaces remembering that 4 means RTK. They are also
+stamped with the host clock, which the board cannot do — it has no synchronised
+time, so anything it stamped would be milliseconds since boot in disguise.
+
+**Why the split runs on the host rather than the ESP32.** Measured, not assumed:
+raising micro-ROS's publisher limit from 8 to 12 costs 976 bytes of RAM, so the
+board could easily hold the extra publishers. The cost is on the air. Six
+messages per cycle carry six lots of XRCE framing instead of one, roughly 60%
+more bytes over a Wi-Fi link that already drops frames when the robot moves
+behind something. `sensor_msgs/BatteryState` alone, with its arrays and strings,
+is heavier than the entire packed frame. One message out, exploded where there
+is no such constraint.
+
+An open contactor is reported as **not measured** — `BatteryState.voltage` is
+NaN and `present` is false — never as 0 V. The pack sits behind the relay, and
+reporting an unmeasurable pack as a flat one is what used to latch the robot
+into e-stop three seconds after boot.
+
 ## Subscribed by the firmware
 
 | Topic | Type | Meaning |
