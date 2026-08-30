@@ -436,6 +436,14 @@
       "files": "gps_localize/qr.py, web/*, setup/netwatch.sh, setup/mdns_alias.sh, systemd/*",
       "promoted": true,
       "problem": ""
+    },
+    {
+      "ts": "2026-08-30 11:30",
+      "step": 8,
+      "what": "Split the 44-field telemetry frame into six typed topics with named constants, fanned out by a host node. Measured the ESP32 alternative rather than guessing: RAM is cheap, bandwidth is not. Fixed a netwatch bug its own log revealed.",
+      "files": "gps_localize_msgs/msg/*, telemetry_split.py, setup/netwatch.sh, docs/topics.md",
+      "promoted": true,
+      "problem": ""
     }
   ],
   "problems": [
@@ -620,6 +628,13 @@
       "what": "Changing the PC's network silently orphaned the ROS stack, three times.",
       "state": "FIXED - now automatic",
       "impact": "The quiet kind of failure: topics still listed, node list empty, subscriber counts zero, and the web UI serving minutes-old data while the board was linked and publishing fine. gps_localize_netwatch.service now restarts the stack on an address change."
+    },
+    {
+      "ts": "2026-08-30 11:30",
+      "severity": "HIGH",
+      "what": "netwatch compared the settled address against the intermediate value that triggered the event, not against the address DDS was bound to.",
+      "state": "FIXED",
+      "impact": "A change going 192.168.100.16 -> none -> 10.126.95.220 was dismissed as 'still settling' and waited for an event that never came, leaving the stack orphaned - the precise failure netwatch exists to prevent. Found by reading its own log after a real network switch."
     }
   ],
   "tasks": [
@@ -1718,6 +1733,16 @@
       "files": "setup/netwatch.sh, systemd/gps_localize_netwatch.service, setup/install.sh, CLAUDE.md",
       "test": "netwatch reports the current address and fires on a change; mdns republished automatically across two real network moves today",
       "result": "netwatch restarts the stack so DDS rebinds, mdns republishes the name, and the firmware already re-resolves the agent after five failed pings. Triggered by address change rather than network events, because Wi-Fi noise would otherwise restart the stack constantly."
+    },
+    {
+      "id": "T104",
+      "phase": "W",
+      "title": "Telemetry split into six typed topics",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "gps_localize_msgs/msg/{RailStatus,MotorStatus,GpsStatus,EstimatorStatus,SafetyStatus}.msg, gps_localize/telemetry_split.py, launch/*, docs/topics.md",
+      "test": "all six topics received with correct types, working constants and host timestamps; open contactor reports NaN and present=false rather than 0 V",
+      "result": "power/battery uses the standard sensor_msgs/BatteryState; the other five are custom with real integer types and named constants. Split runs on the host: raising the ESP32 publisher limit 8->12 costs only 976 bytes of RAM, but six messages per cycle cost ~60% more bytes over Wi-Fi than one, and the board has no clock worth stamping with."
     }
   ]
 }
