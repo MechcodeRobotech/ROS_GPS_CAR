@@ -452,6 +452,14 @@
       "files": "httpd.py, web_server.py, web/app.js, tools/robot_qr.py, setup/mdns_alias.sh, docs/web_ui.md",
       "promoted": true,
       "problem": ""
+    },
+    {
+      "ts": "2026-08-30 12:01",
+      "step": 8,
+      "what": "Published the web address and a scannable QR on a latched ROS topic, after checking that plain `ros2 topic echo` mangles multi-line strings badly enough to break the code.",
+      "files": "gps_localize_msgs/msg/WebConnect.msg, web_server.py, docs/topics.md",
+      "promoted": true,
+      "problem": ""
     }
   ],
   "problems": [
@@ -1781,6 +1789,16 @@
       "files": "web/app.js, web_server.py, docs/web_ui.md",
       "test": "start and jog return 409 with a reason under every stop flag and when telemetry is missing; stop returns 200 in all of them",
       "result": "enforced server-side, not only in the browser - a stale tab or a direct API call could otherwise still command a robot with its mushroom down. The message names the actual fix, because a hardware emergency must be released by hand while a software e-stop is cleared from the page."
+    },
+    {
+      "id": "T108",
+      "phase": "W",
+      "title": "Web address and QR published on a ROS topic",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "gps_localize_msgs/msg/WebConnect.msg, web_server.py, docs/topics.md",
+      "test": "rendered the characters `ros2 topic echo --field qr_ascii` printed and scanned them: reads back as the robot's address. Plain echo reads back as nothing.",
+      "result": "latched /gps_localize/web/connect, refreshed when the address changes. --field is required: plain echo puts a blank line between every row, which doubles the QR's row spacing and stops it scanning while still looking exactly like a QR. Noted at the top of the .msg."
     }
   ]
 }
