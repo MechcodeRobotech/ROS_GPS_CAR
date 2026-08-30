@@ -27,6 +27,20 @@ nothing has to know the layout of a 44-field message to read a battery voltage.
 | `/gps_localize/safety/status` | `gps_localize_msgs/SafetyStatus` | run state, stop flags, contactor, heap |
 | `/gps_localize/gps/status` | `gps_localize_msgs/GpsStatus` | fix quality, satellites, HDOP, course |
 
+## How to reach the web UI, from the command line
+
+    ros2 topic echo --once --field qr_ascii /gps_localize/web/connect
+
+`/gps_localize/web/connect` (`gps_localize_msgs/WebConnect`) is latched, so the
+answer is there the moment you ask, and republished when the machine changes
+address. `--field url` gives just the address.
+
+**Use `--field`.** Plain `ros2 topic echo` renders a multi-line string with a
+blank line between every row, which doubles the QR's row spacing and stops it
+scanning - while still looking exactly like a QR, which is the dangerous part.
+Checked by scanning both: the `--field` form reads back correctly, the plain
+form reads back as nothing.
+
 These carry real types and named constants, so `msg.fix_quality ==
 GpsStatus.FIX_RTK_FIXED` replaces remembering that 4 means RTK. They are also
 stamped with the host clock, which the board cannot do — it has no synchronised

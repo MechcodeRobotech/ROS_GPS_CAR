@@ -30,7 +30,7 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import NavSatFix
-from gps_localize_msgs.msg import Telemetry
+from gps_localize_msgs.msg import Telemetry, WebConnect
 # Float32MultiArray is still used for /config/pid, which stays a packed array:
 # it is a short, positional selector list, not a set of named signals.
 from std_msgs.msg import Bool, Float32MultiArray, Int32, String
@@ -106,6 +106,10 @@ class WebServerNode(Node):
         self.pub_beat = self.create_publisher(Int32, NS + '/web/heartbeat', 5)
         self.pub_config = self.create_publisher(Float32MultiArray, NS + '/config/pid', 5)
         self.pub_config_updated = self.create_publisher(String, NS + '/config/updated', 5)
+        # Latched: someone asking how to reach the UI wants the answer now, not
+        # on the next publish. It is republished when the address changes.
+        self.pub_connect = self.create_publisher(WebConnect, NS + '/web/connect',
+                                                 latched_qos())
 
         self.create_subscription(Telemetry, NS + '/telemetry', self.on_telemetry, 5)
         self.create_subscription(NavSatFix, NS + '/gps/fix', self.on_fix, 5)
@@ -172,6 +176,34 @@ class WebServerNode(Node):
             self.get_logger().info('    bound to loopback only - set web.host: 0.0.0.0 '
                                    'to reach it from other devices')
         self.get_logger().info('    serving files   : %s' % web_dir)
+        self.publish_connect()
+        # The address follows the machine onto other networks, so this is
+        # refreshed rather than published once and left to go stale.
+        self.create_timer(30.0, self.publish_connect)
+
+    def publish_connect(self):
+        """Latch how to reach the UI, QR included, on a ROS topic.
+
+            ros2 topic echo --once --field qr_ascii /gps_localize/web/connect
+
+        --field matters: plain `ros2 topic echo` puts a blank line between every
+        row of a multi-line string, which doubles the QR's row spacing and stops
+        it scanning while still looking exactly like a QR.
+        """
+        info = connect_info(self.host, self.port, self.friendly_port)
+        msg = WebConnect()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.url = info['qr_url'] or ''
+        msg.url_by_name = info['mdns'] or ''
+        msg.url_local = info['local'] or ''
+        try:
+            msg.qr_ascii = qr.to_ascii(msg.url) if msg.url else ''
+        except ValueError:
+            msg.qr_ascii = ''
+        if msg.url != getattr(self, '_connect_url', None):
+            self._connect_url = msg.url
+            self.add_log('web', 'web UI reachable at %s' % msg.url)
+        self.pub_connect.publish(msg)
 
     # =============================== ROS in ================================
     def on_telemetry(self, msg):

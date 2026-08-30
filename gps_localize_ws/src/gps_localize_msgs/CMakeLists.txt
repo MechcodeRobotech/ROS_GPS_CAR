@@ -27,6 +27,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/GpsStatus.msg"
   "msg/EstimatorStatus.msg"
   "msg/SafetyStatus.msg"
+  "msg/WebConnect.msg"
   DEPENDENCIES std_msgs
 )
 
