@@ -460,6 +460,14 @@
       "files": "gps_localize_msgs/msg/WebConnect.msg, web_server.py, docs/topics.md",
       "promoted": true,
       "problem": ""
+    },
+    {
+      "ts": "2026-09-02 03:42",
+      "step": 9,
+      "what": "First run with real GPS and IMU. Found and fixed two sensor bugs that between them had a stationary board believing it was moving at 1.5 m/s. Added lever-arm offsets for a two-caster robot and made the map pan and zoom.",
+      "files": "firmware/lib/imu/imu_bno085.h, firmware/src/main.cpp, firmware/src/estimator/lever_arm.h, web/*",
+      "promoted": true,
+      "problem": ""
     }
   ],
   "problems": [
@@ -651,6 +659,20 @@
       "what": "netwatch compared the settled address against the intermediate value that triggered the event, not against the address DDS was bound to.",
       "state": "FIXED",
       "impact": "A change going 192.168.100.16 -> none -> 10.126.95.220 was dismissed as 'still settling' and waited for an event that never came, leaving the stack orphaned - the precise failure netwatch exists to prevent. Found by reading its own log after a real network switch."
+    },
+    {
+      "ts": "2026-09-02 03:42",
+      "severity": "BLOCKER",
+      "what": "The BNO085 was permanently dead after boot while reporting begin() success.",
+      "state": "FIXED on hardware",
+      "impact": "One flag meant both 'sensor present' and 'data fresh'. The first stale window latched the driver off for good. With the GPS bug below, a board on a desk believed it was moving at 1.5 m/s."
+    },
+    {
+      "ts": "2026-09-02 03:42",
+      "severity": "HIGH",
+      "what": "gps_ok tested freshness only, so a receiver with no fix had its speed and course believed.",
+      "state": "FIXED on hardware",
+      "impact": "0 satellites, HDOP 99.99, and a reported 2.53 m/s that the estimator accepted."
     }
   ],
   "tasks": [
@@ -1799,6 +1821,66 @@
       "files": "gps_localize_msgs/msg/WebConnect.msg, web_server.py, docs/topics.md",
       "test": "rendered the characters `ros2 topic echo --field qr_ascii` printed and scanned them: reads back as the robot's address. Plain echo reads back as nothing.",
       "result": "latched /gps_localize/web/connect, refreshed when the address changes. --field is required: plain echo puts a blank line between every row, which doubles the QR's row spacing and stops it scanning while still looking exactly like a QR. Noted at the top of the .msg."
+    },
+    {
+      "id": "E19",
+      "phase": "E",
+      "title": "IMU was dead on every boot and reported itself healthy",
+      "needs": "ESP32+IMU",
+      "state": "DONE",
+      "files": "firmware/lib/imu/imu_bno085.h, tools/qc.py",
+      "test": "on hardware: sensor_health 0x0B -> 0x0A, yaw_rate went from a flat 0.000 to live values, speed_source from 'motor model only' to 'IMU + motor model'",
+      "result": "update() guarded on ok_, which means 'data is fresh' - so the first gap longer than 500 ms stopped the driver polling the sensor ever again. The BNO085 always takes longer than that to start reporting, so it happened every boot. Guards on begun_ now; checked as text by qc.py because the Adafruit library is not mocked."
+    },
+    {
+      "id": "E20",
+      "phase": "E",
+      "title": "A GPS with no fix was believed",
+      "needs": "ESP32+GPS",
+      "state": "DONE",
+      "files": "firmware/src/main.cpp, firmware/test/test_native/test_fusion.cpp",
+      "test": "regression test: told the GPS is unusable, a stationary robot stays stationary",
+      "result": "gps_ok was freshness alone, which only says the receiver is talking. Indoors it reported 0 satellites, HDOP 99.99, fix quality 0 and a ground speed of 2.53 m/s, and the estimator took it. Now requires fix_quality > 0 and satellites > 0. Stationary drift went 1.500 -> 0.181 m/s."
+    },
+    {
+      "id": "T110",
+      "phase": "W",
+      "title": "Sensor and wheel geometry offsets (lever arm)",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "firmware/config/robot.h, firmware/src/estimator/lever_arm.h, test_lever_arm.cpp, src/main.cpp",
+      "test": "7 tests including a full-circle spin at 15 degree steps: the turning centre must not move",
+      "result": "two casters mean the robot turns about the drive axle, and neither the GPS nor the IMU is there. Offsets default to zero, where the correction is the identity, so an unmeasured robot is unaffected. MEASURING the offsets is what still needs the hardware."
+    },
+    {
+      "id": "T111",
+      "phase": "W",
+      "title": "Map pans and zooms",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "web/app.js, web/index.html, web/style.css",
+      "test": "served by the robot and verified over HTTP; app.js parses",
+      "result": "hold-and-drag to pan, wheel and pinch to zoom about the cursor, + / - buttons for phones"
+    },
+    {
+      "id": "T112",
+      "phase": "D2",
+      "title": "Expose the geometry offsets in the web settings",
+      "needs": "PC",
+      "state": "TODO",
+      "files": "config/robot.yaml, configstore.py, web/",
+      "test": "change an offset in the UI and see the correction change",
+      "result": "firmware side done; the web-editable half is the parameter-registry work in T67-T69"
+    },
+    {
+      "id": "E21",
+      "phase": "E",
+      "title": "Measure the real GPS and IMU offsets on the built robot",
+      "needs": "ROBOT",
+      "state": "HW-BLOCKED",
+      "files": "firmware/config/robot.h",
+      "test": "spin the robot on the spot with a GPS fix: a correct offset keeps the fix stationary",
+      "result": "code and tests are in place and default to zero; only the tape-measure numbers are missing"
     }
   ]
 }
