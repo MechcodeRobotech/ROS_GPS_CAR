@@ -12,7 +12,7 @@ python3 -m pyflakes gps_localize_ws/src/gps_localize/gps_localize/*.py webapp/vi
 source /opt/ros/humble/setup.bash        # micro_ros_platformio needs $ROS_DISTRO
 cd firmware
 pio run -e wifi                          # ☐ compiles with no errors and no warnings
-pio test -e native                       # ☐ 155 host tests pass
+pio test -e native                       # ☐ 167 host tests pass
 ```
 
 `tools/qc.py` is the cheap one to run first — it checks the things a compiler

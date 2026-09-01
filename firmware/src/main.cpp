@@ -559,6 +559,24 @@ static void publishTelemetry(RunState state) {
   // a panic and a person pressing reset are indistinguishable in the logs
   // without this - and a 3.3 V rail sagging under Wi-Fi bursts shows up as
   // ESP_RST_BROWNOUT here and nowhere else.
+  // Die temperature, if this chip actually has a usable sensor.
+  //
+  // The original ESP32 has one that Espressif disabled after early silicon:
+  // temperatureRead() still answers, but on most WROOM-32 boards it returns a
+  // fixed value near 53 C however hot the chip gets. A constant is WORSE than
+  // no reading, because it looks like data - so believe it only once it has
+  // been seen to move, and report NaN until then.
+  {
+    static float  first_temp = NAN;
+    static bool   temp_moves = false;
+    const float t_now = temperatureRead();
+    if (isnan(first_temp)) {
+      first_temp = t_now;
+    } else if (!temp_moves && fabsf(t_now - first_temp) > 0.4f) {
+      temp_moves = true;                  // it changed, so it is measuring
+    }
+    m.esp32_temp_c = temp_moves ? t_now : NAN;
+  }
   m.reset_reason = (float)esp_reset_reason();
   m.uptime_s     = (float)(millis() / 1000.0f);
   m.pack_valid = power.packValid() ? 1.0f : 0.0f;         // 0 = rail unpowered, pack unknown

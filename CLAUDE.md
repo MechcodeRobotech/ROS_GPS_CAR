@@ -50,7 +50,7 @@ broke exactly once.
 ```bash
 python3 tools/qc.py                        # cross-file contracts
 python3 tools/port_qc.py --static-only .   # port gate
-cd firmware && pio test -e native          # 155 host tests
+cd firmware && pio test -e native          # 167 host tests
 pio run -e wifi                            # firmware still builds
 ```
 

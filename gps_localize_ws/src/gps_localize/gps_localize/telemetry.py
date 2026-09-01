@@ -67,6 +67,7 @@ FIELDS = (
     'firmware_version',   # 44 major*100+minor, 0 from a board too old to send it
     'reset_reason',       # 45 esp_reset_reason(): 9 = brownout, 4 = panic
     'uptime_s',           # 46 seconds since boot
+    'esp32_temp_c',       # 47 die temperature, NaN if the chip has no usable sensor
 )
 
 # Derived, never hand-written. This was a literal 44 while FIELDS had grown to

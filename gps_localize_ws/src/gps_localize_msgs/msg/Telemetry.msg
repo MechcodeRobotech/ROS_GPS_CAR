@@ -67,3 +67,17 @@ float32 reset_reason
 # Seconds since boot. A board that is quietly resetting has a short uptime that
 # keeps starting over, which is invisible if you only ever look at live values.
 float32 uptime_s
+
+# ESP32 die temperature, degrees C, or NaN when the chip has no usable sensor.
+#
+# The original ESP32 (WROOM-32) carries a temperature sensor that Espressif
+# disabled after early silicon: temperatureRead() still answers, but on most
+# boards it returns a fixed value near 53 C no matter how hot the chip is. A
+# constant is worse than nothing, because it looks like a reading - so the
+# firmware checks whether it MOVES before believing it, and reports NaN when it
+# does not.
+#
+# Note what this is not: the die is not the regulator. The AMS1117 dropping
+# 5 V to 3.3 V is the part that actually runs hot, and nothing on the board
+# measures it.
+float32 esp32_temp_c
