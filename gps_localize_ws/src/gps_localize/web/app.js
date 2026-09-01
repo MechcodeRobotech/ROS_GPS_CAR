@@ -1372,7 +1372,7 @@
     state.poseTool.armed = !state.poseTool.armed;
     state.poseTool.drag = null;
     $('mapPoseTool').classList.toggle('armed', state.poseTool.armed);
-    canvas.style.cursor = state.poseTool.armed ? 'cell' : 'crosshair';
+    canvas.style.cursor = state.poseTool.armed ? 'cell' : 'grab';
     $('poseHint').innerHTML = state.poseTool.armed
       ? '<b>พร้อมแล้ว:</b> กดค้างบนแผนที่ตรงที่หุ่นอยู่ ลากไปทางที่หุ่นหันหน้า แล้วปล่อย · กดปุ่มอีกครั้งเพื่อยกเลิก'
       : 'ใช้เมื่อ <b>ไม่มีสัญญาณ GPS</b> (ทดสอบในร่ม): กดปุ่มด้านบนก่อน แล้วกดค้างบนแผนที่ตรงที่หุ่นอยู่ ' +
@@ -1441,6 +1441,115 @@
 
   canvas.addEventListener('pointerup', finishPose);
   canvas.addEventListener('pointercancel', function () { state.poseTool.drag = null; drawMap(); });
+
+  /* ------------------------------------------------- pan and zoom ---------
+   * The map used to be fixed: it auto-fitted once and there was no way to look
+   * anywhere else, so anything outside that box was simply unreachable.
+   *
+   * Hold and drag to move it, wheel to zoom, two fingers to pinch. The pose
+   * tool owns the drag while it is armed, so panning stands aside rather than
+   * the two fighting over one gesture.
+   *
+   * Zooming about the CURSOR rather than the centre is what makes it feel like
+   * a map - the point under your finger stays under your finger. */
+  var MIN_SCALE = 0.15, MAX_SCALE = 400;
+  var pan = null;
+  var pointers = {};
+  var pinchStart = null;
+
+  function clampScale(value) {
+    return Math.max(MIN_SCALE, Math.min(MAX_SCALE, value));
+  }
+
+  function screenToWorld(sx, sy) {
+    return {
+      x: view.cx + (sx - canvas.width / 2) / view.scale,
+      y: view.cy - (sy - canvas.height / 2) / view.scale
+    };
+  }
+
+  function zoomAbout(sx, sy, factor) {
+    var before = screenToWorld(sx, sy);
+    view.scale = clampScale(view.scale * factor);
+    var after = screenToWorld(sx, sy);
+    view.cx += before.x - after.x;
+    view.cy += before.y - after.y;
+    state.fitRequested = false;        // the operator is driving the view now
+    drawMap();
+  }
+
+  canvas.addEventListener('wheel', function (event) {
+    event.preventDefault();
+    var at = eventToCanvas(event);
+    // Only the SIGN of deltaY: a trackpad and a mouse wheel report wildly
+    // different magnitudes, and using them directly makes one of the two
+    // unusable.
+    zoomAbout(at.x, at.y, event.deltaY < 0 ? 1.15 : 1 / 1.15);
+  }, { passive: false });
+
+  canvas.addEventListener('pointerdown', function (event) {
+    pointers[event.pointerId] = eventToCanvas(event);
+    if (Object.keys(pointers).length === 2) {
+      var pts = Object.keys(pointers).map(function (k) { return pointers[k]; });
+      pinchStart = {
+        dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y),
+        scale: view.scale
+      };
+      pan = null;                      // a second finger ends any pan
+      return;
+    }
+    if (state.poseTool.armed) return;  // the pose tool owns this gesture
+    pan = { at: eventToCanvas(event), cx: view.cx, cy: view.cy };
+    canvas.style.cursor = 'grabbing';
+    canvas.setPointerCapture(event.pointerId);
+  });
+
+  canvas.addEventListener('pointermove', function (event) {
+    if (!(event.pointerId in pointers)) return;
+    pointers[event.pointerId] = eventToCanvas(event);
+
+    if (pinchStart && Object.keys(pointers).length >= 2) {
+      var pts = Object.keys(pointers).map(function (k) { return pointers[k]; });
+      var dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      if (dist > 4 && pinchStart.dist > 4) {
+        var mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+        var target = clampScale(pinchStart.scale * (dist / pinchStart.dist));
+        zoomAbout(mid.x, mid.y, target / view.scale);
+      }
+      return;
+    }
+
+    if (!pan) return;
+    var now = eventToCanvas(event);
+    view.cx = pan.cx - (now.x - pan.at.x) / view.scale;
+    view.cy = pan.cy + (now.y - pan.at.y) / view.scale;
+    state.fitRequested = false;
+    drawMap();
+  });
+
+  function endPan(event) {
+    delete pointers[event.pointerId];
+    if (Object.keys(pointers).length < 2) pinchStart = null;
+    if (Object.keys(pointers).length === 0) {
+      pan = null;
+      if (!state.poseTool.armed) canvas.style.cursor = 'grab';
+    }
+  }
+  canvas.addEventListener('pointerup', endPan);
+  canvas.addEventListener('pointercancel', endPan);
+  canvas.addEventListener('pointerleave', endPan);
+
+  /* Buttons too: a phone has no wheel, and pinching a small map is fiddly. */
+  if ($('mapZoomIn')) {
+    $('mapZoomIn').addEventListener('click', function () {
+      zoomAbout(canvas.width / 2, canvas.height / 2, 1.4);
+    });
+  }
+  if ($('mapZoomOut')) {
+    $('mapZoomOut').addEventListener('click', function () {
+      zoomAbout(canvas.width / 2, canvas.height / 2, 1 / 1.4);
+    });
+  }
 
   /* --------------------------------------------- map hover and picking */
   /* Hover (or drag a finger) anywhere on the map to read the real latitude and

@@ -15,6 +15,7 @@ int run_motor_model_tests(void);
 int run_safety_gps_tests(void);
 int run_fusion_tests(void);
 int run_pose_ekf_tests(void);
+int run_lever_arm_tests(void);
 
 int main(int, char **) {
     UNITY_BEGIN();
@@ -25,5 +26,6 @@ int main(int, char **) {
     run_safety_gps_tests();
     run_fusion_tests();
     run_pose_ekf_tests();
+    run_lever_arm_tests();
     return UNITY_END();
 }

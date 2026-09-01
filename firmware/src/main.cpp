@@ -49,6 +49,7 @@
 #include <motor_model.h>
 #include <state_estimator.h>
 #include <pose_ekf.h>
+#include <lever_arm.h>
 #include <drive_controller.h>
 #include <safety_manager.h>
 #if defined(MICROROS_TRANSPORT_WIFI)
@@ -177,8 +178,19 @@ static void fixToLocal(double lat, double lon) {
     datum_set = true;
   }
   const double clat = cos(datum_lat * 0.017453292519943295);
-  fix_east  = (float)((lon - datum_lon) * 111320.0 * clat);
-  fix_north = (float)((lat - datum_lat) * 110540.0);
+  const float antenna_east  = (float)((lon - datum_lon) * 111320.0 * clat);
+  const float antenna_north = (float)((lat - datum_lat) * 110540.0);
+
+  // The receiver reports where the ANTENNA is. The robot turns about the drive
+  // axle, and on a two-caster machine the antenna is nowhere near it, so every
+  // turn sweeps the antenna through an arc the filter would otherwise read as
+  // real movement. Move the reading back to the turning centre before anything
+  // else sees it. With the offsets left at zero this is the identity.
+  LeverArm gps_arm;
+  gps_arm.x = GPS_OFFSET_X_M;
+  gps_arm.y = GPS_OFFSET_Y_M;
+  leverArmToCentre(antenna_east, antenna_north, estimator.headingDeg(),
+                   gps_arm, &fix_east, &fix_north);
 }
 
 static bool createEntities();
