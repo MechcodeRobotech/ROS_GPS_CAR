@@ -590,7 +590,19 @@ static void controlCallback(rcl_timer_t *timer, int64_t) {
   //----------------------------- estimation ----------------------------//
   const float imu_yaw   = wrap360f(IMU_YAW_TO_COMPASS_SIGN * imu.yawDeg() + IMU_YAW_OFFSET_DEG);
   const float yaw_rate  = IMU_GYRO_Z_SIGN * imu.gyroZ();   // CCW positive, ROS convention
-  const bool  gps_ok    = gps.fresh(GPS_STALE_MS);
+  // A receiver with NO FIX still streams NMEA continuously, and the speed and
+  // course in those sentences are meaningless - often stale, sometimes garbage.
+  // Freshness alone is therefore not enough to trust them: it says the receiver
+  // is talking, not that it knows where it is.
+  //
+  // Measured on the bench with the antenna indoors: 0 satellites, HDOP 99.99,
+  // fix quality 0 - and a reported ground speed of 2.53 m/s. The estimator
+  // believed it, so a board sitting still on a desk reported drifting at up to
+  // 1.5 m/s. With a motor driver attached the controller would have acted on
+  // that, and OTA refused every update because it thought the robot was moving.
+  const bool  gps_ok    = gps.fresh(GPS_STALE_MS)
+                          && gps.fixQuality() > 0
+                          && gps.satellites() > 0;
   const bool  course_ok = gps.courseValid() && gps.speedMps() > estimator.config().align_min_mps;
 
   StateEstimator::Inputs est_in;
@@ -990,6 +1002,20 @@ void setup() {
   pinMode(INA226_ALERT_PROCESSOR, INPUT);
 
   Wire.begin(SDA_PIN, SCL_PIN, I2C_CLOCK_HZ);
+
+  // Which devices are actually on the bus, by address. Worth printing at every
+  // boot: "the sensor initialised" and "the sensor is answering" are different
+  // claims, and only this distinguishes a wiring fault from a driver one.
+  {
+    Serial.print("[I2C] devices:");
+    uint8_t found = 0;
+    for (uint8_t a = 0x08; a < 0x78; ++a) {
+      Wire.beginTransmission(a);
+      if (Wire.endTransmission() == 0) { Serial.printf(" 0x%02X", a); ++found; }
+    }
+    if (!found) Serial.print(" NONE - check SDA/SCL and power");
+    Serial.println();
+  }
 
   // MODE_BOTH gives the game rotation vector (smooth, relative) *and* the
   // magnetometer-referenced one, so the fallback chain has a spare absolute source

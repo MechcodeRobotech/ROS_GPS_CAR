@@ -175,7 +175,40 @@ void test_sim_is_deterministic(void) {
     }
 }
 
+void test_a_receiver_with_no_fix_must_not_move_the_speed_estimate(void) {
+    // A GPS with no fix still streams NMEA, and the speed field in those
+    // sentences is meaningless. Measured on the bench: 0 satellites, HDOP
+    // 99.99, fix quality 0, and a reported ground speed of 2.53 m/s. A board
+    // sitting still then reported drifting at up to 1.5 m/s.
+    //
+    // main.cpp gates gps_ok on the fix now, so this asserts what the estimator
+    // must do with the result: told the GPS is not usable, a stationary robot
+    // stays stationary no matter what number came with it.
+    StateEstimator est;
+    StateEstimator::Config cfg;
+    cfg.gps_tau_s = 1.5f;
+    cfg.model_tau_s = 1.0f;
+    cfg.max_speed_mps = 3.0f;
+    est.begin(cfg);
+
+    StateEstimator::Inputs in;
+    in.dt = 0.02f;
+    in.imu_ok = true;
+    in.imu_yaw = 0.0f;
+    in.yaw_rate = 0.0f;
+    in.acc_fwd = 0.0f;
+    in.gps_ok = false;                 // no fix, so the numbers below are junk
+    in.gps_speed = 2.53f;              // exactly what the receiver reported
+    in.gps_course = 148.9f;
+    in.gps_course_ok = false;
+    in.model_mps = 0.0f;
+
+    for (int i = 0; i < 500; ++i) est.update(in);   // 10 seconds
+    TEST_ASSERT_FLOAT_WITHIN(0.05f, 0.0f, est.speed());
+}
+
 int run_fusion_tests(void) {
+    RUN_TEST(test_a_receiver_with_no_fix_must_not_move_the_speed_estimate);
     RUN_TEST(test_sim_is_deterministic);
     RUN_TEST(test_sim_heading_converges_while_driving);
     RUN_TEST(test_sim_heading_survives_a_disturbed_compass);

@@ -991,6 +991,52 @@ def check_test_count_claims():
           % (actual, wrong or ''))
 
 
+
+def check_imu_guard_is_presence_not_freshness():
+    """The IMU's update() must gate on presence, never on data freshness.
+
+    imu_bno085.h needs an early return so it cannot call into the Adafruit
+    driver when begin() failed - without it the ESP32 dies in shtp_service. The
+    trap is which flag it uses. ok_ means "an event arrived recently", so the
+    first gap longer than stale_ms_ clears it, and a guard written `if (!ok_)`
+    then stops the driver polling the sensor EVER again.
+
+    The BNO085 takes well over 500 ms to begin reporting, so that gap happens on
+    every boot. Seen on hardware: the sensor answering at 0x4A, begin()
+    succeeding, and the estimator reporting imu_missing forever after - with the
+    robot falling back to a motor model that drifted to 1.5 m/s while standing
+    still.
+
+    Cannot be caught by the host tests, because the Adafruit library is not
+    mocked. So it is checked as text.
+    """
+    section('IMU guard uses presence, not freshness')
+    f = ROOT / 'firmware' / 'lib' / 'imu' / 'imu_bno085.h'
+    body = read(f)
+    if not body:
+        return
+
+    inside, guard = False, None
+    for line in body.splitlines():
+        if 'bool update(' in line:
+            inside = True
+            continue
+        if inside:
+            stripped = line.strip()
+            if stripped.startswith('if (!') and 'return false;' in stripped:
+                guard = stripped
+                break
+            if stripped.startswith('}'):
+                break
+
+    check(guard is not None, 'update() still has its crash guard')
+    if guard:
+        check('ok_' not in guard,
+              'the guard tests presence, not freshness  [%s]' % guard[:60])
+        check('begun_' in guard,
+              'the guard tests begun_  [%s]' % guard[:60])
+
+
 def main():
     main_cpp = read(FW / 'src' / 'main.cpp')
     telemetry_py = read(PKG / 'gps_localize' / 'telemetry.py')
@@ -1005,6 +1051,7 @@ def main():
     check_docker_image_fresh()
     check_telemetry_consumers()
     check_test_count_claims()
+    check_imu_guard_is_presence_not_freshness()
     check_telemetry(main_cpp, telemetry_py)
     check_config_selectors(main_cpp, telemetry_py, web_py)
     check_topics(main_cpp, py_all)

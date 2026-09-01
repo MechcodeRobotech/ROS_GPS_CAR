@@ -34,9 +34,14 @@ public:
     use_mag_     = (mode == MODE_MAG);
     interval_us_ = report_interval_us;
 
-    if (!bno_.begin_I2C(addr_, wire_)) { ok_ = false; return false; }
+    if (!bno_.begin_I2C(addr_, wire_)) { begun_ = false; ok_ = false; return false; }
     enableReports();
-    ok_ = true;
+    begun_ = true;
+    // NOT ok_ yet. begun_ means the sensor answered and the driver is
+    // initialised; ok_ means the data is FRESH. Only the first event can make
+    // the second true, and the BNO085 takes a while to produce one.
+    ok_ = false;
+    last_event_ms_ = millis();
     return true;
   }
 
@@ -52,7 +57,19 @@ public:
     // rebooted roughly every 15 s, forever. It matters with an IMU fitted
     // too - a loose connector or an I2C fault at boot turns a robot that
     // should degrade into one that crash-loops.
-    if (!ok_) return false;
+    // Guard on begun_, NOT on ok_. Conflating the two cost the IMU entirely:
+    // ok_ means "data is fresh", so the first gap longer than stale_ms_ made it
+    // false, and this early return then stopped the driver polling the sensor
+    // ever again. One late report at start-up latched the IMU dead until reboot.
+    //
+    // The BNO085 takes well over 500 ms to start reporting after
+    // enableReport(), so that gap happened on EVERY boot. Seen on hardware: the
+    // sensor answering at 0x4A, begin() succeeding, and sensor_health still
+    // saying imu_missing forever afterwards.
+    //
+    // begun_ is what the crash guard actually needs anyway - it only has to
+    // know begin() succeeded, so the driver's SHTP state is initialised.
+    if (!begun_) return false;
     if (bno_.wasReset()) { resets_++; enableReports(); }
 
     bool got = false;
@@ -163,6 +180,7 @@ private:
   uint32_t interval_us_ = 10000;
   uint32_t stale_ms_ = 500;
   uint32_t last_event_ms_ = 0;
+  bool     begun_ = false;      // begin() succeeded; never cleared after
   uint16_t resets_ = 0;
   bool     ok_ = false;
 
