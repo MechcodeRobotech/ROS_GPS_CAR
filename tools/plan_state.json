@@ -468,6 +468,14 @@
       "files": "firmware/lib/imu/imu_bno085.h, firmware/src/main.cpp, firmware/src/estimator/lever_arm.h, web/*",
       "promoted": true,
       "problem": ""
+    },
+    {
+      "ts": "2026-09-02 03:43",
+      "step": 9,
+      "what": "Made plan-first a standing rule in CLAUDE.md: requests become tasks before they are built, and the plan is worked in order with in-progress work finished first.",
+      "files": "CLAUDE.md",
+      "promoted": true,
+      "problem": ""
     }
   ],
   "problems": [
@@ -1881,6 +1889,16 @@
       "files": "firmware/config/robot.h",
       "test": "spin the robot on the spot with a GPS fix: a correct offset keeps the fix stationary",
       "result": "code and tests are in place and default to zero; only the tape-measure numbers are missing"
+    },
+    {
+      "id": "T113",
+      "phase": "W",
+      "title": "Working rule: every request enters the plan first, and the plan is worked in order",
+      "needs": "PC",
+      "state": "DONE",
+      "files": "CLAUDE.md",
+      "test": "the rule is in CLAUDE.md, so it travels with the repository rather than living in one conversation",
+      "result": "anything that changes or adds to the program becomes a task BEFORE it is built. Then: finish what is IN PROGRESS, then TODO in plan order, new requests at the end. Only two things jump the queue - something broken right now, and something the user explicitly asks for next - and which of the two it is has to be said out loud. Hardware-blocked work is still written and tested as far as it can go, so only the measurement is left when the part arrives."
     }
   ]
 }

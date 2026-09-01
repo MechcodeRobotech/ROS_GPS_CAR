@@ -73,6 +73,33 @@ theoretical gap: moving telemetry to a named message left five nodes reading
 other check was green throughout. The probe publishes synthetic firmware frames
 so those paths actually run here.
 
+## Everything goes through the plan, and the plan is worked in order
+
+**Any request that changes the program or adds to it is written into
+`plan.html` before it is built.** Not after, and not instead of building it -
+the task exists first, so there is a record of what was asked even if the work
+is interrupted, and so nothing quietly turns into "I remember you wanted
+something like that".
+
+Then the plan is worked **in order**:
+
+1. Finish what is already IN PROGRESS. A half-finished task is the most
+   expensive kind - the context for it is loaded now and will not be later.
+2. Then the TODO tasks, in plan order.
+3. New requests join the end unless they are blocking something above.
+
+Two things override the order, and only two: something that is **broken right
+now**, and something the user explicitly asks to be done next. Say which of the
+two is happening when the order is broken, so it is visible rather than
+implicit.
+
+**Work that needs hardware is still written first.** Mark it `HW-BLOCKED` with
+the part it needs, but implement and test everything about it that does not
+need the part - the geometry, the maths, the failure handling - so that when the
+hardware arrives the only outstanding step is measuring or confirming. The
+lever-arm offsets are the pattern: the correction is written and has seven
+tests, and all that is missing is a tape measure on the real robot.
+
 ## Where work happens
 
 - Edit in `_work/`, never the real folders directly.
