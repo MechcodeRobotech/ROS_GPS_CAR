@@ -13,6 +13,7 @@
  *  │ control.h      │ Loop rates, PID gains, ramps, estimator tuning.      │
  *  │ safety.h       │ Watchdog timeouts, stop reasons, LED patterns.       │
  *  │ network.h      │ Wi-Fi, micro-ROS agent hostname/IP, ROS domain.      │
+ *  │ version.h      │ Firmware version, published so the host can compare. │
  *  └────────────────┴──────────────────────────────────────────────────────┘
  *
  * Most values here also exist in the YAML files on the ROS side, where the
@@ -33,5 +34,6 @@
     #include "control.h"    // rates, PID, estimator
     #include "safety.h"     // watchdogs, stop flags
     #include "network.h"    // Wi-Fi + micro-ROS agent
+    #include "version.h"    // what firmware this is
 
 #endif // CONFIG_H

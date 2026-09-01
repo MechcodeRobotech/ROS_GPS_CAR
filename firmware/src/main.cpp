@@ -552,6 +552,15 @@ static void publishTelemetry(RunState state) {
   m.fan_v = power.fanVoltage();                           // draft_5: fan rail sensor
   m.fan_a = power.fanCurrent();
   m.esp32_rail_v = power.esp32RailVoltage();              // ESP32 +5 V rail health
+  // So the host can say when the board is behind it. Four bytes, no new
+  // publisher, no string handling, no extra type support in the image.
+  m.firmware_version = (float)FIRMWARE_VERSION;
+  // How the board last restarted, and how long it has been up. A brownout,
+  // a panic and a person pressing reset are indistinguishable in the logs
+  // without this - and a 3.3 V rail sagging under Wi-Fi bursts shows up as
+  // ESP_RST_BROWNOUT here and nowhere else.
+  m.reset_reason = (float)esp_reset_reason();
+  m.uptime_s     = (float)(millis() / 1000.0f);
   m.pack_valid = power.packValid() ? 1.0f : 0.0f;         // 0 = rail unpowered, pack unknown
   m.pos_sigma_m = pose_ekf.positionSigma();               // 1-sigma position uncertainty [m]
   m.pos_anchored = pose_ekf.hasFix() ? 1.0f : 0.0f;       // has the EKF ever been anchored

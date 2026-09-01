@@ -272,6 +272,8 @@ class Viewer:
         route('POST', '/api/heartbeat', lambda body, query: (200, {'ok': True, 'state': 'VIEWER', 'estop': False}))
         route('GET', '/api/topics', self.topics_list)
         route('GET', '/api/connect', self.api_connect)
+        route('GET', '/api/bugreport', self.api_bugreport_list)
+        route('POST', '/api/bugreport', self.api_bugreport_save)
         route('GET', '/api/qr', self.api_qr)
         route('GET', '/api/topic', self.topic_echo)
         route('GET', '/api/config', self.config_get)
@@ -416,6 +418,48 @@ class Viewer:
         ('/gps_localize/log', 'std_msgs/msg/String', 1, 1),
         ('/gps_localize/safety', 'std_msgs/msg/Int32', 1, 1),
     ]
+
+    # Bug reports work in the viewer too - the whole point is capturing the
+    # moment something went wrong, and on Windows that moment is just as likely
+    # to happen in front of the viewer as in front of the robot.
+    def _bugreport_dir(self):
+        path = os.path.expanduser('~/.gps_localize/bugreports')
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def api_bugreport_save(self, body, _query):
+        text = str(body.get('text', '')).strip()
+        if not text:
+            return 400, {'ok': False, 'error': 'say what happened, even briefly'}
+        import json as _json, time as _time
+        stamp = _time.strftime('%Y%m%d_%H%M%S')
+        report = {'saved_at': _time.strftime('%Y-%m-%d %H:%M:%S'),
+                  'text': text[:4000], 'source': 'windows viewer',
+                  'telemetry': self.telemetry()}
+        name = 'report_%s.json' % stamp
+        try:
+            with open(os.path.join(self._bugreport_dir(), name), 'w') as handle:
+                _json.dump(report, handle, indent=2, default=str)
+        except OSError as exc:
+            return 500, {'ok': False, 'error': 'could not save: %s' % exc}
+        return 200, {'ok': True, 'saved': name, 'where': self._bugreport_dir()}
+
+    def api_bugreport_list(self, _body, _query):
+        import json as _json
+        try:
+            names = sorted(os.listdir(self._bugreport_dir()), reverse=True)
+        except OSError as exc:
+            return 500, {'ok': False, 'error': str(exc)}
+        out = []
+        for name in names[:50]:
+            try:
+                with open(os.path.join(self._bugreport_dir(), name)) as handle:
+                    data = _json.load(handle)
+                out.append({'file': name, 'saved_at': data.get('saved_at'),
+                            'text': (data.get('text') or '')[:200]})
+            except (OSError, ValueError):
+                out.append({'file': name, 'saved_at': None, 'text': '(unreadable)'})
+        return 200, {'ok': True, 'reports': out, 'where': self._bugreport_dir()}
 
     def api_connect(self, _body, _query):
         """Same shape as the robot server, so the Help tab needs no special case.

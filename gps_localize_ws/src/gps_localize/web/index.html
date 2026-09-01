@@ -350,6 +350,21 @@
     <h3>บันทึกเหตุการณ์ / Event log</h3>
     <div id="logBox" class="logbox" role="log" aria-live="polite"></div>
   </div>
+
+  <div class="card">
+    <h3>แจ้งปัญหา / Report a problem</h3>
+    <p class="note">
+      บันทึกลงเครื่องนี้ พร้อมสถานะหุ่นยนต์ตอนนี้ — ไม่ได้ส่งออกไปไหน /
+      Saved on this machine together with the robot's current state. Nothing is
+      sent anywhere, so it works in a field with no signal.
+    </p>
+    <textarea id="bugText" rows="3" placeholder="เกิดอะไรขึ้น / what happened?"></textarea>
+    <div class="row">
+      <button class="btn" id="bugSave">บันทึกรายงาน / Save report</button>
+      <span id="bugResult" class="note"></span>
+    </div>
+    <div id="bugList" class="logbox" aria-live="polite"></div>
+  </div>
 </section>
 
 <section id="tab-help" class="tabpage">

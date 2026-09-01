@@ -28,6 +28,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/EstimatorStatus.msg"
   "msg/SafetyStatus.msg"
   "msg/WebConnect.msg"
+  "msg/FirmwareInfo.msg"
   DEPENDENCIES std_msgs
 )
 

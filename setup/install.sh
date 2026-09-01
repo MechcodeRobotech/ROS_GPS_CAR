@@ -9,7 +9,23 @@
 #   ./setup/install.sh --uninstall      remove the service and the ROS build
 #
 # Or straight from GitHub:
-#   curl -fsSL https://raw.githubusercontent.com/MechcodeRobotech/ROS_GPS_CAR/workspace/setup/install.sh | bash
+#   THE REPOSITORY IS PRIVATE, so the bare one-liner below returns 404 for
+#   anyone who is not authenticated - including the machine you are installing
+#   onto. Verified in a clean container: curl (22) error 404.
+#
+#   With the GitHub CLI already logged in:
+#       gh repo clone MechcodeRobotech/ROS_GPS_CAR -- -b workspace ~/GPS_Localize
+#       bash ~/GPS_Localize/setup/install.sh
+#
+#   Or with a personal access token:
+#       curl -fsSL -H "Authorization: token $GITHUB_TOKEN" \
+#           https://raw.githubusercontent.com/MechcodeRobotech/ROS_GPS_CAR/workspace/setup/install.sh | bash
+#
+#   Or copy the checkout across by any means and run setup/install.sh from it -
+#   the installer itself needs nothing from GitHub.
+#
+#   Once the repository is public this works as written:
+#       curl -fsSL https://raw.githubusercontent.com/MechcodeRobotech/ROS_GPS_CAR/workspace/setup/install.sh | bash
 #
 # WHY --dry-run EXISTS
 # Most of this needs root, and a script that can only be exercised by running
@@ -183,6 +199,21 @@ http://packages.ros.org/ros2/ubuntu \$(. /etc/os-release && echo \$UBUNTU_CODENA
         fail "no workspace at $WS - run this from inside the project, or clone it first"
         return
     fi
+    # A checkout COPIED from another machine - over a network share, on a USB
+    # stick, out of a backup - brings build/ and install/ with it, and those
+    # hold absolute paths from the machine that made them. colcon then stops
+    # with "CMakeCache.txt directory is different than", naming a path that does
+    # not exist here, and the install dies at a step that had nothing to do with
+    # the user. Found by installing a copied tree in a clean container.
+    #
+    # Only stale caches are removed, and only when they really do point
+    # somewhere else, so a normal rebuild keeps its cache and stays fast.
+    local cache="$WS/build/gps_localize_msgs/CMakeCache.txt"
+    if [ -f "$cache" ] && ! grep -q "CMAKE_HOME_DIRECTORY:INTERNAL=$WS/src/gps_localize_msgs" "$cache" 2>/dev/null; then
+        warn "this workspace was built on another machine - clearing build/ and install/"
+        run rm -rf "$WS/build" "$WS/install" "$WS/log"
+    fi
+
     run bash -c "source /opt/ros/$ROS_DISTRO_WANT/setup.bash && \
         cd '$WS' && rosdep install --from-paths src --ignore-src -y \
           --skip-keys micro_ros_agent 2>/dev/null || true"

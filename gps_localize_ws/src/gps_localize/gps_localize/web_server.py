@@ -328,6 +328,8 @@ class WebServerNode(Node):
         route('POST', '/api/nav', self.api_nav)
         route('POST', '/api/manual', self.api_manual)
         route('POST', '/api/estop', self.api_estop)
+        route('GET', '/api/bugreport', self.api_bugreport_list)
+        route('POST', '/api/bugreport', self.api_bugreport_save)
         route('POST', '/api/heartbeat', self.api_heartbeat)
         route('POST', '/api/mag_calib', self.api_mag_calib)
         route('POST', '/api/turn', self.api_turn)
@@ -346,6 +348,88 @@ class WebServerNode(Node):
     # There is no ros2 CLI on a Windows or Docker Desktop machine, so the
     # browser has to be able to show the whole graph: every topic, its type,
     # how many nodes are on each end, the rate, and the live value.
+
+    # ---------------------------------------------------------- bug reports
+    # Written to disk on this machine, not sent anywhere. A robot in a field has
+    # no route to a bug tracker, and the moment worth capturing is the moment it
+    # went wrong - not whenever someone next has signal. Reports survive a
+    # restart because they are files.
+
+    def _bugreport_dir(self):
+        path = os.path.expanduser('~/.gps_localize/bugreports')
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def api_bugreport_save(self, body, _query):
+        """Save what the person typed, plus the context they would have to guess.
+
+        The attached state is the point. "It stopped and I do not know why" is
+        the report people actually write, and the answer is almost always in the
+        stop flags, the firmware version or the last few log lines - all of
+        which are gone by the time anyone asks.
+        """
+        text = str(body.get('text', '')).strip()
+        if not text:
+            return 400, {'ok': False, 'error': 'say what happened, even briefly'}
+        if len(text) > 4000:
+            text = text[:4000]
+
+        with self._lock:
+            telemetry = dict(self.telemetry)
+            safety = dict(self.safety)
+            nav = dict(self.nav)
+            fix = dict(self.fix)
+            age = time.time() - self.telemetry_time if self.telemetry_time else None
+            logs = list(self.logs)[-100:]
+
+        stamp = time.strftime('%Y%m%d_%H%M%S')
+        report = {
+            'saved_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+            'text': text,
+            'firmware_version': telemetry.get('firmware_version'),
+            'run_state': telemetry.get('state_name'),
+            'stop_reasons': telemetry.get('stop_reasons'),
+            'telemetry_age_s': age,
+            'telemetry': telemetry,
+            'safety': safety,
+            'nav': nav,
+            'fix': fix,
+            'uptime_s': time.time() - self.started_at,
+            'log_tail': logs,
+        }
+        name = 'report_%s.json' % stamp
+        try:
+            with open(os.path.join(self._bugreport_dir(), name), 'w') as handle:
+                json.dump(report, handle, indent=2, default=str)
+        except OSError as exc:
+            return 500, {'ok': False, 'error': 'could not save: %s' % exc}
+
+        self.add_log('web', 'bug report saved: %s' % name)
+        return 200, {'ok': True, 'saved': name,
+                     'where': self._bugreport_dir(),
+                     'attached': sorted(k for k in report if k != 'text')}
+
+    def api_bugreport_list(self, _body, _query):
+        """What has been saved, newest first, so nothing is silently lost."""
+        try:
+            names = sorted(os.listdir(self._bugreport_dir()), reverse=True)
+        except OSError as exc:
+            return 500, {'ok': False, 'error': str(exc)}
+        out = []
+        for name in names[:50]:
+            path = os.path.join(self._bugreport_dir(), name)
+            try:
+                with open(path) as handle:
+                    data = json.load(handle)
+                out.append({'file': name,
+                            'saved_at': data.get('saved_at'),
+                            'text': (data.get('text') or '')[:200],
+                            'run_state': data.get('run_state'),
+                            'stop_reasons': data.get('stop_reasons')})
+            except (OSError, ValueError):
+                out.append({'file': name, 'saved_at': None,
+                            'text': '(unreadable)', 'run_state': None})
+        return 200, {'ok': True, 'reports': out, 'where': self._bugreport_dir()}
 
     def api_connect(self, _body, _query):
         """How to reach this web UI, so the Help tab never invents an address."""

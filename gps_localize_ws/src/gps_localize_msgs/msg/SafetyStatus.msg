@@ -32,3 +32,17 @@ bool relay_closed
 # runs for hours shows up here long before it shows up as a crash.
 uint32 free_heap_bytes
 uint32 loop_us
+
+# Why the board last restarted, and how long it has been up. Together these are
+# how a brownout is caught: a 3.3 V rail that sags under Wi-Fi bursts produces
+# ESP_RST_BROWNOUT and an uptime that keeps starting over, and nothing else in
+# the system would show it.
+uint8 reset_reason
+uint8 RESET_POWERON=1
+uint8 RESET_SOFTWARE=3
+uint8 RESET_PANIC=4
+uint8 RESET_INT_WATCHDOG=5
+uint8 RESET_TASK_WATCHDOG=6
+uint8 RESET_WATCHDOG=7
+uint8 RESET_BROWNOUT=9
+float32 uptime_s

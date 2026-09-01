@@ -49,3 +49,21 @@ float32 esp32_rail_v    # ESP32 +5 V rail, health of the processor buck
 float32 pack_valid    # 1 = pack voltage is measurable; 0 = motor rail
 float32 pos_sigma_m    # 1-sigma position uncertainty from the EKF [m].
 float32 pos_anchored    # 1 = the EKF has had at least one fix; 0 = the
+
+# major * 100 + minor, from firmware/config/version.h. Sent in the ordinary
+# frame because it is four bytes and needs no new publisher, no string handling
+# and no extra type support in the firmware image. 0 from a board too old to
+# send it - which is itself the answer to "how old is this board".
+float32 firmware_version
+
+# Why the board last restarted, from esp_reset_reason(). This is how a brownout
+# is told apart from a crash and from someone pressing reset - they look
+# identical in the logs otherwise, and a 3.3 V rail that sags under Wi-Fi bursts
+# shows up here as ESP_RST_BROWNOUT and nowhere else.
+#   1 POWERON  3 SW  4 PANIC  5 INT_WDT  6 TASK_WDT  7 WDT  8 DEEPSLEEP
+#   9 BROWNOUT  10 SDIO
+float32 reset_reason
+
+# Seconds since boot. A board that is quietly resetting has a short uptime that
+# keeps starting over, which is invisible if you only ever look at live values.
+float32 uptime_s

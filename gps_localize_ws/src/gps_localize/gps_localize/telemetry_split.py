@@ -37,16 +37,26 @@ import math
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import (QoSDurabilityPolicy, QoSHistoryPolicy,
+                       QoSProfile, QoSReliabilityPolicy)
 from sensor_msgs.msg import BatteryState
 
 from gps_localize import telemetry as tel
-from gps_localize_msgs.msg import (EstimatorStatus, GpsStatus, MotorStatus,
-                                   RailStatus, SafetyStatus, Telemetry)
+from gps_localize_msgs.msg import (EstimatorStatus, FirmwareInfo, GpsStatus,
+                                   MotorStatus, RailStatus, SafetyStatus,
+                                   Telemetry)
 
 NS = '/gps_localize'
 
 # A 3S LiPo, which is what the charge estimate below is scaled against.
 CELLS = 3
+
+# The firmware version this host was written alongside. Bump it in step with
+# firmware/config/version.h when the contract between them changes - a new
+# telemetry field, a changed unit. It is only ever used to say "the board is
+# behind"; nothing is refused on the strength of it, because an older board
+# still connects, still drives and still reports.
+HOST_EXPECTS_FIRMWARE = 104
 FULL_V = 12.6
 EMPTY_V = 10.7          # BATT_CUTOFF_V: the robot stops here, so call it empty
 
@@ -62,6 +72,16 @@ class TelemetrySplit(Node):
         self.pub_estimator = self.create_publisher(EstimatorStatus, NS + '/estimator', 5)
         self.pub_safety = self.create_publisher(SafetyStatus, NS + '/safety/status', 5)
         self.pub_gps = self.create_publisher(GpsStatus, NS + '/gps/status', 5)
+
+        # Latched: someone asking what firmware is on the board wants the answer
+        # now, not on the next frame. Only republished when it changes, so a
+        # board that is up to date costs nothing after the first message.
+        self.pub_firmware = self.create_publisher(
+            FirmwareInfo, NS + '/firmware/info',
+            QoSProfile(depth=1, history=QoSHistoryPolicy.KEEP_LAST,
+                       reliability=QoSReliabilityPolicy.RELIABLE,
+                       durability=QoSDurabilityPolicy.TRANSIENT_LOCAL))
+        self._last_version = None
 
         self.create_subscription(Telemetry, NS + '/telemetry', self.on_telemetry, 5)
 
@@ -89,6 +109,50 @@ class TelemetrySplit(Node):
         self.pub_estimator.publish(self._estimator(t))
         self.pub_safety.publish(self._safety(t))
         self.pub_gps.publish(self._gps(t))
+        self._maybe_publish_firmware(t)
+
+    def _maybe_publish_firmware(self, t):
+        """Say what firmware is on the board, and whether this host is ahead.
+
+        Only on change. A board that is up to date would otherwise republish an
+        identical message ten times a second for no reader's benefit.
+        """
+        raw = int(t.get('firmware_version', 0) or 0)
+        if raw == self._last_version:
+            return
+        self._last_version = raw
+
+        m = FirmwareInfo()
+        m.header.stamp = self.get_clock().now().to_msg()
+        m.version = raw
+        m.version_major = raw // 100
+        m.version_minor = raw % 100
+        m.host_expects = HOST_EXPECTS_FIRMWARE
+        m.board_is_older = 0 < raw < HOST_EXPECTS_FIRMWARE
+
+        if raw == 0:
+            # Zero is not "unknown" - it is the answer. A board that does not
+            # send a version predates the field, which makes it older than any
+            # version that does.
+            m.board_is_older = True
+            m.summary = ('the board does not report a version, so it predates '
+                         'firmware %d.%d - reflash to get the newer telemetry'
+                         % (HOST_EXPECTS_FIRMWARE // 100, HOST_EXPECTS_FIRMWARE % 100))
+        elif m.board_is_older:
+            m.summary = ('board firmware %d.%d, this host expects %d.%d - it still '
+                         'works, but newer fields will read as zero'
+                         % (m.version_major, m.version_minor,
+                            HOST_EXPECTS_FIRMWARE // 100, HOST_EXPECTS_FIRMWARE % 100))
+        elif raw > HOST_EXPECTS_FIRMWARE:
+            m.summary = ('board firmware %d.%d is NEWER than this host expects '
+                         '(%d.%d) - update the host with git pull'
+                         % (m.version_major, m.version_minor,
+                            HOST_EXPECTS_FIRMWARE // 100, HOST_EXPECTS_FIRMWARE % 100))
+        else:
+            m.summary = 'board firmware %d.%d, up to date' % (m.version_major, m.version_minor)
+
+        self.get_logger().info(m.summary)
+        self.pub_firmware.publish(m)
 
     # -------------------------------------------------------------- builders
     def _battery(self, t):
@@ -188,6 +252,8 @@ class TelemetrySplit(Node):
         m.relay_closed = bool(t.get('pack_valid', 0.0))
         m.free_heap_bytes = _u32(float(t.get('free_heap_kb', 0.0)) * 1024.0)
         m.loop_us = _u32(t.get('loop_us', 0.0))
+        m.reset_reason = _u8(t.get('reset_reason', 0.0))
+        m.uptime_s = float(t.get('uptime_s', 0.0))
         return m
 
     def _gps(self, t):

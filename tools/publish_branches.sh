@@ -276,6 +276,8 @@ WINCOMPOSE
 #!/bin/bash
 # One-command Docker install. No ROS 2 on the host.
 #
+#   NOTE: the repository is private, so this exact line returns 404 until it is
+#   made public. Clone with `gh repo clone` or pass a token - see setup/install.sh.
 #   curl -fsSL https://raw.githubusercontent.com/MechcodeRobotech/ROS_GPS_CAR/docker/install.sh | bash
 set -euo pipefail
 

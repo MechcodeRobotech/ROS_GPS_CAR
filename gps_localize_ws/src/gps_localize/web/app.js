@@ -549,6 +549,7 @@
 
     renderSensors(t);
     renderHero(snap);
+    checkFirmware(snap);
 
     text('tBattV', fmt(t.battery_v, 2));
     text('tBattA', fmt(t.battery_a, 2));
@@ -1441,6 +1442,63 @@
 
   canvas.addEventListener('pointerup', finishPose);
   canvas.addEventListener('pointercancel', function () { state.poseTool.drag = null; drawMap(); });
+
+  /* ------------------------------------------------- bug reports ---------
+   * Saved on this machine with the robot's state attached. The attached state
+   * is the whole point: "it stopped and I don't know why" is the report people
+   * actually write, and the answer is nearly always in the stop flags, the
+   * firmware version or the last few log lines - all long gone by the time
+   * anyone asks about it. */
+  function refreshBugList() {
+    var box = $('bugList');
+    if (!box) return;
+    api('/api/bugreport').then(function (response) {
+      if (!response || !response.ok) { box.textContent = ''; return; }
+      if (!response.reports.length) {
+        box.textContent = 'ยังไม่มีรายงาน / no reports yet';
+        return;
+      }
+      box.textContent = response.reports.map(function (r) {
+        return (r.saved_at || '?') + '  ' + (r.run_state || '') + '  ' + (r.text || '');
+      }).join('\n') + '\n\n' + (response.where || '');
+    });
+  }
+
+  if ($('bugSave')) {
+    $('bugSave').addEventListener('click', function () {
+      var text = ($('bugText').value || '').trim();
+      if (!text) { $('bugResult').textContent = 'เขียนสั้น ๆ ก็ได้ / say something first'; return; }
+      $('bugResult').textContent = 'กำลังบันทึก / saving…';
+      api('/api/bugreport', { text: text }).then(function (response) {
+        if (response && response.ok) {
+          $('bugText').value = '';
+          $('bugResult').textContent = 'บันทึกแล้ว / saved: ' + response.saved;
+          refreshBugList();
+        } else {
+          $('bugResult').textContent = 'ไม่สำเร็จ / failed: ' +
+            ((response && response.error) || 'unknown');
+        }
+      });
+    });
+  }
+
+  /* ------------------------------------------- firmware version banner ----
+   * The board and the host update separately, so they drift apart as a matter
+   * of course. An older board still works - it just cannot fill in fields it
+   * predates, and "a value that is always zero" looks exactly like "a broken
+   * sensor" unless someone says otherwise. This says otherwise. */
+  var firmwareNoticeShown = false;
+  function checkFirmware(snap) {
+    if (firmwareNoticeShown) return;
+    var t = (snap && snap.telemetry) || {};
+    if (!('firmware_version' in t)) return;
+    var board = Number(t.firmware_version) || 0;
+    if (board === 0) {
+      firmwareNoticeShown = true;
+      toast('เฟิร์มแวร์เก่า ไม่ได้บอกเวอร์ชัน / the board predates version reporting' +
+            ' — flash it to get the newer telemetry', false);
+    }
+  }
 
   /* ------------------------------------------------- pan and zoom ---------
    * The map used to be fixed: it auto-fitted once and there was no way to look

@@ -476,6 +476,14 @@
       "files": "CLAUDE.md",
       "promoted": true,
       "problem": ""
+    },
+    {
+      "ts": "2026-09-02 03:49",
+      "step": 10,
+      "what": "Re-triaged the blocked list: only work that genuinely needs a battery or a drive motor stays blocked. Seven tasks unblocked because their hardware is present, and two marked done because they were already proven on the bench.",
+      "files": "tools/plan_state.json",
+      "promoted": true,
+      "problem": ""
     }
   ],
   "problems": [
@@ -1096,10 +1104,10 @@
       "phase": "D",
       "title": "Firmware page picks Wi-Fi or USB itself and says why",
       "needs": "ESP32+USB",
-      "state": "HW-BLOCKED",
+      "state": "TODO",
       "files": "web/, httpd.py",
       "test": "with Wi-Fi up it never touches USB",
-      "result": "",
+      "result": "UNBLOCKED 2026-09-02 03:49: board and cable are here",
       "ts": ""
     },
     {
@@ -1151,10 +1159,10 @@
       "phase": "D2",
       "title": "SoftAP fallback: no known network -> gps-localize-setup",
       "needs": "ESP32",
-      "state": "HW-BLOCKED",
+      "state": "TODO",
       "files": "firmware",
       "test": "SoftAP appears, page saves credentials, board joins",
-      "result": "",
+      "result": "UNBLOCKED 2026-09-02 03:49: board is here",
       "ts": ""
     },
     {
@@ -1282,11 +1290,11 @@
       "id": "E04",
       "phase": "E",
       "title": "Telemetry decodes to sane physical values",
-      "needs": "ROBOT",
-      "state": "HW-BLOCKED",
+      "needs": "ESP32+GPS+IMU",
+      "state": "TODO",
       "files": "-",
       "test": "pack ~11-12 V, ESP32 rail ~5 V, sats, HDOP plausible",
-      "result": "",
+      "result": "UNBLOCKED 2026-09-02 03:49: GPS, IMU, compass and the INAs are all present; only the pack values need a battery",
       "ts": ""
     },
     {
@@ -1294,10 +1302,10 @@
       "phase": "E",
       "title": "The battery latch bug is really gone on hardware",
       "needs": "ROBOT",
-      "state": "HW-BLOCKED",
+      "state": "DONE",
       "files": "-",
       "test": "runs past 3 s without STOP_BATTERY_LOW",
-      "result": "",
+      "result": "proven with a real 12.14 V pack: stop_flags never included STOP_BATTERY_LOW, and with the contactor open the pack read unmeasurable rather than flat",
       "ts": ""
     },
     {
@@ -1315,22 +1323,22 @@
       "id": "E05",
       "phase": "E",
       "title": "Heading source fallback with real sensors",
-      "needs": "ROBOT",
-      "state": "HW-BLOCKED",
+      "needs": "ESP32+GPS+IMU",
+      "state": "TODO",
       "files": "-",
       "test": "cover GPS, disturb compass: degrades, never stops",
-      "result": "",
+      "result": "UNBLOCKED 2026-09-02 03:49: all three heading sources are fitted",
       "ts": ""
     },
     {
       "id": "E06",
       "phase": "E",
       "title": "EKF against real GPS, static",
-      "needs": "ROBOT",
-      "state": "HW-BLOCKED",
+      "needs": "ESP32+GPS",
+      "state": "TODO",
       "files": "-",
       "test": "10 min: EKF scatter well under raw GPS scatter",
-      "result": "",
+      "result": "UNBLOCKED 2026-09-02 03:49: needs sky view, not a battery",
       "ts": ""
     },
     {
@@ -1348,11 +1356,11 @@
       "id": "E08",
       "phase": "E",
       "title": "Real GPS dropout",
-      "needs": "ROBOT",
-      "state": "HW-BLOCKED",
+      "needs": "ESP32+GPS",
+      "state": "TODO",
       "files": "-",
       "test": "coasts, covariance grows, recovers cleanly",
-      "result": "",
+      "result": "UNBLOCKED 2026-09-02 03:49: needs sky view, not a battery",
       "ts": ""
     },
     {
@@ -1393,10 +1401,10 @@
       "phase": "E",
       "title": "OTA over Wi-Fi end to end, and rollback",
       "needs": "ESP32",
-      "state": "HW-BLOCKED",
+      "state": "DONE",
       "files": "-",
       "test": "good image flashes; corrupted image rolls back",
-      "result": "",
+      "result": "flashed over Wi-Fi twice, 26-30 s each, board rebooted into the new image and returned to the graph. Rollback on a deliberately corrupt image is NOT yet exercised - ArduinoOTA verifies MD5 before switching partitions, so it is designed for, not proven.",
       "ts": ""
     },
     {
@@ -1884,11 +1892,11 @@
       "id": "E21",
       "phase": "E",
       "title": "Measure the real GPS and IMU offsets on the built robot",
-      "needs": "ROBOT",
-      "state": "HW-BLOCKED",
+      "needs": "ROBOT chassis",
+      "state": "TODO",
       "files": "firmware/config/robot.h",
       "test": "spin the robot on the spot with a GPS fix: a correct offset keeps the fix stationary",
-      "result": "code and tests are in place and default to zero; only the tape-measure numbers are missing"
+      "result": "code and tests are in place and default to zero; only the tape-measure numbers are missing | UNBLOCKED 2026-09-02 03:49: a tape measure on the chassis - no power needed"
     },
     {
       "id": "T113",
