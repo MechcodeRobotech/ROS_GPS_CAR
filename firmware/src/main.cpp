@@ -50,6 +50,7 @@
 #include <state_estimator.h>
 #include <pose_ekf.h>
 #include <lever_arm.h>
+#include <param_table.h>
 #include <drive_controller.h>
 #include <safety_manager.h>
 #if defined(MICROROS_TRANSPORT_WIFI)
@@ -76,6 +77,11 @@ static rcl_publisher_t pub_odom;
 static rcl_publisher_t pub_imu;
 static rcl_publisher_t pub_fix;
 static rcl_publisher_t pub_telemetry;
+// Parameter values, so the UI can show what the ROBOT actually holds rather
+// than what it last sent. Without a readback, "did that save?" is
+// unanswerable - and these live in the board's NVS precisely so they survive
+// a different control PC, a reboot and a reflash.
+static rcl_publisher_t pub_params;
 
 static rcl_subscription_t sub_cmd_move;
 static rcl_subscription_t sub_cmd_manual;
@@ -95,6 +101,8 @@ static geometry_msgs__msg__Twist      in_cmd_vel;
 static std_msgs__msg__Int32           in_heartbeat;
 static std_msgs__msg__Bool            in_estop;
 static std_msgs__msg__Float32MultiArray in_config;
+static std_msgs__msg__Float32MultiArray msg_params;
+static float params_buf[PARAM_COUNT + 1];
 
 //--- static payload buffers (never freed, never grown) ---
 // TELEMETRY_LEN is gone with the packed array: the message carries named
@@ -118,6 +126,8 @@ static GpsNmea       gps;
 static CompassQMC5883 compass;
 static ImuBno085     imu(BNO085_RESET_PIN);
 static Preferences   prefs;               // NVS: keeps the compass calibration over a reboot
+static Preferences   param_store;         // NVS: parameter overrides, separate namespace
+static ParamRegistry<PARAM_COUNT> params;
 static StateEstimator estimator;
 static PoseEkf       pose_ekf;   // GPS-corrected position; see pose_ekf.h
 static DriveController drive;
@@ -133,6 +143,7 @@ static volatile bool     have_heartbeat    = false;
 
 static uint32_t loop_us = 0;
 static uint16_t div_odom = 0, div_imu = 0, div_tel = 0, div_ina = 0, div_mag = 0;
+static uint16_t div_params = 0;
 static uint8_t  mag_calib_state = 0;   // 0 idle, 1 capturing, 2 finished ok, 3 failed
 static uint32_t last_ctrl_us = 0;
 static uint32_t last_gps_pub_ms = 0;
@@ -187,8 +198,8 @@ static void fixToLocal(double lat, double lon) {
   // real movement. Move the reading back to the turning centre before anything
   // else sees it. With the offsets left at zero this is the identity.
   LeverArm gps_arm;
-  gps_arm.x = GPS_OFFSET_X_M;
-  gps_arm.y = GPS_OFFSET_Y_M;
+  gps_arm.x = params.get("geometry.gps_x", GPS_OFFSET_X_M);
+  gps_arm.y = params.get("geometry.gps_y", GPS_OFFSET_Y_M);
   leverArmToCentre(antenna_east, antenna_north, estimator.headingDeg(),
                    gps_arm, &fix_east, &fix_north);
 }
@@ -297,6 +308,11 @@ static void initMessages() {
   in_config.data.size     = 0;
   in_config.data.capacity = CONFIG_MAX_LEN;
 
+  memset(&msg_params, 0, sizeof(msg_params));
+  msg_params.data.data     = params_buf;
+  msg_params.data.size     = 0;
+  msg_params.data.capacity = PARAM_COUNT + 1;
+
   memset(&in_cmd_move, 0, sizeof(in_cmd_move));
   memset(&in_cmd_manual, 0, sizeof(in_cmd_manual));
   memset(&in_cmd_vel, 0, sizeof(in_cmd_vel));
@@ -377,6 +393,64 @@ static void estop_cb(const void *msgin) {
  *   7, heading_deg                          -> set the heading by hand
  *                                              ("set start pose" from the web map)
  */
+/**
+ * Push the registry's values into the objects that actually use them.
+ *
+ * Called after every change, because a parameter that is stored but not applied
+ * is the worst outcome available: the UI shows it saved, NVS holds it, and the
+ * robot carries on using the old number. Cheap enough to do wholesale rather
+ * than tracking which one moved.
+ */
+/**
+ * Publish what the board actually holds: [count, v0, v1, ...].
+ *
+ * A float array rather than a named message, for the same reason the config
+ * topic is one - names would drag string support into the firmware image. The
+ * host pairs these with names using config/params.json, generated from the same
+ * table and checked by qc.py.
+ *
+ * Sent on change and slowly on a timer, not at telemetry rate: these move when
+ * a person moves them, and a value nobody is changing does not need republishing
+ * ten times a second.
+ */
+static void publishParams() {
+  if (conn_state != AGENT_CONNECTED) return;
+  msg_params.data.size = 0;
+  params_buf[msg_params.data.size++] = (float)params.count();
+  for (uint8_t i = 0; i < params.count() && msg_params.data.size < PARAM_COUNT + 1; ++i) {
+    params_buf[msg_params.data.size++] = params.value(i);
+  }
+  RCSOFTCHECK(rcl_publish(&pub_params, &msg_params, NULL));
+}
+
+static void applyParams() {
+  MotorModel::Config mc;
+  mc.ke_v_per_rpm     = params.get("motor.ke", MOTOR_KE_V_PER_RPM);
+  mc.resistance_ohm   = params.get("motor.resistance", MOTOR_RESISTANCE_OHM);
+  mc.wheel_diameter_m = params.get("robot.wheel_diameter", WHEEL_DIAMETER_M);
+  mc.min_duty         = MOTOR_MIN_DUTY_FOR_EST;
+  mc.stall_current_a  = params.get("motor.stall_a", MOTOR_STALL_CURRENT_A);
+  mc.open_current_a   = MOTOR_OPEN_CURRENT_A;
+
+  mc.diode_vf_v  = params.get("motor.a.diode_vf", MOTOR_A_DIODE_VF_V);
+  mc.diode_r_ohm = params.get("motor.a.diode_r", MOTOR_A_DIODE_R_OHM);
+  model_left.begin(mc);
+
+  mc.diode_vf_v  = params.get("motor.b.diode_vf", MOTOR_B_DIODE_VF_V);
+  mc.diode_r_ohm = params.get("motor.b.diode_r", MOTOR_B_DIODE_R_OHM);
+  model_right.begin(mc);
+
+  StateEstimator::Config &ec = estimator.config();
+  ec.gps_tau_s        = params.get("estimator.gps_tau", SPEED_EST_GPS_TAU_S);
+  ec.model_tau_s      = params.get("estimator.model_tau", SPEED_EST_MODEL_TAU_S);
+  ec.align_min_mps    = params.get("estimator.align_min", HEADING_ALIGN_MIN_MPS);
+  ec.track_m          = params.get("robot.track", WHEEL_TRACK_M);
+  ec.wheel_diameter_m = params.get("robot.wheel_diameter", WHEEL_DIAMETER_M);
+  ec.max_speed_mps    = params.get("robot.max_speed", ROBOT_MAX_SPEED_MPS);
+
+  compass.setDeclination(params.get("compass.declination", COMPASS_DECLINATION_DEG));
+}
+
 static void config_cb(const void *msgin) {
   const std_msgs__msg__Float32MultiArray *m = (const std_msgs__msg__Float32MultiArray *)msgin;
   if (m->data.size < 1) return;
@@ -389,6 +463,34 @@ static void config_cb(const void *msgin) {
     pid.setPIDF(m->data.data[1], m->data.data[2], m->data.data[3], m->data.data[4], m->data.data[5]);
     if (n >= 8) pid.setIClamp(m->data.data[6], m->data.data[7]);
     pid.reset();
+  } else if (sel == 8) {
+    // [8, index, value] - set one parameter. By INDEX, because this topic is a
+    // float array and cannot carry a name; tools/gen_param_manifest.py keeps
+    // the web UI's idea of the indices in step with the table, and qc.py fails
+    // when they drift.
+    //
+    // The bounds and the moving guard are enforced HERE, on the board, not only
+    // in the UI. A value arriving over any transport - a stale browser tab, a
+    // script, a serial console - gets the same refusal.
+    if (n < 3) return;
+    const uint8_t idx = (uint8_t)m->data.data[1];
+    const bool moving = fabsf(estimator.speed()) > 0.05f;
+    const ParamResult r = params.setIndex(idx, m->data.data[2], moving);
+    if (r == PARAM_OK) {
+      applyParams();
+      publishParams();
+      Serial.printf("[param] %s = %.4f\n",
+                    idx < params.count() ? params.def(idx).key : "?",
+                    m->data.data[2]);
+    } else {
+      Serial.printf("[param] refused index %u: %s\n", idx, paramResultText(r));
+    }
+  } else if (sel == 9) {
+    // [9] reset every parameter to its compiled-in default.
+    params.resetAll(fabsf(estimator.speed()) > 0.05f);
+    applyParams();
+    publishParams();
+    Serial.println("[param] all reset to defaults");
   } else if (sel == 2) {
     StateEstimator::Config &c = estimator.config();
     if (n >= 2) c.heading_source = (uint8_t)m->data.data[1];
@@ -716,6 +818,9 @@ static void controlCallback(rcl_timer_t *timer, int64_t) {
 
   if (++div_odom >= PUB_ODOM_DIV) { div_odom = 0; publishOdom(); }
   if (++div_imu  >= PUB_IMU_DIV)  { div_imu  = 0; if (imu.ok()) publishImu(); }
+  // Slowly: values move when a person moves them. Republishing keeps a UI
+  // that connected late from showing nothing until someone edits something.
+  if (++div_params >= 200) { div_params = 0; publishParams(); }
   if (++div_tel  >= PUB_TELEMETRY_DIV) { div_tel = 0; publishTelemetry(state); }
 
   // GPS is published when a new solution arrives, capped at 5 Hz
@@ -745,6 +850,9 @@ static bool createEntities() {
     ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, NavSatFix), ROS_NS "/gps/fix"));
   RCCHECK(rclc_publisher_init_default(&pub_telemetry, &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(gps_localize_msgs, msg, Telemetry), ROS_NS "/telemetry"));
+
+  RCCHECK(rclc_publisher_init_default(&pub_params, &node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray), ROS_NS "/params/values"));
 
   RCCHECK(rclc_subscription_init_default(&sub_cmd_move, &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist), ROS_NS "/cmd_move"));
@@ -1066,6 +1174,11 @@ void setup() {
   }
   imu.setStaleMs(IMU_STALE_MS);
 
+  // Parameters before the drivers, so every begin() below sees the values
+  // this robot was configured with rather than the compiled-in defaults.
+  param_store.begin("gpsparams", false);
+  params.begin(PARAM_TABLE, PARAM_COUNT, &param_store);
+
   if (!power.begin(&Wire))
     Serial.println("[INA226] one or more sensors missing - see the rail readings");
 
@@ -1119,6 +1232,11 @@ void setup() {
   mcfg.diode_vf_v  = MOTOR_B_DIODE_VF_V;
   mcfg.diode_r_ohm = MOTOR_B_DIODE_R_OHM;
   model_right.begin(mcfg);
+
+  // Every driver above was configured from the compiled-in defaults. Now
+  // overwrite them with whatever this robot was actually configured with -
+  // otherwise a measured diode drop is stored, shown in the UI, and ignored.
+  applyParams();
 
   initMessages();
 

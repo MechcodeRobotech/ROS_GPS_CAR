@@ -155,3 +155,9 @@ CONFIG_MAG_CALIB = 4.0      # [4, 1] start turning, [4, 0] finish and save to fl
 CONFIG_MOTOR_RAMP = 5.0     # [5, accel_ramp_s, decel_ramp_s]
 CONFIG_MOTOR_MODEL = 6.0    # [6, ke, resistance, stall_a, dA_vf, dA_r, dB_vf, dB_r]
 CONFIG_SET_HEADING = 7.0    # [7, heading_deg] - "set start pose" from the map
+CONFIG_PARAM_SET = 8.0      # [8, index, value] - one parameter, addressed by
+                            # index because this topic is a float array and
+                            # cannot carry a name. The index comes from
+                            # config/params.json, generated from the firmware
+                            # table and checked by qc.py.
+CONFIG_PARAM_RESET = 9.0    # [9] every parameter back to its default

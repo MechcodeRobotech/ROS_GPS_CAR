@@ -272,6 +272,9 @@ class Viewer:
         route('POST', '/api/heartbeat', lambda body, query: (200, {'ok': True, 'state': 'VIEWER', 'estop': False}))
         route('GET', '/api/topics', self.topics_list)
         route('GET', '/api/connect', self.api_connect)
+        route('GET', '/api/params', self.api_params_get)
+        route('POST', '/api/params', self.api_params_set)
+        route('POST', '/api/params/reset', self.api_params_reset)
         route('GET', '/api/bugreport', self.api_bugreport_list)
         route('POST', '/api/bugreport', self.api_bugreport_save)
         route('GET', '/api/qr', self.api_qr)
@@ -418,6 +421,43 @@ class Viewer:
         ('/gps_localize/log', 'std_msgs/msg/String', 1, 1),
         ('/gps_localize/safety', 'std_msgs/msg/Int32', 1, 1),
     ]
+
+    # The viewer shows the same settings page, read-only where it cannot
+    # reach a board. Showing the parameters but refusing to write them is more
+    # useful than hiding the page: someone on Windows can still see what the
+    # robot is configured with.
+    def _param_manifest(self):
+        if getattr(self, '_params_cache', None) is None:
+            import json as _json
+            here = os.path.dirname(os.path.abspath(__file__))
+            for candidate in (
+                os.path.join(here, '..', 'gps_localize_ws', 'src', 'gps_localize',
+                             'config', 'params.json'),
+                os.path.join(here, 'params.json'),
+            ):
+                try:
+                    with open(os.path.normpath(candidate)) as handle:
+                        self._params_cache = _json.load(handle)
+                        break
+                except (OSError, ValueError):
+                    continue
+            else:
+                self._params_cache = {'count': 0, 'params': []}
+        return self._params_cache
+
+    def api_params_get(self, _body, _query):
+        m = self._param_manifest()
+        return 200, {'ok': True, 'count': m.get('count', 0), 'moving': False,
+                     'params': m.get('params', []),
+                     'note': 'viewer: parameters are shown but cannot be written'}
+
+    def api_params_set(self, _body, _query):
+        return 403, {'ok': False,
+                     'error': 'the viewer cannot write parameters - it has no '
+                              'link to a board'}
+
+    def api_params_reset(self, _body, _query):
+        return 403, {'ok': False, 'error': 'the viewer cannot write parameters'}
 
     # Bug reports work in the viewer too - the whole point is capturing the
     # moment something went wrong, and on Windows that moment is just as likely

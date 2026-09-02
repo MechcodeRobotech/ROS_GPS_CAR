@@ -1,0 +1,249 @@
+{
+  "generated_from": "firmware/src/params/param_table.h",
+  "note": "Generated - do not edit. The board addresses parameters by index, and these indices are the table order. Run tools/gen_param_manifest.py after changing the header.",
+  "count": 22,
+  "params": [
+    {
+      "index": 0,
+      "key": "motor.a.diode_vf",
+      "unit": "V",
+      "group": "motor",
+      "default_expr": "MOTOR_A_DIODE_VF_V",
+      "min": 0.0,
+      "max": 3.0,
+      "when": "live",
+      "help": "Measured forward drop of motor A's series diode. Measure across it with the motor running."
+    },
+    {
+      "index": 1,
+      "key": "motor.b.diode_vf",
+      "unit": "V",
+      "group": "motor",
+      "default_expr": "MOTOR_B_DIODE_VF_V",
+      "min": 0.0,
+      "max": 3.0,
+      "when": "live",
+      "help": "Measured forward drop of motor B's series diode."
+    },
+    {
+      "index": 2,
+      "key": "motor.a.diode_r",
+      "unit": "ohm",
+      "group": "motor",
+      "default_expr": "MOTOR_A_DIODE_R_OHM",
+      "min": 0.0,
+      "max": 1.0,
+      "when": "live",
+      "help": "Dynamic resistance of motor A's diode - the slope of its V/I curve."
+    },
+    {
+      "index": 3,
+      "key": "motor.b.diode_r",
+      "unit": "ohm",
+      "group": "motor",
+      "default_expr": "MOTOR_B_DIODE_R_OHM",
+      "min": 0.0,
+      "max": 1.0,
+      "when": "live",
+      "help": "Dynamic resistance of motor B's diode."
+    },
+    {
+      "index": 4,
+      "key": "motor.resistance",
+      "unit": "ohm",
+      "group": "motor",
+      "default_expr": "MOTOR_RESISTANCE_OHM",
+      "min": 0.1,
+      "max": 50.0,
+      "when": "live",
+      "help": "Winding + driver + wiring resistance. Measure across a stalled motor at a known duty."
+    },
+    {
+      "index": 5,
+      "key": "motor.ke",
+      "unit": "V/rpm",
+      "group": "motor",
+      "default_expr": "MOTOR_KE_V_PER_RPM",
+      "min": 0.0001,
+      "max": 1.0,
+      "when": "live",
+      "help": "Back-EMF constant. Spin the motor at a known rpm and measure the open-circuit volts."
+    },
+    {
+      "index": 6,
+      "key": "motor.stall_a",
+      "unit": "A",
+      "group": "motor",
+      "default_expr": "MOTOR_STALL_CURRENT_A",
+      "min": 0.1,
+      "max": 10.0,
+      "when": "live",
+      "help": "Current that means the motor is stalled rather than merely loaded."
+    },
+    {
+      "index": 7,
+      "key": "robot.wheel_diameter",
+      "unit": "m",
+      "group": "robot",
+      "default_expr": "WHEEL_DIAMETER_M",
+      "min": 0.02,
+      "max": 0.5,
+      "when": "stopped",
+      "help": "Wheel diameter. Measure loaded, not off the shelf - a soft tyre reads smaller."
+    },
+    {
+      "index": 8,
+      "key": "robot.track",
+      "unit": "m",
+      "group": "robot",
+      "default_expr": "WHEEL_TRACK_M",
+      "min": 0.05,
+      "max": 2.0,
+      "when": "stopped",
+      "help": "Centre of the left drive wheel to centre of the right."
+    },
+    {
+      "index": 9,
+      "key": "robot.max_speed",
+      "unit": "m/s",
+      "group": "robot",
+      "default_expr": "ROBOT_MAX_SPEED_MPS",
+      "min": 0.05,
+      "max": 5.0,
+      "when": "stopped",
+      "help": "Fastest the robot may be commanded to drive."
+    },
+    {
+      "index": 10,
+      "key": "geometry.gps_x",
+      "unit": "m",
+      "group": "geometry",
+      "default_expr": "GPS_OFFSET_X_M",
+      "min": -2.0,
+      "max": 2.0,
+      "when": "stopped",
+      "help": "GPS antenna ahead of the drive axle (+) or behind it (-)."
+    },
+    {
+      "index": 11,
+      "key": "geometry.gps_y",
+      "unit": "m",
+      "group": "geometry",
+      "default_expr": "GPS_OFFSET_Y_M",
+      "min": -2.0,
+      "max": 2.0,
+      "when": "stopped",
+      "help": "GPS antenna left of centre (+) or right (-)."
+    },
+    {
+      "index": 12,
+      "key": "geometry.imu_x",
+      "unit": "m",
+      "group": "geometry",
+      "default_expr": "IMU_OFFSET_X_M",
+      "min": -2.0,
+      "max": 2.0,
+      "when": "stopped",
+      "help": "IMU ahead of the drive axle (+) or behind it (-)."
+    },
+    {
+      "index": 13,
+      "key": "geometry.imu_y",
+      "unit": "m",
+      "group": "geometry",
+      "default_expr": "IMU_OFFSET_Y_M",
+      "min": -2.0,
+      "max": 2.0,
+      "when": "stopped",
+      "help": "IMU left of centre (+) or right (-)."
+    },
+    {
+      "index": 14,
+      "key": "geometry.axle_x",
+      "unit": "m",
+      "group": "geometry",
+      "default_expr": "DRIVE_AXLE_OFFSET_X_M",
+      "min": -2.0,
+      "max": 2.0,
+      "when": "stopped",
+      "help": "Drive axle ahead of the middle of the chassis (+)."
+    },
+    {
+      "index": 15,
+      "key": "battery.warn_v",
+      "unit": "V",
+      "group": "battery",
+      "default_expr": "BATT_WARN_V",
+      "min": 6.0,
+      "max": 30.0,
+      "when": "live",
+      "help": "Orange on the web UI. Keep driving."
+    },
+    {
+      "index": 16,
+      "key": "battery.soft_stop_v",
+      "unit": "V",
+      "group": "battery",
+      "default_expr": "BATT_SOFT_STOP_V",
+      "min": 6.0,
+      "max": 30.0,
+      "when": "live",
+      "help": "Stop driving, stay powered. Recovers on its own."
+    },
+    {
+      "index": 17,
+      "key": "battery.cutoff_v",
+      "unit": "V",
+      "group": "battery",
+      "default_expr": "BATT_CUTOFF_V",
+      "min": 6.0,
+      "max": 30.0,
+      "when": "live",
+      "help": "Hard cut. LATCHES until the robot is switched off and on again."
+    },
+    {
+      "index": 18,
+      "key": "compass.declination",
+      "unit": "deg",
+      "group": "compass",
+      "default_expr": "COMPASS_DECLINATION_DEG",
+      "min": -45.0,
+      "max": 45.0,
+      "when": "live",
+      "help": "Magnetic declination where the robot is. Look it up for your location."
+    },
+    {
+      "index": 19,
+      "key": "estimator.gps_tau",
+      "unit": "s",
+      "group": "estimator",
+      "default_expr": "SPEED_EST_GPS_TAU_S",
+      "min": 0.05,
+      "max": 20.0,
+      "when": "live",
+      "help": "How fast the speed estimate is pulled toward GPS. Larger is smoother and slower."
+    },
+    {
+      "index": 20,
+      "key": "estimator.model_tau",
+      "unit": "s",
+      "group": "estimator",
+      "default_expr": "SPEED_EST_MODEL_TAU_S",
+      "min": 0.05,
+      "max": 20.0,
+      "when": "live",
+      "help": "Same, for the motor model when GPS is unavailable."
+    },
+    {
+      "index": 21,
+      "key": "estimator.align_min",
+      "unit": "m/s",
+      "group": "estimator",
+      "default_expr": "HEADING_ALIGN_MIN_MPS",
+      "min": 0.01,
+      "max": 2.0,
+      "when": "live",
+      "help": "Below this speed GPS course is noise, so heading stops trusting it."
+    }
+  ]
+}

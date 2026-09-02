@@ -1037,6 +1037,34 @@ def check_imu_guard_is_presence_not_freshness():
               'the guard tests begun_  [%s]' % guard[:60])
 
 
+
+def check_param_manifest_matches_the_header():
+    """params.json must be regenerated whenever the parameter table changes.
+
+    The board addresses parameters by INDEX - the config topic is a float array
+    and cannot carry names - so the manifest is what tells the web UI which
+    index is which parameter. If a parameter is added to the header and the
+    manifest is not regenerated, every index after the insertion point shifts,
+    and the UI writes the diode drop into the track width. Nothing errors: the
+    value is in range, the board accepts it, and the robot quietly believes it
+    is a different shape than it is.
+
+    Generated rather than duplicated precisely so this can be checked.
+    """
+    section('parameter manifest is in step with the firmware table')
+    gen = ROOT / 'tools' / 'gen_param_manifest.py'
+    if not gen.exists():
+        return
+    r = subprocess.run([sys.executable, str(gen), '--check'],
+                       capture_output=True, text=True, cwd=str(ROOT))
+    check(r.returncode == 0,
+          'params.json matches param_table.h %s'
+          % ('' if r.returncode == 0 else '- run tools/gen_param_manifest.py'))
+    if r.returncode != 0:
+        for line in (r.stdout or r.stderr).strip().splitlines()[:3]:
+            problems.append(line.strip())
+
+
 def main():
     main_cpp = read(FW / 'src' / 'main.cpp')
     telemetry_py = read(PKG / 'gps_localize' / 'telemetry.py')
@@ -1052,6 +1080,7 @@ def main():
     check_telemetry_consumers()
     check_test_count_claims()
     check_imu_guard_is_presence_not_freshness()
+    check_param_manifest_matches_the_header()
     check_telemetry(main_cpp, telemetry_py)
     check_config_selectors(main_cpp, telemetry_py, web_py)
     check_topics(main_cpp, py_all)

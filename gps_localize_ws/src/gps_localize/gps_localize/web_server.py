@@ -118,6 +118,18 @@ class WebServerNode(Node):
         self.create_subscription(String, NS + '/pose/estimate', self.on_pose, latched_qos())
         self.create_subscription(String, NS + '/safety', self.on_safety, latched_qos())
         self.create_subscription(String, NS + '/log', self.on_log, 20)
+        # What the BOARD holds, so the settings page shows the robot's own
+        # values rather than what this host last sent. They live in the
+        # board's NVS, so they survive a reboot, a reflash and a different
+        # control PC - and the UI must reflect that, not shadow it.
+        self.param_values = []
+        # Plain QoS, NOT latched. The firmware publishes with micro-ROS's
+        # default (RELIABLE, VOLATILE), and a TRANSIENT_LOCAL subscriber does
+        # not match a VOLATILE publisher - the topic lists fine, both ends
+        # look healthy, and not one sample arrives. The board republishes
+        # every few seconds, so nothing is lost by not latching.
+        self.create_subscription(Float32MultiArray, NS + '/params/values',
+                                 self.on_param_values, 5)
 
         # ----------------------------------------------------------- server
         self.broadcaster = SseBroadcaster(max_clients=self.max_clients)
@@ -218,6 +230,15 @@ class WebServerNode(Node):
         if self._pid_pushed and gap > 5.0:
             self.add_log('web', 'firmware reconnected, re-sending the saved gains')
             self.push_pid_to_firmware()
+
+    def on_param_values(self, msg):
+        """[count, v0, v1, ...] from the board."""
+        data = list(msg.data)
+        if not data:
+            return
+        count = int(data[0])
+        with self._lock:
+            self.param_values = data[1:1 + count]
 
     def on_fix(self, msg):
         with self._lock:
@@ -328,6 +349,9 @@ class WebServerNode(Node):
         route('POST', '/api/nav', self.api_nav)
         route('POST', '/api/manual', self.api_manual)
         route('POST', '/api/estop', self.api_estop)
+        route('GET', '/api/params', self.api_params_get)
+        route('POST', '/api/params', self.api_params_set)
+        route('POST', '/api/params/reset', self.api_params_reset)
         route('GET', '/api/bugreport', self.api_bugreport_list)
         route('POST', '/api/bugreport', self.api_bugreport_save)
         route('POST', '/api/heartbeat', self.api_heartbeat)
@@ -348,6 +372,110 @@ class WebServerNode(Node):
     # There is no ros2 CLI on a Windows or Docker Desktop machine, so the
     # browser has to be able to show the whole graph: every topic, its type,
     # how many nodes are on each end, the rate, and the live value.
+
+    # ------------------------------------------------------------ parameters
+    # The settings page is BUILT from what the board declares, so adding a
+    # tunable is one line in param_table.h and nothing in the UI. The manifest
+    # is generated from that header and checked by qc.py, because the board
+    # addresses parameters by index and a stale manifest would send the UI
+    # writing to the wrong one - silently, since the value would be in range.
+
+    def _param_manifest(self):
+        if getattr(self, '_params_cache', None) is None:
+            path = os.path.join(_share_dir(), 'config', 'params.json')
+            try:
+                with open(path) as handle:
+                    self._params_cache = json.load(handle)
+            except (OSError, ValueError) as exc:
+                self.get_logger().warn('no parameter manifest: %r' % exc)
+                self._params_cache = {'count': 0, 'params': []}
+        return self._params_cache
+
+    def api_params_get(self, _body, _query):
+        """Every parameter, with its live value where the board has told us one.
+
+        `value` is None when the board has not reported it. That is honest
+        rather than helpful: showing the default as though it were the live
+        value would hide exactly the case worth seeing, a board running
+        something different from what the UI believes.
+        """
+        manifest = self._param_manifest()
+        with self._lock:
+            moving = abs(float(self.telemetry.get('speed_mps') or 0.0)) > 0.05
+            live = list(self.param_values)
+
+        # Pair each declaration with what the board actually holds. None where
+        # the board has not reported - honest rather than helpful, because
+        # showing the default as if it were live would hide the one case worth
+        # seeing: a robot running something other than what the UI believes.
+        entries = []
+        for p in manifest.get('params', []):
+            item = dict(p)
+            idx = p['index']
+            item['value'] = live[idx] if idx < len(live) else None
+            entries.append(item)
+
+        return 200, {
+            'ok': True,
+            'count': manifest.get('count', 0),
+            'moving': moving,
+            'from_robot': bool(live),
+            'params': entries,
+            'note': ('values marked "stopped" are refused while the robot is '
+                     'moving - they describe the machine the control loops are '
+                     'steering'),
+        }
+
+    def api_params_set(self, body, _query):
+        """Set one parameter by name; the wire carries its index.
+
+        The name is resolved here and the index goes to the board, because the
+        config topic is a float array. Bounds are checked on BOTH sides - here
+        so the person gets a useful message, and on the board because a browser
+        check is advice rather than enforcement.
+        """
+        key = str(body.get('key', ''))
+        manifest = self._param_manifest()
+        entry = next((p for p in manifest.get('params', []) if p['key'] == key), None)
+        if entry is None:
+            return 404, {'ok': False, 'error': 'no parameter called %r' % key}
+
+        try:
+            value = float(body.get('value'))
+        except (TypeError, ValueError):
+            return 400, {'ok': False, 'error': 'value must be a number'}
+        if value != value or value in (float('inf'), float('-inf')):
+            return 400, {'ok': False, 'error': 'value must be finite'}
+        if not (entry['min'] <= value <= entry['max']):
+            return 400, {'ok': False,
+                         'error': '%s must be between %g and %g %s'
+                                  % (key, entry['min'], entry['max'], entry['unit'])}
+
+        with self._lock:
+            moving = abs(float(self.telemetry.get('speed_mps') or 0.0)) > 0.05
+        if entry['when'] == 'stopped' and moving:
+            return 409, {'ok': False, 'blocked_by': 'moving',
+                         'error': '%s can only be changed while the robot is '
+                                  'stopped - it describes the machine the '
+                                  'control loops are steering' % key}
+
+        msg = Float32MultiArray()
+        msg.data = [float(tel.CONFIG_PARAM_SET), float(entry['index']), value]
+        self.pub_config.publish(msg)
+        self.add_log('web', 'parameter %s = %g' % (key, value))
+        return 200, {'ok': True, 'key': key, 'value': value, 'index': entry['index']}
+
+    def api_params_reset(self, _body, _query):
+        """Back to the compiled-in defaults, on the board."""
+        with self._lock:
+            moving = abs(float(self.telemetry.get('speed_mps') or 0.0)) > 0.05
+        if moving:
+            return 409, {'ok': False, 'error': 'stop the robot first'}
+        msg = Float32MultiArray()
+        msg.data = [float(tel.CONFIG_PARAM_RESET)]
+        self.pub_config.publish(msg)
+        self.add_log('web', 'all parameters reset to defaults')
+        return 200, {'ok': True}
 
     # ---------------------------------------------------------- bug reports
     # Written to disk on this machine, not sent anywhere. A robot in a field has

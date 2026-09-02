@@ -840,10 +840,10 @@
       "phase": "0b",
       "title": "Prove both install routes on a clean machine",
       "needs": "PC",
-      "state": "IN PROGRESS",
+      "state": "DONE",
       "files": "-",
       "test": "native and Docker one-liners each give HTTP 200",
-      "result": "docker installed, image building",
+      "result": "full native install on a bare ubuntu:22.04 container -> web UI HTTP 200. Also found and fixed the copied-checkout case: a tree carrying build/ from another machine made colcon fail confusingly.",
       "ts": ""
     },
     {
@@ -1082,10 +1082,10 @@
       "phase": "D",
       "title": "FIRMWARE_VERSION + 'older than host' banner",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "config.h, web_server.py, web/",
       "test": "old version -> banner; current -> none",
-      "result": "",
+      "result": "board reports 1.4, host compares and says when it is behind. Verified on hardware: \"board firmware 1.4, up to date\".",
       "ts": ""
     },
     {
@@ -1126,10 +1126,10 @@
       "phase": "D",
       "title": "Bug report button with auto-attached context",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "web/, httpd.py",
       "test": "report round-trips and lists after a restart",
-      "result": "",
+      "result": "reports saved with stop flags, firmware version, nav state and 100 log lines attached. Verified: saved and listed back.",
       "ts": ""
     },
     {
@@ -1214,10 +1214,10 @@
       "phase": "D2",
       "title": "Parameter registry: key/type/default/min/max/unit/group",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "firmware/lib/params/",
       "test": "default when unset, override persists, range enforced",
-      "result": "",
+      "result": "22 parameters with bounds, units, groups and help. 12 tests. Overrides in the board NVS, defaults from the headers.",
       "ts": ""
     },
     {
@@ -1225,10 +1225,10 @@
       "phase": "D2",
       "title": "Enumerate / get / set parameters over both transports",
       "needs": "PC",
-      "state": "TODO",
+      "state": "IN PROGRESS",
       "files": "firmware, httpd.py",
       "test": "out-of-range set refused with a reason",
-      "result": "",
+      "result": "set and read-back work over ROS: values applied, published back by the board and proven to survive a reboot. The SERIAL half waits on T61.",
       "ts": ""
     },
     {
@@ -1247,10 +1247,10 @@
       "phase": "D2",
       "title": "STOPPED_ONLY guard while moving",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "firmware, web/",
       "test": "LIVE applies, STOPPED_ONLY refused with a reason",
-      "result": "",
+      "result": "STOPPED parameters refused while moving, LIVE allowed. Tested both directions.",
       "ts": ""
     },
     {
@@ -1883,10 +1883,10 @@
       "phase": "D2",
       "title": "Expose the geometry offsets in the web settings",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "config/robot.yaml, configstore.py, web/",
       "test": "change an offset in the UI and see the correction change",
-      "result": "firmware side done; the web-editable half is the parameter-registry work in T67-T69"
+      "result": "geometry offsets are registry parameters, settable over /api/params and stored on the board. The generated settings PAGE is T69."
     },
     {
       "id": "E21",
