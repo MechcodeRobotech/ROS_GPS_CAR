@@ -484,6 +484,14 @@
       "files": "tools/plan_state.json",
       "promoted": true,
       "problem": ""
+    },
+    {
+      "ts": "2026-09-02 19:30",
+      "step": 11,
+      "what": "Worked the board-free TODO list: settings page from the registry, the Wi-Fi list moved onto the robot, the connect-box parser, host self-update with rollback, and the Windows handoff prompt.",
+      "files": "web/*, firmware/src/net/wifi_store.h, gps_localize/connect_target.py, tools/self_update.py, docs/windows_handoff.md",
+      "promoted": true,
+      "problem": ""
     }
   ],
   "problems": [
@@ -1115,10 +1123,10 @@
       "phase": "D",
       "title": "/api/update/check and /api/update/apply with rollback",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "httpd.py, updater",
       "test": "check reports against ROS_GPS_CAR; failed build rolls back",
-      "result": "",
+      "result": "tools/self_update.py + /api/update/check and /api/update/apply. Verified over HTTP: reports branch, behind/ahead and changelog. Rolls back on a failed build OR a stack that does not answer afterwards.",
       "ts": ""
     },
     {
@@ -1137,10 +1145,10 @@
       "phase": "D2",
       "title": "wifi_store.h - NVS network list, seeded once from the header",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "firmware/lib/net/wifi_store.h",
       "test": "seed on empty, persist, NVS beats seed",
-      "result": "",
+      "result": "wifi_store.h - NVS list, header is a first-boot seed only. 8 tests, including that a network deleted in the field stays deleted when the same seed is offered again.",
       "ts": ""
     },
     {
@@ -1170,10 +1178,10 @@
       "phase": "D2",
       "title": "Connect box: parse module / module.local / user@host / IP / serial",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "web/, httpd.py",
       "test": "parser unit tests; Wi-Fi preferred when both answer",
-      "result": "",
+      "result": "connect_target.py - 19 tests over every form someone types. Exposed at /api/connect/parse so the UI can show the interpretation as they type.",
       "ts": ""
     },
     {
@@ -1236,10 +1244,10 @@
       "phase": "D2",
       "title": "Settings page generated from the registry, incl. diode drop",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "web/",
       "test": "change motor.a.diode_vf, model output changes, persists",
-      "result": "",
+      "result": "settings page built from what the board declares. Unknown values read blank rather than showing the default as if it were live; STOPPED parameters disable while moving with the reason attached.",
       "ts": ""
     },
     {
@@ -1511,10 +1519,10 @@
       "phase": "W",
       "title": "Sync scripts to and from the Windows share, with QC on the way back",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "tools/sync_windows.sh",
       "test": "round-trips; changes from Windows are QC'd before promotion",
-      "result": "",
+      "result": "tools/sync_windows.sh - push to the share, pull into _work/ (never the real tree) with QC before promotion. Dry-run verified.",
       "ts": ""
     },
     {
@@ -1588,10 +1596,10 @@
       "phase": "W",
       "title": "Handoff prompt for a Claude session on Windows",
       "needs": "PC",
-      "state": "TODO",
+      "state": "DONE",
       "files": "WINDOWS_TASK.md on the share",
       "test": "a Windows session can act on it without more context",
-      "result": "",
+      "result": "docs/windows_handoff.md - a prompt carrying everything already established here, so a Windows session does not re-derive it or \"fix\" something deliberate.",
       "ts": ""
     },
     {

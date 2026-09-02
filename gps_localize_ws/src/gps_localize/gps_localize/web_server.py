@@ -349,6 +349,8 @@ class WebServerNode(Node):
         route('POST', '/api/nav', self.api_nav)
         route('POST', '/api/manual', self.api_manual)
         route('POST', '/api/estop', self.api_estop)
+        route('GET', '/api/update/check', self.api_update_check)
+        route('POST', '/api/update/apply', self.api_update_apply)
         route('POST', '/api/connect/parse', self.api_connect_parse)
         route('GET', '/api/params', self.api_params_get)
         route('POST', '/api/params', self.api_params_set)
@@ -373,6 +375,66 @@ class WebServerNode(Node):
     # There is no ros2 CLI on a Windows or Docker Desktop machine, so the
     # browser has to be able to show the whole graph: every topic, its type,
     # how many nodes are on each end, the rate, and the live value.
+
+    # ---------------------------------------------------------------- update
+    # Checking is safe from a web request. APPLYING is not automatic and never
+    # will be: an unattended robot deciding to update itself mid-mission is a
+    # worse failure than being out of date.
+
+    def _update_tool(self):
+        # tools/ sits beside the workspace in a checkout, and is absent from an
+        # installed tree - saying which is more useful than a stack trace.
+        here = os.path.dirname(os.path.abspath(__file__))
+        for up in range(2, 7):
+            candidate = os.path.normpath(
+                os.path.join(here, *(['..'] * up), 'tools', 'self_update.py'))
+            if os.path.isfile(candidate):
+                return candidate
+        return None
+
+    def api_update_check(self, _body, _query):
+        tool = self._update_tool()
+        if not tool:
+            return 501, {'ok': False,
+                         'error': 'self_update.py is not next to this install, so '
+                                  'updates are managed outside the web UI'}
+        import subprocess
+        try:
+            r = subprocess.run(['python3', tool, '--check', '--json'],
+                               capture_output=True, text=True, timeout=180)
+            return 200, {'ok': True, 'update': json.loads(r.stdout or '{}')}
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            return 500, {'ok': False, 'error': 'update check failed: %r' % exc}
+
+    def api_update_apply(self, _body, _query):
+        """Pull, build, verify, and roll back if the stack does not come back.
+
+        Refused while the robot is moving. An update restarts every node, and
+        doing that to a driving robot is an unannounced stop.
+        """
+        with self._lock:
+            moving = abs(float(self.telemetry.get('speed_mps') or 0.0)) > 0.05
+        if moving:
+            return 409, {'ok': False,
+                         'error': 'stop the robot before updating - an update '
+                                  'restarts every node'}
+
+        tool = self._update_tool()
+        if not tool:
+            return 501, {'ok': False, 'error': 'no self_update.py next to this install'}
+
+        self.add_log('web', 'host update starting')
+        import subprocess
+        try:
+            r = subprocess.run(['python3', tool, '--apply', '--json'],
+                               capture_output=True, text=True, timeout=2400)
+            result = json.loads(r.stdout or '{}')
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            return 500, {'ok': False, 'error': 'update failed to run: %r' % exc}
+        self.add_log('web', 'host update: %s'
+                     % ('applied' if result.get('ok') else result.get('error', 'failed')))
+        return (200 if result.get('ok') else 500), {'ok': result.get('ok', False),
+                                                    'update': result}
 
     def api_connect_parse(self, body, _query):
         """Say what a typed address will be taken to mean, before acting on it.

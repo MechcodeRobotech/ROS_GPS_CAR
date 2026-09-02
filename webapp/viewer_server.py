@@ -272,6 +272,8 @@ class Viewer:
         route('POST', '/api/heartbeat', lambda body, query: (200, {'ok': True, 'state': 'VIEWER', 'estop': False}))
         route('GET', '/api/topics', self.topics_list)
         route('GET', '/api/connect', self.api_connect)
+        route('GET', '/api/update/check', self.api_update_check)
+        route('POST', '/api/update/apply', self.api_update_apply)
         route('POST', '/api/connect/parse', self.api_connect_parse)
         route('GET', '/api/params', self.api_params_get)
         route('POST', '/api/params', self.api_params_set)
@@ -445,6 +447,17 @@ class Viewer:
             else:
                 self._params_cache = {'count': 0, 'params': []}
         return self._params_cache
+
+    def api_update_check(self, _body, _query):
+        """The viewer does not manage the robot's software - say so plainly."""
+        return 200, {'ok': True, 'update': {
+            'ok': True, 'update_available': False,
+            'message': 'the viewer does not update the robot - run the update '
+                       'from the machine running the stack'}}
+
+    def api_update_apply(self, _body, _query):
+        return 403, {'ok': False,
+                     'error': 'the viewer cannot update the robot'}
 
     def api_connect_parse(self, body, _query):
         """Same interpretation as the robot server - the parser is shared."""
