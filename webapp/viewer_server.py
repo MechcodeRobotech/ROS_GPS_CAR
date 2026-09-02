@@ -272,6 +272,7 @@ class Viewer:
         route('POST', '/api/heartbeat', lambda body, query: (200, {'ok': True, 'state': 'VIEWER', 'estop': False}))
         route('GET', '/api/topics', self.topics_list)
         route('GET', '/api/connect', self.api_connect)
+        route('POST', '/api/connect/parse', self.api_connect_parse)
         route('GET', '/api/params', self.api_params_get)
         route('POST', '/api/params', self.api_params_set)
         route('POST', '/api/params/reset', self.api_params_reset)
@@ -444,6 +445,17 @@ class Viewer:
             else:
                 self._params_cache = {'count': 0, 'params': []}
         return self._params_cache
+
+    def api_connect_parse(self, body, _query):
+        """Same interpretation as the robot server - the parser is shared."""
+        try:
+            from gps_localize import connect_target
+        except ImportError:
+            import connect_target                      # frozen build, flat modules
+        t = connect_target.parse(body.get('text', ''))
+        out = t.as_dict()
+        out['candidates'] = connect_target.candidates(t)
+        return (200 if t.ok else 400), {'ok': t.ok, 'target': out}
 
     def api_params_get(self, _body, _query):
         m = self._param_manifest()

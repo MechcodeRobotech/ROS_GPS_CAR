@@ -198,6 +198,7 @@
       tab.classList.add('active');
       $('tab-' + tab.dataset.tab).classList.add('active');
       if (tab.dataset.tab === 'map') { state.fitRequested = true; drawMap(); }
+      if (tab.dataset.tab === 'cfg') loadParams();
       if (tab.dataset.tab === 'cfg' && !state.cfg.data) loadConfig(state.cfg.group);
       if (tab.dataset.tab === 'wp') loadWaypoints();
     });
@@ -1442,6 +1443,117 @@
 
   canvas.addEventListener('pointerup', finishPose);
   canvas.addEventListener('pointercancel', function () { state.poseTool.drag = null; drawMap(); });
+
+  /* --------------------------------------- robot parameters (T69) ---------
+   * The settings page is BUILT from whatever the board declares, so adding a
+   * tunable is one line in the firmware table and nothing here.
+   *
+   * Two things it must be honest about, because both are invisible otherwise:
+   * a value the board has not reported reads "—" rather than showing the
+   * default as though it were live, and a STOPPED parameter is disabled while
+   * the robot is moving with the reason attached rather than failing on save. */
+  var paramsState = { moving: false, entries: [] };
+
+  function paramRow(p) {
+    var row = document.createElement('div');
+    row.className = 'cfg-row';
+
+    var label = document.createElement('label');
+    label.textContent = p.key + (p.unit ? ' (' + p.unit + ')' : '');
+    label.title = p.help || '';
+    label.htmlFor = 'param_' + p.index;
+
+    var input = document.createElement('input');
+    input.type = 'number';
+    input.step = 'any';
+    input.min = p.min;
+    input.max = p.max;
+    input.id = 'param_' + p.index;
+    input.value = (p.value === null || p.value === undefined) ? '' : p.value;
+    input.placeholder = (p.value === null || p.value === undefined) ? '—' : '';
+
+    var blocked = (p.when === 'stopped' && paramsState.moving);
+    input.disabled = blocked;
+
+    var note = document.createElement('span');
+    note.className = 'mut';
+    note.textContent = '[' + p.min + ' … ' + p.max + ']' +
+      (p.when === 'stopped' ? '  · stopped only' : '') +
+      (blocked ? '  · หยุดหุ่นก่อน / stop the robot first' : '');
+    note.title = p.help || '';
+
+    var save = document.createElement('button');
+    save.className = 'btn';
+    save.textContent = 'บันทึก / Set';
+    save.disabled = blocked;
+    save.addEventListener('click', function () {
+      var value = parseFloat(input.value);
+      if (isNaN(value)) { $('paramsMsg').textContent = p.key + ': ใส่ตัวเลข / needs a number'; return; }
+      $('paramsMsg').textContent = 'กำลังบันทึก / saving ' + p.key + '…';
+      api('/api/params', { key: p.key, value: value }).then(function (r) {
+        if (r && r.ok) {
+          $('paramsMsg').textContent = p.key + ' = ' + r.value + ' ✓';
+          // Re-read rather than trust the write: the board is the authority on
+          // what it holds, and a set that was refused downstream would
+          // otherwise leave the page showing a value nothing is using.
+          setTimeout(loadParams, 800);
+        } else {
+          $('paramsMsg').textContent = (r && r.error) || 'ไม่สำเร็จ / failed';
+        }
+      });
+    });
+
+    row.appendChild(label);
+    row.appendChild(input);
+    row.appendChild(save);
+    row.appendChild(note);
+    return row;
+  }
+
+  function loadParams() {
+    var box = $('paramsForm');
+    if (!box) return;
+    api('/api/params').then(function (r) {
+      if (!r || !r.ok) { box.textContent = 'อ่านค่าไม่ได้ / cannot read parameters'; return; }
+      paramsState.moving = !!r.moving;
+      paramsState.entries = r.params || [];
+      box.textContent = '';
+
+      if (!r.from_robot) {
+        var warn = document.createElement('p');
+        warn.className = 'hint';
+        warn.textContent = 'ยังไม่ได้รับค่าจากบอร์ด — ช่องที่ว่างคือยังไม่รู้ค่าจริง / ' +
+          'the board has not reported its values yet, so blank fields are unknown ' +
+          'rather than zero';
+        box.appendChild(warn);
+      }
+
+      var groups = {};
+      paramsState.entries.forEach(function (p) {
+        (groups[p.group] = groups[p.group] || []).push(p);
+      });
+      Object.keys(groups).forEach(function (name) {
+        var head = document.createElement('h4');
+        head.textContent = name;
+        box.appendChild(head);
+        groups[name].forEach(function (p) { box.appendChild(paramRow(p)); });
+      });
+    });
+  }
+
+  if ($('paramsReload')) {
+    $('paramsReload').addEventListener('click', loadParams);
+  }
+  if ($('paramsReset')) {
+    $('paramsReset').addEventListener('click', function () {
+      if (!window.confirm('คืนค่าเริ่มต้นทั้งหมดในบอร์ด?\nReset every parameter on the robot to its default?')) return;
+      api('/api/params/reset', {}).then(function (r) {
+        $('paramsMsg').textContent = (r && r.ok) ? 'คืนค่าแล้ว / reset ✓'
+                                                 : ((r && r.error) || 'failed');
+        setTimeout(loadParams, 800);
+      });
+    });
+  }
 
   /* ------------------------------------------------- bug reports ---------
    * Saved on this machine with the robot's state attached. The attached state

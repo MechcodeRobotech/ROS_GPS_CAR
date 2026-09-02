@@ -316,6 +316,24 @@
       <span id="cfgMsg" class="hint" role="status" aria-live="polite"></span>
     </div>
   </div>
+
+  <div class="card">
+    <h3>ค่าที่เก็บในหุ่นยนต์ / Stored on the robot
+      <small>บันทึกในบอร์ด ไม่ใช่ในคอมฯ · kept on the board, not on this PC</small></h3>
+    <p class="hint">
+      ค่าพวกนี้อยู่ในหน่วยความจำของบอร์ด จึงอยู่ครบแม้เปลี่ยนคอมฯ ที่ใช้สั่งงาน
+      รีบูต หรือแฟลชเฟิร์มแวร์ใหม่ ·
+      These live in the board's own memory, so they survive a different control
+      PC, a reboot and a reflash. Values marked <b>stopped</b> can only be
+      changed while the robot is standing still.
+    </p>
+    <div class="row">
+      <button class="btn" id="paramsReload">โหลดใหม่ / Reload</button>
+      <button class="btn danger" id="paramsReset">คืนค่าเริ่มต้น / Reset all</button>
+      <span id="paramsMsg" class="hint" role="status" aria-live="polite"></span>
+    </div>
+    <div id="paramsForm" class="cfg-form"></div>
+  </div>
 </section>
 
 <!-- ============================== LOG =============================== -->

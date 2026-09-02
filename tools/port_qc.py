@@ -467,7 +467,15 @@ def check_11_contract_match(root: Path, files: list[Path]) -> Result:
                    "while verifying nothing")
     for topic in sorted(expected):
         short = topic.rsplit("/", 1)[-1]
-        if topic not in py_src and f'"{short}"' not in py_src and f"'{short}'" not in py_src:
+        # Host nodes write topics three ways, and all three are legitimate:
+        # the full path, the last segment, or - most commonly - NS + the rest,
+        # which is how every node in this workspace does it. Missing the third
+        # made this report a subscribed topic as unreferenced.
+        parts = topic.split('/')
+        suffix = '/' + '/'.join(parts[2:]) if len(parts) > 2 else topic
+        if (topic not in py_src
+                and f'"{short}"' not in py_src and f"'{short}'" not in py_src
+                and f"'{suffix}'" not in py_src and f'"{suffix}"' not in py_src):
             bad.append(f"topic {topic} is never referenced by any host node")
     # The decoder must cover every field the firmware fills. A host node may express
     # that three ways, in descending order of quality: a declared length constant, a

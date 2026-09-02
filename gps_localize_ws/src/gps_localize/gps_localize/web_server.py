@@ -37,7 +37,7 @@ from std_msgs.msg import Bool, Float32MultiArray, Int32, String
 
 from gps_localize import telemetry as tel
 from gps_localize.configstore import GROUPS, ConfigStore
-from gps_localize import qr
+from gps_localize import connect_target, qr
 from gps_localize.httpd import (
     SseBroadcaster, WebApp, WebServer, connect_info, urls_for)
 
@@ -349,6 +349,7 @@ class WebServerNode(Node):
         route('POST', '/api/nav', self.api_nav)
         route('POST', '/api/manual', self.api_manual)
         route('POST', '/api/estop', self.api_estop)
+        route('POST', '/api/connect/parse', self.api_connect_parse)
         route('GET', '/api/params', self.api_params_get)
         route('POST', '/api/params', self.api_params_set)
         route('POST', '/api/params/reset', self.api_params_reset)
@@ -372,6 +373,19 @@ class WebServerNode(Node):
     # There is no ros2 CLI on a Windows or Docker Desktop machine, so the
     # browser has to be able to show the whole graph: every topic, its type,
     # how many nodes are on each end, the rate, and the live value.
+
+    def api_connect_parse(self, body, _query):
+        """Say what a typed address will be taken to mean, before acting on it.
+
+        Separate from actually connecting on purpose: the UI can show the
+        interpretation as the person types, so "module@module.local" visibly
+        becomes "module.local, dropped the username" rather than silently
+        failing a lookup later with no explanation.
+        """
+        target = connect_target.parse(body.get('text', ''))
+        out = target.as_dict()
+        out['candidates'] = connect_target.candidates(target)
+        return (200 if target.ok else 400), {'ok': target.ok, 'target': out}
 
     # ------------------------------------------------------------ parameters
     # The settings page is BUILT from what the board declares, so adding a
