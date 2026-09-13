@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 """How close to real time is the firmware's control loop, measured from the PC.
 
 The firmware reports `loop_us`, but that number only covers the time spent

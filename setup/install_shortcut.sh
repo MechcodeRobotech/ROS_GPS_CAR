@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 # Put a "GPS_Localize" icon on the Ubuntu desktop and in the application menu,
 # so the customer only has to double-click it.
 #

@@ -1,3 +1,9 @@
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 """YAML configuration store shared by every node.
 
 The customer edits settings from the web UI, so the files that are actually

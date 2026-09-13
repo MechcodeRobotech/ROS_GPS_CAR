@@ -1,3 +1,9 @@
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 """Geodesy helpers for GPS waypoint navigation.
 
 Everything works in WGS-84 degrees in, metres/degrees out. The robot moves a

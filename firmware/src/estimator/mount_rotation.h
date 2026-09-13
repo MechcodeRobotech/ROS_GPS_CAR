@@ -1,3 +1,12 @@
+/*
+ * Copyright 2026 Phuthiphong Wongchantib
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ *
+ * Original author / contributor:
+ * Phuthiphong Wongchantib
+ */
 /**
  * @file mount_rotation.h
  * @brief How a part is turned relative to the robot, said either way round.

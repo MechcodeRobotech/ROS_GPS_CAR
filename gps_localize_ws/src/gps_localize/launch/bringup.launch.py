@@ -1,3 +1,9 @@
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 """Start everything: micro-ROS agent, navigation, safety watchdog and the web UI.
 
     ros2 launch gps_localize bringup.launch.py

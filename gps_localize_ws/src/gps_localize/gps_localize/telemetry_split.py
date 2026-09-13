@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 """Fan the board's single telemetry frame out into six typed topics.
 
 WHY THE SPLIT HAPPENS HERE AND NOT ON THE ESP32

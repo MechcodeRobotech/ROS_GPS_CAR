@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 """Watch the robot over hours and record anything that would otherwise be missed.
 
 WHY A SOAK RUN NEEDS ITS OWN TOOL

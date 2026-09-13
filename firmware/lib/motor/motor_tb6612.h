@@ -1,3 +1,12 @@
+/*
+ * Copyright 2026 Phuthiphong Wongchantib
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ *
+ * Original author / contributor:
+ * Phuthiphong Wongchantib
+ */
 /**
  * @file motor_tb6612.h
  * @brief TB6612FNG channel driver (PWM + 2 direction pins) using the ESP32 LEDC peripheral.

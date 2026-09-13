@@ -1,3 +1,12 @@
+/*
+ * Copyright 2026 Phuthiphong Wongchantib
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ *
+ * Original author / contributor:
+ * Phuthiphong Wongchantib
+ */
 /**
  * MotorModel tests: back-EMF wheel speed from the INA226 volts and amps,
  * the series diode compensation (schematic draft_5) and the fault detection.

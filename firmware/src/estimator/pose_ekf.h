@@ -1,3 +1,12 @@
+/*
+ * Copyright 2026 Phuthiphong Wongchantib
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ *
+ * Original author / contributor:
+ * Phuthiphong Wongchantib
+ */
 /**
  * @file pose_ekf.h
  * @brief Extended Kalman filter for position, so GPS actually corrects it.

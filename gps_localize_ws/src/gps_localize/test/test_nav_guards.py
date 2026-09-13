@@ -1,3 +1,9 @@
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 """The guards around navigation state and around commanding motion.
 
 Every test here stands for a defect that a three-way code audit found in code

@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 """Drive the web UI in a real browser and check it still works.
 
     python3 tools/ui_test.py            (needs Edge/Chrome + pip install websocket-client)

@@ -175,3 +175,12 @@ to use a constant amount of RAM:
   no per-request state, browser trail and log lists capped
 
 Watch `ESP RAM ว่าง` in the web footer — a flat number means no leak.
+
+## License
+
+This project is licensed under the Apache License 2.0.
+
+Original development and substantial implementation:
+**Phuthiphong Wongchantib**
+
+See `LICENSE`, `NOTICE`, and `ATTRIBUTION.md` for details.

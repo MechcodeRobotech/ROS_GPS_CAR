@@ -1,3 +1,12 @@
+/*
+ * Copyright 2026 Phuthiphong Wongchantib
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ *
+ * Original author / contributor:
+ * Phuthiphong Wongchantib
+ */
 /**
  * @file version.h
  * @brief What firmware is on the board, so the host can say when it is old.

@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 """Turn the firmware's parameter table into a manifest the host and web can read.
 
 WHY GENERATE RATHER THAN DUPLICATE

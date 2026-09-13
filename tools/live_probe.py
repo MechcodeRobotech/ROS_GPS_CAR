@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 """Drive the running stack with synthetic firmware messages, and see what breaks.
 
 Every node that subscribes to something the ESP32 publishes has a code path that

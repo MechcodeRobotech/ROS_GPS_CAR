@@ -1,3 +1,9 @@
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 """QR encoding, with no dependencies, so the robot can hand a phone a link.
 
 WHY THIS IS WRITTEN OUT RATHER THAN IMPORTED

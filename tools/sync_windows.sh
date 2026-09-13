@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 # Move the project between this machine and the Windows share.
 #
 #   tools/sync_windows.sh push          here  -> the share (for testing on Windows)

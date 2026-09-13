@@ -17,7 +17,7 @@
     single message per cycle rather than six, which matters on Wi-Fi.
   </description>
   <maintainer email="manman7852078520@gmail.com">Mannaja78520</maintainer>
-  <license>MIT</license>
+  <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>rosidl_default_generators</buildtool_depend>

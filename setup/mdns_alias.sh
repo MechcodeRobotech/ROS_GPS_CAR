@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 # Publish a fixed name for the web UI on the local network.
 #
 # Without this the only way to reach the robot is to know the PC's IP address,

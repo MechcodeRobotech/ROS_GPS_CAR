@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 # Build the standalone Linux viewer: webapp/bin/GPS_Localize_Viewer
 #
 # Optional - on Ubuntu, run_ubuntu.sh already works with the system python3.

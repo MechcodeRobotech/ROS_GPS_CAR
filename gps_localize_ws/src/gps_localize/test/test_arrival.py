@@ -1,3 +1,9 @@
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 """Arrival must survive the receiver's own noise.
 
 The robot drove to a waypoint twice and never declared it reached. The cause was

@@ -1,3 +1,9 @@
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 """Prove the QR encoder produces codes that actually scan.
 
 A QR code cannot be reviewed by looking at it. Both bugs found while writing

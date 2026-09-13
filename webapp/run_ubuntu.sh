@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 # GPS_Localize Viewer - Ubuntu/Linux launcher (VIEW ONLY, cannot control the robot).
 #
 #   ./run_ubuntu.sh                  view on this machine only

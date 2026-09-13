@@ -1,3 +1,9 @@
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 """Web UI + safety watchdog only (no agent, no navigation).
 
 Handy on a desk: you can open the UI, look at the pages and edit settings

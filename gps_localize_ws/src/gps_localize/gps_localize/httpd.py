@@ -1,3 +1,9 @@
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 """Tiny dependency-free HTTP + Server-Sent-Events server.
 
 Why not rosbridge/aiohttp/flask? The customer must be able to install this on a

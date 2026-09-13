@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 """Capture read-only setup checks in an offscreen GTK terminal.
 
 Requires existing GTK 3/VTE Python bindings and a graphical display.

@@ -1,3 +1,9 @@
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 """What someone typed, and what it should be taken to mean.
 
 Pure string handling, so it is fully testable with no robot attached - which is

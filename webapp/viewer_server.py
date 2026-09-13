@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 """GPS_Localize Viewer - the web UI without ROS.
 
 Runs on a plain Windows or Ubuntu machine (no ROS 2, no robot) so you can look

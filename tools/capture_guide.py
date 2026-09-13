@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# Copyright 2026 Phuthiphong Wongchantib
+#
+# Licensed under the Apache License, Version 2.0.
+#
+# Original author / contributor:
+# Phuthiphong Wongchantib
 """Capture the actual UI using an isolated, explicitly labelled example backend.
 
 Install Playwright and its Chromium browser in a local development environment.
