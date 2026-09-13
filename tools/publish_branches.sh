@@ -44,9 +44,9 @@ BRANCHES=(${BRANCHES[@]})
 # What each branch carries. Paths are relative to the repository root.
 subset_for() {
     case "$1" in
-        workspace) echo "gps_localize_ws webapp tools setup docs .gitignore README.md LICENSE NOTICE ATTRIBUTION.md" ;;
-        firmware)  echo "firmware tools setup docs .gitignore README.md LICENSE NOTICE ATTRIBUTION.md" ;;
-        docker)    echo "gps_localize_ws webapp firmware tools setup docs .gitignore README.md LICENSE NOTICE ATTRIBUTION.md" ;;
+        workspace) echo "gps_localize_ws webapp tools setup docs .gitignore README.md LICENSE NOTICE ATTRIBUTION.md esp32_38pin_pinout.jpg heap_profile.pdf heap_profile.png pio_test_report.pdf" ;;
+        firmware)  echo "firmware tools setup docs .gitignore README.md LICENSE NOTICE ATTRIBUTION.md esp32_38pin_pinout.jpg heap_profile.pdf heap_profile.png pio_test_report.pdf" ;;
+        docker)    echo "gps_localize_ws webapp firmware tools setup docs .gitignore README.md LICENSE NOTICE ATTRIBUTION.md esp32_38pin_pinout.jpg heap_profile.pdf heap_profile.png pio_test_report.pdf" ;;
         *) return 1 ;;
     esac
 }
