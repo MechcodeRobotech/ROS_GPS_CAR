@@ -20,7 +20,6 @@ Start with the installation route matching your machine and connection.
 | Interlocks and attended tests | [Safety](safety.md), [acceptance](acceptance.md) |
 | Calibration and control parameters | [Calibration](calibration.md), [tuning](tuning.md) |
 | Offline viewer and executable build | [Viewer README](../webapp/README.md) |
-| Source state, current work, next steps for Gemini | [HANDOFF](../HANDOFF.md) |
 
 `main` contains editable sources. `workspace`, `firmware`, and `docker` are
 mechanically generated subsets. An ignored local viewer executable, CAD export,

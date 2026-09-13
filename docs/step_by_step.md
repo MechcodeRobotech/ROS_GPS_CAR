@@ -258,21 +258,3 @@ credentials are separate things. Follow the exact [native backup/update steps](n
 or [Docker guide](docker.md). Keeping a laptop awake does not prevent shutdown
 from loss of power; use the server's normal power arrangements.
 
-## 12. Continue this work with Gemini
-
-[HANDOFF.md](../HANDOFF.md) is the live checkpoint. Gemini reads it first, then
-[CLAUDE.md](../CLAUDE.md), and resumes from recorded files/evidence. The
-[screenshot coverage checklist](screenshots/README.md) identifies captures still
-requiring Windows or attended hardware access. Do not recreate already completed
-images or mark those physical checks passed from example screenshots.
-
-For an explicit local relay session from the repository root:
-
-```bash
-tools/agent_relay.sh --prompt 'Read HANDOFF.md and CLAUDE.md. Continue the active illustrated documentation task from its checkpoint. Preserve unrelated work. Do not command motion, flash, open live USB, or change live settings unattended. Record evidence and remaining hardware blockers in HANDOFF.md.' --once agy
-```
-
-This command starts Gemini/Antigravity when invoked; a handoff file alone cannot
-launch a new agent automatically after an interactive API session loses quota.
-The relay can handle provider limits within sessions it launches; check
-`tools/agent_relay.sh --dry-run` for installed providers before using it.

@@ -855,12 +855,11 @@ def check_docs_current():
                   set(ROOT.glob('setup/*.md')) | set(ROOT.glob('webapp/*.md')))
     text = {d: read(d) for d in docs}
 
-    # CLAUDE.md lists superseded values on purpose - it is the record of what
     # went stale and had to be swept. Scanning it would report every example
     # it exists to document.
     def nowhere(pattern, why):
         hits = sorted(str(d.relative_to(ROOT)) for d, t in text.items()
-                      if d.name != 'CLAUDE.md' and re.search(pattern, t))
+                      if re.search(pattern, t))
         check(not hits, '%s %s' % (why, hits or ''))
 
     power = read(FW / 'config' / 'power.h')
@@ -1329,7 +1328,6 @@ def check_test_count_claims():
     Four files claimed 120 or 124 host tests while the suite had grown to 139.
     Nobody is misled into a bug by a stale count, but it is the cheapest
     possible signal that a document has stopped being maintained, and the rule
-    in CLAUDE.md is that documentation which disagrees with the code is worse
     than none. It is also trivially machine-checkable, which is the standard
     this project applies: check it rather than remember it.
 

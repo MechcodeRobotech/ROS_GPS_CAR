@@ -50,7 +50,6 @@ The corrected native suite passes all 261 cases. Static port checks pass 11/11;
 firmware Wi-Fi build passes in 15.737 s. `python3 tools/qc.py` passes all
 cross-file contracts. The final image is
 `sha256:747eaa213a2ec00f42eef25a580a09d1084297a530cc6cf9f82ee8b860133f53`.
-Full final gate results are recorded in HANDOFF.md.
 
 Git delivery: source snapshot `952257d` and its generated workspace, firmware,
 and docker branches were pushed atomically to the existing project remote.

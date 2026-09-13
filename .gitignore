@@ -53,5 +53,4 @@ PNG_Schematic*.zip
 windows_test_report.txt
 windows_test_report.json
 
-# tools/agent_relay.sh logs and cooldown state - local to this machine
 _relay/

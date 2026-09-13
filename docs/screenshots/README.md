@@ -21,7 +21,7 @@ accepted; they reached the local fixture, not the real server. The browser
 manifest records source hashes, capture names, exceptions and POST paths.
 The terminal manifest records displayed text, commands and exit codes.
 
-These are screen captures, not AI-generated illustrations. Terminal references
+These are screen captures. Terminal references
 are labelled because the source help text was displayed without connecting to a
 board. No private `network_secrets.h` is read by the capture tools.
 

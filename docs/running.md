@@ -179,7 +179,6 @@ the map.
 python3 tools/robot_qr.py            # a QR of the web address, for a phone
 python3 tools/soak_watch.py          # long-run watcher: resets, heap, loop timing
 python3 tools/loop_probe.py 45       # is the control loop real time? loop_us plus late IMU stamps
-tools/agent_relay.sh --dry-run       # which agents can take over: Claude, Codex, Gemini
 python3 tools/self_update.py --check # is this checkout behind the repository
 tools/publish_branches.sh            # regenerate the workspace/firmware/docker branches
 ```
