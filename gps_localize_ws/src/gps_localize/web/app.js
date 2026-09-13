@@ -1746,7 +1746,7 @@
   }
 
   window.addEventListener('keydown', function (event) {
-    if (event.target.tagName === 'INPUT' || event.target.tagName === 'SELECT') return;
+    if (event.target.tagName === 'INPUT' || event.target.tagName === 'SELECT' || event.target.tagName === 'TEXTAREA') return;
     if (event.key === ' ' || event.key === 'Spacebar' || event.code === 'Space') {   // space = stop everything now
       keysDown = Object.create(null);
       stopJog();
