@@ -1,5 +1,5 @@
 
-QC  /home/mannaja/GPS_Localize   2026-09-12 23:10:40
+QC  ${USER_HOME}/GPS_Localize   2026-09-12 23:10:40
 ----------------------------------------------------------
    1  PASS  no zero-byte files       all files have content  (0.19s)
    2  PASS  LF line endings          no CRLF found  (0.99s)

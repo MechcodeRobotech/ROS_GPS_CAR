@@ -109,7 +109,8 @@ python3 tools/live_probe.py
 
 ## Flashing the board
 
-Over Wi-Fi, with no cable, from the web UI's Firmware section — or by hand:
+With the robot stopped and motor power disconnected, update over Wi-Fi using
+the firmware pull API below. The current UI has no separate Firmware section:
 
 ```bash
 cd firmware && pio run -e wifi            # build; the host serves the result

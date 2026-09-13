@@ -1,5 +1,7 @@
 # GPS_Localize
 
+Start with the [illustrated step-by-step guide](docs/step_by_step.md) for screenshots of each UI tab and the [Wi-Fi setup walkthrough](docs/wifi_setup.md).
+
 หุ่นยนต์วิ่งกลางแจ้งตาม GPS waypoint · ESP32 (micro-ROS) + ROS 2 Humble + เว็บควบคุมในเครื่อง
 
 Outdoor GPS-waypoint robot. The ESP32 closes the heading and speed loops
@@ -75,6 +77,9 @@ docs/                     hardware, architecture, topics, install, web guide, tu
 | Windows or Ubuntu PC with no robot | `webapp/run_windows.bat` / `run_ubuntu.sh` | **no real robot** — every button drives a simulated one, clearly labelled; good for training |
 
 ## Installation choices
+
+**Without Docker:** follow [native Ubuntu / Windows WSL2 installation](docs/native.md)
+for required software, Wi-Fi or USB firmware, manual startup, autostart, and updates.
 
 For Docker on Linux or Windows, including **Windows USB into Docker**, follow
 [docs/docker.md](docs/docker.md). It lists required software and exact build,

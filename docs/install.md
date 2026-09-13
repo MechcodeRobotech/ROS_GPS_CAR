@@ -1,5 +1,11 @@
 # Install and run — Ubuntu 22.04 + ROS 2 Humble
 
+Start with the [illustrated step-by-step guide](step_by_step.md) for screenshots of each UI tab and the [Wi-Fi setup walkthrough](wifi_setup.md).
+
+For the complete **no-Docker** path, including Windows WSL2 USB, environment
+setup, manual operation, and serial autostart, start with [native.md](native.md).
+This page retains additional network and installation reference details.
+
 > **Shortcut:** `setup/setup_and_run.sh` does sections 1 to 6 of this page by
 > itself — it checks the machine, installs ROS 2 and the dependencies if they
 > are missing, builds the workspace, opens the firewall and starts everything.
@@ -77,7 +83,7 @@ cp firmware/config/network_secrets.example.h firmware/config/network_secrets.h
 
 Edit `WIFI_NETWORKS` and the OTA password in that local file. Never commit it.
 The board's saved NVS network list takes precedence after initial setup; use
-Wi-Fi settings in the web UI or the 115200-baud console's `wifi add` command to
+the Wi-Fi firmware's 115200-baud USB console `wifi add` command to
 change an existing board. `agent <PC-LAN-IP>` saves the server address;
 `agent auto` restores discovery. Check `agent` to see the current choice.
 Defaults such as port and domain live in `firmware/config/network.h`.

@@ -1,4 +1,4 @@
-GPS_Localize QC  -  /home/mannaja/GPS_Localize
+GPS_Localize QC  -  ${USER_HOME}/GPS_Localize
 
 [nodes import cleanly]
   ok    every node module imports (14 checked) 

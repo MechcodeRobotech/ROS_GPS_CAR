@@ -10,7 +10,7 @@
  *
  * WHAT THIS LIST IS FOR
  *   It is only the FIRST-BOOT SEED. The board keeps its own network list in
- *   NVS, editable from the web UI. On a board whose NVS is empty the seed below
+ *   NVS, editable from the Wi-Fi firmware USB settings console. On a board whose NVS is empty the seed below
  *   is copied in once; after that the board's own list wins and this file is
  *   ignored. So you normally edit Wi-Fi from the web, not here — this exists so
  *   a freshly flashed board can reach the network the very first time.

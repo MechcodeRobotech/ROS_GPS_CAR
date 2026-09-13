@@ -2936,6 +2936,26 @@
    "files": "docs/windows_handoff.md, docs/docker_verification.md, HANDOFF.md",
    "test": "Follow Windows acceptance checklist: actual device attach, flash serial with motor power disconnected, fresh telemetry, unplug/replug recovery, WSL restart, persistent settings",
    "result": "No Windows machine is accessible from this Linux session. Software route and Linux checks completed in T211; physical Windows tests must not be marked passed from pseudo-terminal or Linux container tests. Gemini continuation instructions are recorded in HANDOFF.md."
+  },
+  {
+   "id": "T213",
+   "phase": "D",
+   "needs": "PC",
+   "state": "DONE",
+   "title": "Complete installation and operation guide without Docker",
+   "files": "docs/native.md, README.md, docs/README.md, docs/install.md, setup/README.md, HANDOFF.md",
+   "test": "Source-check commands, installer dry-run, Markdown links and four required gates",
+   "result": "Native Ubuntu/WSL no-Docker guide delivered, including dependencies, USB/Wi-Fi, firmware, manual/service launch, backup/update. 67 Bash examples across 10 changed guides parse; links valid. QC, static port 11/11, native 261/261, Wi-Fi build pass. Installer preview only; no fresh-machine install claimed."
+  },
+  {
+   "id": "T214",
+   "phase": "D",
+   "needs": "PC; destination Windows for OS-specific installation screenshots",
+   "state": "HW-BLOCKED",
+   "title": "Illustrated step-by-step setup and operation manual with Gemini continuation",
+   "files": "docs/step_by_step.md, docs/screenshots/, tools/capture_guide.py, HANDOFF.md",
+   "test": "Capture actual UI with isolated example data; inspect images; cover every tab and Settings subgroup; source-check Wi-Fi instructions; four gates and link checks",
+   "result": "Local documentation complete: 33 labelled screenshots, all 10 UI tabs, 7 server groups, 9 board groups, waypoint editor/topic watch, native checks and Wi-Fi references; reproducible capture tools and Gemini checkpoint. No browser errors or live robot interaction. Remaining actual Windows/Ubuntu OS installation and attended physical screenshots require destination hardware/operator; exact checklist docs/screenshots/README.md. Four required gates pass."
   }
  ]
 }

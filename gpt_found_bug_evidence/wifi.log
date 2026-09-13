@@ -14,11 +14,11 @@ LDF Modes: Finder ~ deep+, Compatibility ~ soft
 Installing importlib-resources with pip at PlatformIO environment
 /usr/bin/python3 -m pip install importlib-resources
 Defaulting to user installation because normal site-packages is not writeable
-Requirement already satisfied: importlib-resources in /home/mannaja/.local/lib/python3.10/site-packages (7.1.0)
+Requirement already satisfied: importlib-resources in ${USER_HOME}/.local/lib/python3.10/site-packages (7.1.0)
 Installing pyyaml with pip at PlatformIO environment
 /usr/bin/python3 -m pip install pyyaml
 Defaulting to user installation because normal site-packages is not writeable
-Requirement already satisfied: pyyaml in /home/mannaja/.local/lib/python3.10/site-packages (6.0.3)
+Requirement already satisfied: pyyaml in ${USER_HOME}/.local/lib/python3.10/site-packages (6.0.3)
 Installing markupsafe==2.0.1 with pip at PlatformIO environment
 /usr/bin/python3 -m pip install markupsafe==2.0.1
 Defaulting to user installation because normal site-packages is not writeable
@@ -53,8 +53,8 @@ Dependency Graph
 |-- HTTPClient @ 2.0.0
 |-- WiFiClientSecure @ 2.0.0
 Building in release mode
-Retrieving maximum program size /home/mannaja/.pio_workspaces/GPS_Localize/build/wifi/firmware.elf
-Checking size /home/mannaja/.pio_workspaces/GPS_Localize/build/wifi/firmware.elf
+Retrieving maximum program size ${USER_HOME}/.pio_workspaces/GPS_Localize/build/wifi/firmware.elf
+Checking size ${USER_HOME}/.pio_workspaces/GPS_Localize/build/wifi/firmware.elf
 Advanced Memory Usage is available via "PlatformIO Home > Project Inspect"
 RAM:   [===       ]  33.0% (used 108116 bytes from 327680 bytes)
 Flash: [=====     ]  54.0% (used 1060737 bytes from 1966080 bytes)

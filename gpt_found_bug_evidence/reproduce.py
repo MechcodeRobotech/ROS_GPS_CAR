@@ -1,6 +1,6 @@
 import ast, json, math, sys, types
 from pathlib import Path
-ROOT=Path('/home/mannaja/GPS_Localize')
+ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'gps_localize_ws/src/gps_localize'))
 from gps_localize import geo
 class Msg:

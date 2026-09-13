@@ -1,10 +1,13 @@
 # Documentation map
 
+Start with the [illustrated step-by-step guide](step_by_step.md) for screenshots of each UI tab and the [Wi-Fi setup walkthrough](wifi_setup.md).
+
 Start with the installation route matching your machine and connection.
 
 | Need | Guide |
 |---|---|
-| Choose native Linux, Docker, Windows Wi-Fi, or Windows USB | [Docker installation matrix](docker.md#choose-an-installation) |
+| Install without Docker on Ubuntu or Windows WSL2, including USB | [Native guide](native.md) |
+| Choose a Docker deployment | [Docker installation matrix](docker.md#choose-an-installation) |
 | Install ROS 2 and run directly on Ubuntu | [Native installation](install.md), [setup launcher](../setup/README.md) |
 | Docker installation, USB attachment, flashing, start/stop, backup | [Docker guide](docker.md) |
 | Current Docker test evidence and untested hardware paths | [Verification record](docker_verification.md) |

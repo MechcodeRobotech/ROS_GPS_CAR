@@ -1,5 +1,7 @@
 # setup/ — ติดตั้งและเปิดระบบ ด้วยคลิกเดียว
 
+Start with the [illustrated step-by-step guide](../docs/step_by_step.md) for screenshots of each UI tab and the [Wi-Fi setup walkthrough](../docs/wifi_setup.md).
+
 ## เครื่องหุ่นยนต์ (Ubuntu) — ใช้ไฟล์นี้ไฟล์เดียว
 
 ```bash
@@ -76,3 +78,12 @@ For the complete server on Windows, use [docs/docker.md](../docs/docker.md).
 server or attach USB. `setup_windows.ps1` configures the Docker Desktop Wi-Fi
 firewall rules. WSL USB requires usbipd attachment and a Docker daemon in the
 same Ubuntu distribution, as described in the guide.
+
+## Run without Docker
+
+See [the complete native guide](../docs/native.md) for Ubuntu 22.04 with ROS 2
+Humble, or Windows WSL2 Ubuntu with USB attachment. It covers dependencies,
+agent/workspace builds, firmware, manual launch, services, backup, and updates.
+On a Windows browser-only PC, open the existing server URL; no ROS or WSL is
+needed there. The native installer starts services, so do not run a duplicate
+manual launch alongside them.

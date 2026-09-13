@@ -1,5 +1,9 @@
 # Docker installation and operation
 
+Start with the [illustrated step-by-step guide](step_by_step.md) for screenshots of each UI tab and the [Wi-Fi setup walkthrough](wifi_setup.md).
+
+For installation **without Docker**, use the [native Ubuntu / Windows WSL2 guide](native.md).
+
 ## Choose an installation
 
 | Machine and connection | Install on the host | Run |

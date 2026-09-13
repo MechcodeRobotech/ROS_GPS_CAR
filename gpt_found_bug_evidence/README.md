@@ -15,4 +15,4 @@ g++ -std=c++17 -DMOCK_ARDUINO -DUNIT_TEST \
 /tmp/gps-audit-reproduce
 ```
 
-The Python probe currently points ROOT at `/home/mannaja/GPS_Localize`. It extracts unmodified production classes with AST and supplies local message/publisher stubs. The configuration reproduction uses a temporary directory that is removed afterwards. These are diagnostic reproductions, not additions to the project's test suite. Logs record the original audit run.
+The Python probe resolves ROOT relative to its own location. It extracts unmodified production classes with AST and supplies local message/publisher stubs. The configuration reproduction uses a temporary directory that is removed afterwards. These are diagnostic reproductions, not additions to the project's test suite. Logs record the original audit run, with the personal home path normalized to `${USER_HOME}` for portable publication; results and timestamps are unchanged.

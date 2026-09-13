@@ -93,6 +93,69 @@ else compares two different machines.
 - Before stopping for any reason - finished, stuck, or near your own usage
   limit - update the Queue: what you did, what you measured, the exact next step.
 
+## Active work — illustrated setup/manual, T213 and T214
+
+Latest user request: finish the no-Docker guide and expand into step-by-step
+setup/run documentation with screenshots of every UI screen, including where
+Wi-Fi settings actually live and what/where/when/why/how explanations. Maintain
+a Gemini handoff across limits. This task is the current priority over the
+historical queue and completed Docker release below.
+
+- T213 native guide and T214 illustrated guides are complete in `_work/native_guide/`.
+  New docs: `docs/native.md`, `docs/step_by_step.md`, `docs/wifi_setup.md`,
+  `docs/screenshots/README.md`; 33 PNGs and two provenance manifests.
+  All 10 UI tabs, 7 Settings groups, 9 board groups, row editor/topic watch,
+  three read-only native checks and two source Wi-Fi references are captured.
+  Browser capture: no exceptions; only fixture `/api/heartbeat` POSTs.
+  No live USB, configuration, motion, flash or service restart occurred.
+- Corrected stale claims that the browser edits Wi-Fi credentials or has a
+  Firmware section. Wi-Fi credentials use the wifi firmware's 115200 USB
+  console; On the robot → network only changes transmit power. Console SSIDs
+  cannot contain spaces. Source: `firmware/src/net/settings_console.h`.
+- Staged QC and static port checks pass. Ten changed guides have valid local
+  file links and 67 syntactically valid Bash blocks. Two capture scripts compile.
+  Terminal checks all exit 0. Earlier host native 261/261 and Wi-Fi build pass;
+  final promotion gates will be recorded below. Evidence:
+  `_work/native_guide_evidence/`, `_work/screenshot_guide_evidence/`.
+- Capture dependencies already installed locally. Browser reproduction:
+  `PYTHONPATH=_work/screenshot_guide_evidence/python PLAYWRIGHT_BROWSERS_PATH=$PWD/_work/screenshot_guide_evidence/browsers python3 _work/native_guide/tools/capture_guide.py --root . --out _work/native_guide/docs/screenshots`.
+  Terminal: `python3 _work/native_guide/tools/capture_terminal_guide.py --root . --out _work/native_guide/docs/screenshots`.
+  GTK offscreen drawable warning is harmless; inspected images saved correctly.
+- Remaining: destination Windows OS/install/USB screenshots and physical
+  acceptance; fresh Ubuntu installation recording; attended board setup captures.
+  Exact checklist is `docs/screenshots/README.md` in staging. Do not fabricate
+  these or mark them passed from sample data. T212 remains Windows HW-BLOCKED.
+- Preserve unrelated untracked `pio_test_output.txt`; never stage/remove it.
+
+Final local release checks (2026-09-13 20:09 Asia/Bangkok):
+- QC PASS; static port 11/11 PASS; native 261/261 PASS in 1.190 s;
+  Wi-Fi build PASS in 10.909 s. Logs `final-*.log` in the evidence folder.
+- Existing committed audit evidence broke portability QC: made its standalone
+  Python ROOT relative, normalized personal home paths in historical logs to
+  `${USER_HOME}`, and documented that normalization. No recorded results changed.
+  Terminal JSON manifest likewise normalizes home paths; PNGs retain actual output.
+- Existing image was stale after intervening source commits. Rebuilt
+  `gps_localize:latest`, image ID
+  `sha256:315c4cd9634ca9f9ebe13bf2f663be6826eea1dcffce5486b43d320f90f335e0`.
+  Network-none smoke container starts five host nodes, returns valid `/api/state`,
+  and contains no private firmware header. Launch defaults to domain 10 despite
+  environment override; network namespace was isolated with `--network none`.
+  Smoke container stopped and removed. See docker-rebuild.log/docker-smoke.log.
+- Promotion snapshots: `_patches/illustrated_guides_20260913_200616/` and
+  `_patches/illustrated_guides_20260913_200733/`, each with binary diffs and
+  working rollback. Reverse order to roll back both. First contains 48 files;
+  second contains 7 portability/capture fixes.
+- T213 DONE. T214 HW-BLOCKED only for unavailable actual OS/install/physical
+  captures; all locally available guide/capture work is delivered. T212 remains
+  Windows physical acceptance. `docs/screenshots/README.md` is the exact checklist.
+
+Next release action: commit staged task files and regenerate/publish all four
+branches. Use an isolated normal local clone for generation so unrelated
+`pio_test_output.txt` remains untouched. After Git delivery, Gemini's next task
+is destination-machine capture/acceptance from the checklist, not recreating
+completed UI screenshots. No Gemini process has been launched; the explicit
+relay command is in `docs/step_by_step.md`. Update this checkpoint with Git outcome.
+
 ## Current priority — Docker and Windows release (2026-09-13)
 
 The user requested complete installation/operation documentation, Docker
