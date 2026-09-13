@@ -11,7 +11,6 @@ Start with the installation route matching your machine and connection.
 | Install ROS 2 and run directly on Ubuntu | [Native installation](install.md), [setup launcher](../setup/README.md) |
 | Docker installation, USB attachment, flashing, start/stop, backup | [Docker guide](docker.md) |
 | Current Docker test evidence and untested hardware paths | [Verification record](docker_verification.md) |
-| Windows acceptance and agent continuation | [Windows handoff](windows_handoff.md) |
 | Everyday operation and command examples | [Running](running.md) |
 | UI tabs, configuration, waypoint controls | [Web UI](web_ui.md) |
 | Wiring, pin assignments, power, sensors | [Hardware](hardware.md) |

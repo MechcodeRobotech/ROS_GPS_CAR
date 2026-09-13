@@ -40,7 +40,6 @@ docker compose -f docker-compose.yml -f docker-compose.windows.yml \
 
 Reproduce runtime checks using the [installation guide](docker.md), preserving
 its transport overrides. Check the firmware node and fresh telemetry separately
-from HTTP health. Complete [Windows acceptance](windows_handoff.md) on the
 Windows destination and append versions, commands, durations, and exact failures.
 
 The source tree had an existing battery-tier test and documentation using older
