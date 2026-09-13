@@ -149,12 +149,19 @@ Final local release checks (2026-09-13 20:09 Asia/Bangkok):
   captures; all locally available guide/capture work is delivered. T212 remains
   Windows physical acceptance. `docs/screenshots/README.md` is the exact checklist.
 
-Next release action: commit staged task files and regenerate/publish all four
-branches. Use an isolated normal local clone for generation so unrelated
-`pio_test_output.txt` remains untouched. After Git delivery, Gemini's next task
-is destination-machine capture/acceptance from the checklist, not recreating
-completed UI screenshots. No Gemini process has been launched; the explicit
-relay command is in `docs/step_by_step.md`. Update this checkpoint with Git outcome.
+Git delivery completed: documentation commit `c917a82` and generated snapshots
+`workspace 49fa2d6`, `firmware 8f4ec0d`, `docker e63ed73` were pushed atomically
+to origin. Generation used `_work/native_publish` with a clone-local Git identity;
+no global settings or unrelated user files changed. This checkpoint will also be
+committed and synchronized; use `git log -1`/remote refs for the newest metadata
+commit rather than treating the recorded documentation snapshot as an immutable tip.
+
+Gemini's next task is destination-machine capture/acceptance from
+`docs/screenshots/README.md`, not recreating completed UI screenshots. Start with
+T212 Windows USB/transport checks and T214 OS/installation/attended screenshots.
+A destination Windows session and an operator for physical robot steps are still
+required. Preserve `pio_test_output.txt`. No Gemini process has been launched;
+the explicit relay command is in `docs/step_by_step.md`.
 
 ## Current priority — Docker and Windows release (2026-09-13)
 
