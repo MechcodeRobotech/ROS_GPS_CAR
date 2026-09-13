@@ -642,10 +642,18 @@
     var safety = snap.safety || {};
 
     // ---- header ----
-    var stateName = t.state_name || 'UNKNOWN';
-    $('stateLabel').textContent = stateName + (t.stop_reasons && t.stop_reasons.length
-      ? ' · ' + t.stop_reasons.join(', ') : '');
+    var espAge = snap.telemetry_age_s;
+    var espLive = espAge !== null && espAge < 1.5;
 
+    var stateName = t.state_name || 'UNKNOWN';
+    if (!espLive) {
+      $('stateLabel').textContent = 'หุ่นยนต์ขาดการเชื่อมต่อ (Robot Offline)';
+    } else {
+      $('stateLabel').textContent = stateName + (t.stop_reasons && t.stop_reasons.length
+        ? ' · ' + t.stop_reasons.join(', ') : '');
+    }
+
+    // Server connection status (Web -> PC)
     setPill('pillLink', safety.link_ok === false ? 'bad' : (state.connected ? 'ok' : 'warn'),
       safety.link_ok === false ? 'ขาด' : 'ปกติ');
     // The ESP32 pill answers "is the board there", so it says so in words. An
@@ -661,8 +669,6 @@
      * When the link drops, the same number becomes how long it has been gone,
      * and that is worth spelling out in a unit anyone can act on - "ขาด 2 นาที"
      * rather than "137.4 s". */
-    var espAge = snap.telemetry_age_s;
-    var espLive = espAge !== null && espAge < 1.5;
     var espText;
     if (espAge === null) {
       espText = 'ไม่พบ / none';
