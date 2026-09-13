@@ -54,3 +54,22 @@ windows_test_report.txt
 windows_test_report.json
 
 _relay/
+
+# AI and Agent files (kept locally for debugging but not pushed)
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+HANDOFF.md
+audit_*
+claude_*
+gemini_*
+gpt_*
+.agents/
+.claude/
+.codex/
+_relay/
+tools/agent_relay.sh
+tools/plan_state.json
+tools/planhtml.py
+docs/windows_handoff.md
+pio_test_output.txt
