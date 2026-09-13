@@ -793,8 +793,19 @@ class WebServerNode(Node):
         def on_msg(msg, _name=name, _st=st):
             try:
                 from rosidl_runtime_py.convert import message_to_ordereddict
-                value = json.loads(json.dumps(message_to_ordereddict(msg),
-                                              default=str))
+                import math
+                def sanitize(obj):
+                    if isinstance(obj, float) and math.isnan(obj):
+                        return None
+                    elif isinstance(obj, dict):
+                        return {k: sanitize(v) for k, v in obj.items()}
+                    elif isinstance(obj, (list, tuple)):
+                        return [sanitize(v) for v in obj]
+                    return obj
+                
+                value = sanitize(message_to_ordereddict(msg))
+                # Ensure it's JSON serializable (handles bytes, etc.)
+                value = json.loads(json.dumps(value, default=str))
             except Exception as exc:
                 value = {'error': 'cannot convert: %r' % exc}
             t = time.time()
