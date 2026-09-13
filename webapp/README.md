@@ -18,7 +18,7 @@
 2. ดับเบิลคลิก **`run_windows.bat`** (หรือ `exe\GPS_Localize_Viewer.exe` โดยตรง)
 3. เบราว์เซอร์จะเปิด `http://localhost:8080` ให้เอง
 
-ไม่ต้องติดตั้ง Python ไม่ต้องต่ออินเทอร์เน็ต · ไฟล์ `.exe` ขนาด ~8 MB
+ไฟล์ `.exe` ไม่ได้อยู่ใน Git: สร้างด้วย `build_exe.bat` หรือใช้ Python 3 + PyYAML (`python -m pip install pyyaml`) แล้วเปิด `run_windows.bat`
 
 สร้าง `.exe` ใหม่เอง (เมื่อแก้โค้ด): ดับเบิลคลิก `build_exe.bat` (ต้องมี Python 3 + pip)
 
@@ -76,3 +76,10 @@ ros2 launch gps_localize bringup.launch.py
 จากนั้นมือถือ แท็บเล็ต หรือคอมเครื่องไหนก็ได้ที่อยู่ Wi-Fi เดียวกัน
 เปิดเบราว์เซอร์ไปที่ `http://<ไอพีของ server PC>:8080` แล้วคุมได้เต็มรูปแบบ
 รายละเอียด: [../docs/web_ui.md](../docs/web_ui.md)
+
+## Run a real server on Windows
+
+This viewer is a demonstration. For a real robot server, follow the
+[Docker guide](../docs/docker.md): Docker Desktop for Wi-Fi, or WSL2 with a
+local Docker Engine for USB. Open that server URL in your browser. Do not run
+the viewer on port 8080 at the same time as the server.

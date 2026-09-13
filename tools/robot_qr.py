@@ -21,6 +21,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import shutil
 import sys
 import urllib.error
 import urllib.request
@@ -38,6 +40,14 @@ except ImportError as exc:                       # pragma: no cover
         'tools/.\n' % (sys.path[0], exc))
 
 DEFAULT_NAME = 'gps-robot-web.local'
+INDENT = 2                                       # spaces printed before each row
+
+_ANSI = re.compile(r'\033\[[0-9;]*m')
+
+
+def strip_ansi(text):
+    """The printed width of a line: colour escapes take no cells."""
+    return _ANSI.sub('', text)
 
 
 def ask_server(timeout=3.0):
@@ -79,12 +89,20 @@ def main():
     plain = not sys.stdout.isatty() or os.environ.get('NO_COLOR')
     try:
         # Colours are stated explicitly for a terminal, because a QR drawn in
-        # the terminal's own colours comes out inverted on a dark theme and many
-        # phone cameras reject that. Piped or redirected output gets the plain
-        # block form instead, which survives being pasted into a file.
+        # the terminal's own colours comes out inverted on a dark theme, which
+        # zbar rejects outright and many phone cameras will not read. Piped or
+        # redirected output gets the plain block form instead, which survives
+        # being pasted into a file - and which is only safe to scan from a light
+        # background.
         art = qr.to_ascii(url) if plain else qr.to_ansi(url)
     except ValueError as exc:
         raise SystemExit('cannot encode that address: %s' % exc)
+
+    # A QR that wraps is not a QR, and a wrapped one looks like a rendering
+    # glitch rather than a window that is too narrow - so say which it is.
+    needed = max(len(strip_ansi(line)) for line in art.splitlines()) + INDENT
+    columns = shutil.get_terminal_size((80, 24)).columns
+    too_narrow = not plain and columns < needed
 
     if not args.quiet:
         print()
@@ -100,12 +118,24 @@ def main():
                 print('  %-16s %s' % ('on this machine:', local))
         print()
 
+    if too_narrow and not args.quiet:
+        print('  this window is %d columns and the code needs %d - it will '
+              'wrap, and a wrapped QR does not scan.' % (columns, needed))
+        print('  widen the window and run this again.')
+        print()
+
     for line in art.splitlines():
-        print('  ' + line)
+        print(' ' * INDENT + line)
 
     if not args.quiet:
         print()
         print('  Point a phone camera at it, or type the address above.')
+        if plain:
+            # The plain form is the terminal's own text colour, so on a dark
+            # theme it is an inverted code. Nothing here can fix that; saying so
+            # beats a camera that silently never locks on.
+            print('  Scanning this form needs a LIGHT background - it is drawn '
+                  'in the terminal\'s text colour.')
         print()
 
     if args.svg:

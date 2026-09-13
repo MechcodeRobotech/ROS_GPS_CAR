@@ -138,9 +138,42 @@ void test_stall_clears_when_the_wheel_turns(void) {
 }
 
 void test_open_circuit_detected(void) {
+    // Commanded, drawing nothing, and it STAYS that way - that is a real open
+    // circuit and must be reported.
+    mock_reset_clock();
     MotorModel m = make();
-    m.update(0.01f, 12.0f, 0.0f, 1.0f, true);          // commanded but no current
+    for (int i = 0; i < 60; ++i) {                     // 600 ms, past the hold
+        m.update(0.01f, 12.0f, 0.0f, 1.0f, true);
+        mock_advance_ms(10);
+    }
     TEST_ASSERT_TRUE(m.openCircuit());
+}
+
+/**
+ * A motor that has only just been commanded is not an open circuit.
+ *
+ * Duty crosses min_duty at the very start of the PWM ramp while the current is
+ * still climbing from zero, and the INA226s are read at just 5 Hz - so the
+ * current can still be the pre-command zero for up to 200 ms after the duty is
+ * up. Judged instantly that reads as "this motor is drawing nothing" on a motor
+ * about to draw plenty, and the dashboard flashed a false open-circuit on every
+ * single start. Reported from the robot.
+ */
+void test_open_circuit_not_flagged_during_the_current_ramp(void) {
+    mock_reset_clock();
+    MotorModel m = make();
+    for (int i = 0; i < 15; ++i) {                     // 150 ms of stale zero
+        m.update(0.01f, 12.0f, 0.0f, 1.0f, true);
+        mock_advance_ms(10);
+    }
+    TEST_ASSERT_FALSE(m.openCircuit());
+
+    // and once the current does arrive it must never latch
+    for (int i = 0; i < 60; ++i) {
+        m.update(0.01f, 12.0f, 0.30f, 1.0f, true);
+        mock_advance_ms(10);
+    }
+    TEST_ASSERT_FALSE(m.openCircuit());
 }
 
 void test_open_circuit_clear_with_normal_current(void) {
@@ -183,6 +216,7 @@ int run_motor_model_tests(void) {
     RUN_TEST(test_stall_detected_after_the_hold_time);
     RUN_TEST(test_stall_clears_when_the_wheel_turns);
     RUN_TEST(test_open_circuit_detected);
+    RUN_TEST(test_open_circuit_not_flagged_during_the_current_ramp);
     RUN_TEST(test_open_circuit_clear_with_normal_current);
     RUN_TEST(test_motor_model_reset_clears_state);
     RUN_TEST(test_config_can_be_changed_at_runtime);

@@ -13,7 +13,7 @@ to work. Read this before the first outdoor test.
 
 Plus two conditions that latch inside the firmware:
 
-* **Battery cutoff** — pack under 10.7 V for 3 s (`BATT_CUTOFF_V`), and a non-latching soft stop at 11.0 V (`BATT_SOFT_STOP_V`), red LED slow
+* **Battery cutoff** — pack under 3.733 V/cell for 3 s (`BATT_CUTOFF_V`, 11.199 V on a 3S pack), and a non-latching soft stop at 3.80 V/cell (`BATT_SOFT_STOP_V`, 11.4 V on 3S), red LED slow
   blink. Clears when the pack recovers above 10.3 V.
 * **Startup lockout** — no motion during the first 1.5 s after boot.
 
@@ -67,8 +67,22 @@ Expected `stop_flags` on the dashboard for each test: `heartbeat_lost`,
 * The robot has **no obstacle sensor**. Navigation only knows GPS position and
   heading; it will drive into anything in the way. Keep the operator in sight
   of the robot and the e-stop within reach.
-* GPS accuracy without RTK is ±2–3 m. `arrive_radius_m` below ~0.6 m makes the
-  robot hunt around the point instead of settling.
+* **A welded main contactor now stops the robot.** If the firmware commands the
+  contactor open and the motor rails stay live past the settle time, motor power
+  cannot be removed by anything the firmware has. That raises
+  `contactor_stuck`, which now refuses motion, shows a solid red LED and reports
+  `RUN_ESTOP` — it used to be reported and then ignored, because the check ran
+  after the decision it should have fed. Disconnect the battery before going
+  near the wheels when you see it.
+* **The software e-stop survives a restart of the host.** The latch is kept in
+  `~/.gps_localize/estop_latched` and reloaded on start, so restarting the
+  stack — which `gps_localize_netwatch` does by itself when the PC changes
+  network — no longer releases a stop somebody set deliberately. Clear it the
+  way you always did, with RESET in the web UI.
+* GPS accuracy without RTK is ±2–3 m, so the robot stops *near* a waypoint, not
+  on it. `arrive_radius_m` is floored at 2.0 m for that reason: a smaller number
+  does not make the robot more accurate, it only makes arrival a matter of luck.
+  Plan the mission so being 2–3 m off the point is safe.
 * Heading from `heading_source: 1` needs movement to align with the GPS course.
   Right after power-on and before the first metres are driven, the absolute
   heading may be off; the first turn of a mission corrects it.

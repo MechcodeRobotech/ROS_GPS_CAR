@@ -186,6 +186,14 @@ public:
     const float n_xx = (1.0f - k_xx) * p_xx_ - k_xy * p_xy_;
     const float n_xy = (1.0f - k_xx) * p_xy_ - k_xy * p_yy_;
     const float n_yy = (1.0f - k_yy) * p_yy_ - k_yx * p_xy_;
+    // The floor here is deliberately tiny, and an audit finding that called it
+    // "a 1 cm sigma this receiver can never earn" was WRONG - measured, not
+    // argued. Raising it to 0.5 m made the filter follow each fix instead of
+    // averaging across fixes, and the 30 s straight-line sim went from under
+    // 2 m of final error to 3.44 m, worse than raw GPS at 2.73 m and far worse
+    // than dead reckoning at 0.41 m. Averaging the noise down IS the filter's
+    // job; the correlated part of the GPS error is handled by r_min_m on the
+    // measurement side, which is where it belongs.
     p_xx_ = fmaxf(n_xx, 1e-4f);
     p_yy_ = fmaxf(n_yy, 1e-4f);
     p_xy_ = n_xy;

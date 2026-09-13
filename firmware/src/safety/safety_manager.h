@@ -28,6 +28,9 @@ public:
     float    battery_v       = 0.0f;
     bool     battery_valid   = false;
     bool     motion_requested = false;  // a non-zero command is pending
+    // What the motor-rail INAs actually MEASURE, so the contactor can be
+    // cross-checked against what we told it to do rather than trusted.
+    bool     rails_live      = false;   // a motor rail is above PACK_RAIL_MIN_VALID_V
   };
 
   void begin() {
@@ -77,6 +80,8 @@ public:
     // documented recovery and it should be visible in the code that performs it.
     batt_latched_   = false;
     batt_low_since_ = 0;
+    batt_soft_stop_ = false;
+    batt_soft_ok_since_ = 0;
 
     // Same rule for the update lockout: a reboot is what ends it, and finishing
     // a flash reboots the board. Cleared here rather than relying on the object
@@ -121,7 +126,7 @@ public:
     // So the only way out is switching the robot off and starting it again. That
     // is deliberate: it forces someone to look at the battery instead of letting
     // the machine talk itself back into driving.
-    if (in.battery_valid && in.battery_v < BATT_CUTOFF_V) {
+    if (in.battery_valid && in.battery_v < cutoff_v_) {
       if (batt_low_since_ == 0) batt_low_since_ = now;
       if (now - batt_low_since_ > BATT_CUTOFF_HOLD_MS) batt_latched_ = true;
     } else {
@@ -133,7 +138,24 @@ public:
     // Soft stop: stop driving but stay powered, so the pack is not run down to
     // the hard cut on every outing. Not latched - it follows the voltage back
     // up once the load comes off.
-    batt_soft_stop_ = in.battery_valid && in.battery_v < BATT_SOFT_STOP_V;
+    // Entering is immediate; LEAVING needs the voltage clearly back up and
+    // steady, or the robot chatters: sag under load, stop, recover, drive, sag.
+    if (in.battery_valid && in.battery_v < soft_stop_v_) {
+      batt_soft_stop_ = true;
+      batt_soft_ok_since_ = 0;
+    } else if (batt_soft_stop_) {
+      const bool clearly_up = in.battery_valid
+                              && in.battery_v > (soft_stop_v_ + BATT_SOFT_HYST_V);
+      if (!clearly_up) {
+        batt_soft_ok_since_ = 0;
+      } else {
+        if (batt_soft_ok_since_ == 0) batt_soft_ok_since_ = now ? now : 1;
+        if (now - batt_soft_ok_since_ >= BATT_SOFT_RECOVER_MS) {
+          batt_soft_stop_ = false;
+          batt_soft_ok_since_ = 0;
+        }
+      }
+    }
     if (batt_soft_stop_) f |= STOP_BATTERY_SOFT;
 
     // --- boot lockout ---
@@ -158,21 +180,72 @@ public:
     // robot driving through allowMotion(), and cutting rail power on a brief
     // network hiccup would only power-cycle the motor supply and make the
     // battery reading flap.
-    const bool safe_to_power = !(f & STOP_STARTUP) && !emergencyLatched()
+    // Read the emergency from THIS cycle's flags, not from flags_, which still
+    // holds the previous cycle's answer. Using the stale copy delayed opening
+    // the contactor by a full control period after the button went down - 10 ms
+    // of powered rails that nothing needed to spend.
+    const bool emergency_now =
+        (f & (STOP_HW_EMERGENCY | STOP_ESP_BUTTON | STOP_SW_ESTOP)) != 0;
+    const bool safe_to_power = !(f & STOP_STARTUP) && !emergency_now
                                && !batt_latched_ && !update_lockout_;
     setRelay(safe_to_power);
 
+    // --- contactor cross-check -------------------------------------
+    // Everything above trusts what we COMMANDED the contactor to do. This is
+    // the one check that asks the rails instead. If we opened it and they are
+    // still live past the settle time, the contact is welded and no amount of
+    // firmware will remove power - so say so loudly rather than reporting a
+    // safely stopped robot.
+    //
+    // It runs BEFORE the release below, and that ordering is the whole point.
+    // It used to run after, and since f is rebuilt from zero every cycle the
+    // stuck-contactor bit was never present when allow_ was decided - so the
+    // one fault where power cannot be cut was reported and then ignored, and
+    // the robot was still allowed to drive.
+    if (relay_closed_) {
+      relay_open_since_ = 0;
+    } else {
+      if (relay_open_since_ == 0) relay_open_since_ = now ? now : 1;
+      if (in.rails_live && (now - relay_open_since_) >= CONTACTOR_SETTLE_MS) {
+        f |= STOP_CONTACTOR_STUCK;
+      }
+    }
+
     // --- release needs the inputs to stay clear for a moment ---
     if (f == 0) {
-      if (last_clear_ms_ == 0) last_clear_ms_ = now;
+      if (last_clear_ms_ == 0) last_clear_ms_ = now ? now : 1;
       allow_ = (now - last_clear_ms_) >= ESTOP_RELEASE_HOLD_MS;
     } else {
       last_clear_ms_ = 0;
       allow_ = false;
     }
+    // An update lockout has dropped the rails on purpose. It carries no stop
+    // bit of its own - adding one would change the telemetry contract - but it
+    // must still refuse motion, or the loop keeps driving PWM into a driver
+    // whose supply has just been taken away.
+    if (update_lockout_) allow_ = false;
+
     flags_ = f;
     serviceLed(now);
   }
+
+  /**
+   * Battery tiers in volts, for THIS pack.
+   *
+   * They used to be compile-time constants sized for a 3S pack, which meant a
+   * 2S or 4S battery had every tier wrong at once - and wrong in the dangerous
+   * direction for 4S, where a 3S cutoff of 10.7 V is 2.68 V per cell and the
+   * pack would be destroyed long before the robot stopped. The parameters
+   * existed but nothing read them; these setters are what makes them real.
+   */
+  void setBatteryThresholds(float warn_v, float soft_stop_v, float cutoff_v) {
+    warn_v_      = warn_v;
+    soft_stop_v_ = soft_stop_v;
+    cutoff_v_    = cutoff_v;
+  }
+  float warnVolts()     const { return warn_v_; }
+  float softStopVolts() const { return soft_stop_v_; }
+  float cutoffVolts()   const { return cutoff_v_; }
 
   uint32_t flags() const { return flags_; }
   bool allowMotion() const { return allow_; }
@@ -212,7 +285,8 @@ public:
   bool espButton() const { return esp_btn_; }
 
   RunState runState(bool auto_mode, bool manual_mode) const {
-    if (emergencyLatched() || batt_latched_) return RUN_ESTOP;
+    if (emergencyLatched() || batt_latched_ ||
+        (flags_ & STOP_CONTACTOR_STUCK)) return RUN_ESTOP;
     if (linkLost())                          return RUN_COMM_LOSS;
     if (auto_mode)                           return RUN_AUTO;
     if (manual_mode)                         return RUN_MANUAL;
@@ -262,7 +336,7 @@ private:
   void serviceLed(uint32_t now) {
     if (PIN_LED_RED < 0) return;
     bool on;
-    if (emergencyLatched()) {
+    if (emergencyLatched() || (flags_ & STOP_CONTACTOR_STUCK)) {
       on = true;                                                    // solid
     } else if (linkLost()) {
       on = ((now / LED_BLINK_FAST_MS) & 1) != 0;                    // fast blink
@@ -284,7 +358,14 @@ private:
   uint32_t batt_low_since_ = 0;
   bool     batt_latched_ = false;
   bool     batt_soft_stop_ = false;
+  uint32_t batt_soft_ok_since_ = 0;   // when the pack came back above the threshold
   bool     relay_closed_ = false;
+  uint32_t relay_open_since_ = 0;     // when we last commanded it open
+  // Default to the compiled-in 3S figures so a board is protected from the
+  // first millisecond, before any parameter has been applied.
+  float    warn_v_      = BATT_WARN_V;
+  float    soft_stop_v_ = BATT_SOFT_STOP_V;
+  float    cutoff_v_    = BATT_CUTOFF_V;
   bool     update_lockout_ = false;
   bool     led_on_ = false;
 };

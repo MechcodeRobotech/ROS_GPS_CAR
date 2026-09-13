@@ -25,6 +25,13 @@ backwards. That distinction earned its keep immediately: it caught two bugs here
 that were invisible to the eye, a Reed-Solomon generator that was not monic and
 format information written with its two copies transposed. Both produced codes
 that looked entirely correct and that no phone could read.
+
+The same tests now cover the TERMINAL renderings, not only the encoder, because
+a correct code can still be painted unscannably. They rasterise the characters
+the way a terminal grid does - fixed cell advance, both themes - and scan the
+result. That caught the third bug of exactly this shape: to_ascii is drawn in
+the terminal's foreground colour, so on a dark theme every module is inverted
+and no scanner will read it, while it still looks exactly like a QR code.
 """
 
 from __future__ import annotations
@@ -436,14 +443,24 @@ def to_svg(text: str, module: int = 6, quiet: int = 4) -> str:
     return ''.join(parts)
 
 
-def to_ansi(text: str, quiet: int = 3) -> str:
+def to_ansi(text: str, quiet: int = 4) -> str:
     """A QR for a terminal, with the colours stated rather than inherited.
 
-    A scanner needs dark modules on a light quiet zone. Drawing with block
-    characters inherits the terminal's own colours, so the same code comes out
-    correct on a light theme and INVERTED on a dark one - and an inverted code
-    is rejected by many phone cameras. Setting the background explicitly costs
-    two characters per module and works on either.
+    THIS IS THE FORM TO PUT IN FRONT OF A CAMERA. A scanner needs dark modules
+    on a light quiet zone. Drawing with block characters inherits the terminal's
+    own colours, so the same code comes out correct on a light theme and
+    INVERTED on a dark one - and an inverted code is rejected outright by
+    zbar and by many phone cameras. Setting the background explicitly costs two
+    characters per module and works on either theme.
+
+    Measured, not assumed: test_qr.py rasterises both forms the way a terminal
+    paints them and reads them back with zbarimg. The half-block form in
+    to_ascii scans on a light theme at every cell shape tried and scans on NO
+    dark one; this form scans on both.
+
+    The quiet zone is four modules because that is what the spec requires, and
+    the terminal gives us no margin of its own - the prompt line sits directly
+    above whatever we print.
     """
     m = encode(text)
     dark = '\033[40m  \033[0m'          # black background, two spaces wide
@@ -460,8 +477,18 @@ def to_ansi(text: str, quiet: int = 3) -> str:
     return '\n'.join(rows)
 
 
-def to_ascii(text: str, quiet: int = 2) -> str:
-    """A QR for a terminal, two modules per character cell so it stays square."""
+def to_ascii(text: str, quiet: int = 4) -> str:
+    """A QR as plain text, two modules per character cell so it stays square.
+
+    Use this where colour cannot survive - a file, a log, a web page, anything
+    that will be pasted somewhere else. For something a camera is going to be
+    pointed at, use to_ansi instead: this form is drawn in the terminal's own
+    foreground colour, so it is correct on a light theme and inverted on a dark
+    one, and an inverted code does not scan.
+
+    The quiet zone is four modules, per the spec. Two was enough for zbar in
+    practice and is not enough to rely on.
+    """
     m = encode(text)
     width = len(m) + quiet * 2
     rows = [[0] * width for _ in range(quiet)]

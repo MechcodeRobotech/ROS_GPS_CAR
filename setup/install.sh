@@ -222,6 +222,21 @@ http://packages.ros.org/ros2/ubuntu \$(. /etc/os-release && echo \$UBUNTU_CODENA
     ok "workspace built"
 
     head "service"
+    # Two units, installed together and in this order. The agent is separate so
+    # that stopping the stack to work on it does not also stop the thing the
+    # board is trying to reach - the board would then retry against a host that
+    # looks perfectly healthy to whoever is standing at it.
+    local agent_unit="$WS/src/gps_localize/systemd/micro_ros_agent.service"
+    if [ -f "$agent_unit" ]; then
+        run bash -c "sed -e 's|__USER__|$(id -un)|g' -e 's|__PROJECT__|$ROOT|g' \
+            '$agent_unit' | $SUDO tee /etc/systemd/system/micro_ros_agent.service >/dev/null"
+        run $SUDO systemctl daemon-reload
+        run $SUDO systemctl enable --now micro_ros_agent
+        ok "micro_ros_agent service enabled - UDP 8888, starts on boot"
+    else
+        warn "no micro-ROS agent unit found - the board will have nothing to connect to"
+    fi
+
     local unit="$WS/src/gps_localize/systemd/gps_localize.service"
     if [ -f "$unit" ]; then
         # The unit in git is a template. Copying it verbatim would install one
@@ -249,6 +264,20 @@ http://packages.ros.org/ros2/ubuntu \$(. /etc/os-release && echo \$UBUNTU_CODENA
     elif [ -f "$mdns" ]; then
         warn "avahi-utils is missing, so gps-robot-web.local will not resolve"
         warn "  sudo apt install avahi-utils avahi-daemon"
+    fi
+
+    # Announces where the agent is, so the ROBOT never has to be told. The
+    # counterpart to netwatch below: netwatch fixes this machine after an
+    # address change, the beacon fixes the board. Without it a board whose
+    # stored agent address has gone stale has no way back except a USB cable,
+    # which is not an option once the robot is out in a field.
+    local beacon="$WS/src/gps_localize/systemd/gps_localize_beacon.service"
+    if [ -f "$beacon" ]; then
+        run bash -c "sed -e 's|__USER__|$(id -un)|g' -e 's|__PROJECT__|$ROOT|g' \
+            '$beacon' | $SUDO tee /etc/systemd/system/gps_localize_beacon.service >/dev/null"
+        run $SUDO systemctl daemon-reload
+        run $SUDO systemctl enable --now gps_localize_beacon
+        ok "agent beacon announcing on UDP 8889 - the robot finds us by itself"
     fi
 
     # Restarts the stack when this machine's address changes. DDS binds its
@@ -299,9 +328,11 @@ do_uninstall() {
         run $SUDO systemctl disable --now gps_localize
         run $SUDO systemctl disable --now gps_localize_mdns 2>/dev/null || true
         run $SUDO systemctl disable --now gps_localize_netwatch 2>/dev/null || true
+        run $SUDO systemctl disable --now micro_ros_agent 2>/dev/null || true
         run $SUDO rm -f /etc/systemd/system/gps_localize.service \
                         /etc/systemd/system/gps_localize_mdns.service \
-                        /etc/systemd/system/gps_localize_netwatch.service
+                        /etc/systemd/system/gps_localize_netwatch.service \
+                        /etc/systemd/system/micro_ros_agent.service
         run $SUDO systemctl daemon-reload
         ok "service removed"
     else

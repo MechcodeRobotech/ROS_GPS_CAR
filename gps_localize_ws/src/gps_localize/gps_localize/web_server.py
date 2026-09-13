@@ -19,7 +19,10 @@ are part of the telemetry stream so a leak shows up on screen.
 """
 
 import json
+import math
 import os
+import socket
+import subprocess
 import threading
 import time
 from collections import deque
@@ -29,6 +32,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
+from gps_localize.qos import stream_qos
 from sensor_msgs.msg import NavSatFix
 from gps_localize_msgs.msg import Telemetry, WebConnect
 # Float32MultiArray is still used for /config/pid, which stays a packed array:
@@ -77,6 +81,13 @@ class WebServerNode(Node):
         self.manual_speed = float(cfg.get('manual_speed_mps', 0.18))
         self.manual_turn = float(cfg.get('manual_turn_dps', 45.0))
         self.allow_config_edit = bool(cfg.get('allow_config_edit', True))
+        # Three settings that existed in web.yaml, appeared on the Settings page,
+        # and were read by nothing at all - the browser had the same numbers
+        # hardcoded. Editing them changed the file and nothing else. They are
+        # loaded here and handed to the page in the snapshot below.
+        self.heartbeat_rate = float(cfg.get('heartbeat_rate_hz', 4.0))
+        self.manual_repeat_ms = int(cfg.get('manual_repeat_ms', 150))
+        self.trail_points = int(cfg.get('trail_points', 300))
         # Port 80 as well as the usual one, so the address is just
         # http://gps-robot-web.local with nothing after it. Set to 0 to skip.
         self.friendly_port = int(cfg.get('friendly_port', 80))
@@ -111,9 +122,9 @@ class WebServerNode(Node):
         self.pub_connect = self.create_publisher(WebConnect, NS + '/web/connect',
                                                  latched_qos())
 
-        self.create_subscription(Telemetry, NS + '/telemetry', self.on_telemetry, 5)
-        self.create_subscription(NavSatFix, NS + '/gps/fix', self.on_fix, 5)
-        self.create_subscription(Odometry, NS + '/odom/gps', self.on_odom, 5)
+        self.create_subscription(Telemetry, NS + '/telemetry', self.on_telemetry, stream_qos())
+        self.create_subscription(NavSatFix, NS + '/gps/fix', self.on_fix, stream_qos())
+        self.create_subscription(Odometry, NS + '/odom/gps', self.on_odom, stream_qos())
         self.create_subscription(String, NS + '/nav/status', self.on_nav, latched_qos())
         self.create_subscription(String, NS + '/pose/estimate', self.on_pose, latched_qos())
         self.create_subscription(String, NS + '/safety', self.on_safety, latched_qos())
@@ -128,8 +139,11 @@ class WebServerNode(Node):
         # not match a VOLATILE publisher - the topic lists fine, both ends
         # look healthy, and not one sample arrives. The board republishes
         # every few seconds, so nothing is lost by not latching.
+        # Best-effort, and it must change BEFORE the firmware does: a
+        # best-effort subscriber still matches a reliable publisher, so there is
+        # no window where the two sides silently fail to match. See qos.py.
         self.create_subscription(Float32MultiArray, NS + '/params/values',
-                                 self.on_param_values, 5)
+                                 self.on_param_values, stream_qos())
 
         # ----------------------------------------------------------- server
         self.broadcaster = SseBroadcaster(max_clients=self.max_clients)
@@ -196,11 +210,18 @@ class WebServerNode(Node):
     def publish_connect(self):
         """Latch how to reach the UI, QR included, on a ROS topic.
 
-            ros2 topic echo --once --field qr_ascii /gps_localize/web/connect
+            ros2 topic echo --once --field qr_ansi /gps_localize/web/connect
 
-        --field matters: plain `ros2 topic echo` puts a blank line between every
-        row of a multi-line string, which doubles the QR's row spacing and stops
-        it scanning while still looking exactly like a QR.
+        Two things about that command are load-bearing.
+
+        --field: plain `ros2 topic echo` prints the QR as one escaped line,
+        truncated, and even untruncated it puts a blank line between every row,
+        which doubles the QR's row spacing. Either way it still looks like a QR.
+
+        qr_ansi rather than qr_ascii: the ansi form states its own colours, so
+        it comes out black-on-white on any terminal theme. The ascii form
+        borrows the terminal's text colour and is therefore inverted on a dark
+        theme, which no scanner will read. Both are published; see WebConnect.
         """
         info = connect_info(self.host, self.port, self.friendly_port)
         msg = WebConnect()
@@ -209,8 +230,10 @@ class WebServerNode(Node):
         msg.url_by_name = info['mdns'] or ''
         msg.url_local = info['local'] or ''
         try:
+            msg.qr_ansi = qr.to_ansi(msg.url) if msg.url else ''
             msg.qr_ascii = qr.to_ascii(msg.url) if msg.url else ''
         except ValueError:
+            msg.qr_ansi = ''
             msg.qr_ascii = ''
         if msg.url != getattr(self, '_connect_url', None):
             self._connect_url = msg.url
@@ -316,6 +339,9 @@ class WebServerNode(Node):
                     'manual_speed_mps': self.manual_speed,
                     'manual_turn_dps': self.manual_turn,
                     'max_speed_mps': self.max_speed,
+                    'heartbeat_rate_hz': self.heartbeat_rate,
+                    'manual_repeat_ms': self.manual_repeat_ms,
+                    'trail_points': self.trail_points,
                 },
             }
         return snap
@@ -351,6 +377,7 @@ class WebServerNode(Node):
         route('POST', '/api/estop', self.api_estop)
         route('GET', '/api/update/check', self.api_update_check)
         route('POST', '/api/update/apply', self.api_update_apply)
+        route('POST', '/api/firmware/pull', self.api_firmware_pull)
         route('POST', '/api/connect/parse', self.api_connect_parse)
         route('GET', '/api/params', self.api_params_get)
         route('POST', '/api/params', self.api_params_set)
@@ -359,6 +386,9 @@ class WebServerNode(Node):
         route('POST', '/api/bugreport', self.api_bugreport_save)
         route('POST', '/api/heartbeat', self.api_heartbeat)
         route('POST', '/api/mag_calib', self.api_mag_calib)
+        route('POST', '/api/imu_calib', self.api_imu_calib)
+        route('POST', '/api/reset_odom', self.api_reset_odom)
+        route('GET', '/api/find_robot', self.api_find_robot)
         route('POST', '/api/turn', self.api_turn)
         route('POST', '/api/manual_limits', self.api_manual_limits)
         route('POST', '/api/set_pose', self.api_set_pose)
@@ -640,6 +670,26 @@ class WebServerNode(Node):
         return 200, {'ok': True,
                      'connect': connect_info(self.host, self.port, self.friendly_port)}
 
+    def api_firmware_pull(self, _body, _query):
+        """Tell the board to fetch new firmware from this host and reflash.
+
+        Push-style OTA (esptool over Wi-Fi) needs the PC to open a connection TO
+        the board, and that is impossible whenever the board sits behind NAT -
+        a Windows hotspot, a guest network, a phone. This asks the board to come
+        and get it instead, over the link it already has open.
+
+        The board refuses while it is moving and drops the motor rails before
+        writing a byte; that check lives in the firmware, not here, because a
+        safety rule enforced only by the thing sending the command is no rule.
+        """
+        msg = Float32MultiArray()
+        msg.data = [float(tel.CONFIG_PULL_UPDATE)]
+        self.pub_config.publish(msg)
+        self.add_log('web', 'told the robot to fetch new firmware and reflash')
+        return 200, {'ok': True,
+                     'note': 'the robot is fetching the firmware; it reboots when done, '
+                             'so the link drops for about 30 seconds'}
+
     def api_qr(self, _body, query):
         """A QR of the best URL, as SVG so it scales and needs no image library."""
         target = ((query.get('url') or [''])[0]
@@ -754,11 +804,45 @@ class WebServerNode(Node):
                 _st['stamps'].append(t)
 
         try:
-            st['sub'] = self.create_subscription(msg_class, name, on_msg, 10)
+            st['sub'] = self.create_subscription(msg_class, name, on_msg,
+                                                 self._echo_qos(name))
         except Exception as exc:
             return False, 'cannot subscribe: %r' % exc
         self._echo[name] = st
         return True, ''
+
+    def _echo_qos(self, name):
+        """Match the QoS the publisher is actually offering.
+
+        A plain depth (`10`) means RELIABLE, and a RELIABLE subscriber never
+        matches a BEST_EFFORT publisher - DDS simply does not connect them, with
+        no error anywhere. Every topic the robot itself publishes is BEST_EFFORT,
+        so the Topics page sat on "waiting" for exactly the topics people open it
+        to look at: /imu/data, /telemetry, /odom, /gps/fix.
+
+        This is a general echo tool pointed at an arbitrary topic, so it asks the
+        graph what the publisher offers and mirrors it rather than assuming.
+        Durability is mirrored too, so a latched topic still delivers the value
+        that was published before the page was opened.
+        """
+        reliability = QoSReliabilityPolicy.RELIABLE
+        durability = QoSDurabilityPolicy.VOLATILE
+        try:
+            for info in self.get_publishers_info_by_topic(name):
+                qos = info.qos_profile
+                # Any BEST_EFFORT publisher forces the subscriber down: a
+                # RELIABLE reader cannot match it, whereas a BEST_EFFORT reader
+                # matches both kinds.
+                if qos.reliability == QoSReliabilityPolicy.BEST_EFFORT:
+                    reliability = QoSReliabilityPolicy.BEST_EFFORT
+                if qos.durability == QoSDurabilityPolicy.TRANSIENT_LOCAL:
+                    durability = QoSDurabilityPolicy.TRANSIENT_LOCAL
+        except Exception:
+            # No publisher yet, or the graph call failed. BEST_EFFORT is the
+            # safe guess: it matches either kind, so the worst case is a dropped
+            # sample rather than a subscription that never connects at all.
+            reliability = QoSReliabilityPolicy.BEST_EFFORT
+        return QoSProfile(depth=10, reliability=reliability, durability=durability)
 
     def _reap_echo(self, now, idle_s=60.0):
         """Drop subscriptions nobody is looking at any more."""
@@ -839,7 +923,19 @@ class WebServerNode(Node):
             if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
                 return 400, {'ok': False, 'error': 'waypoint %d is out of range' % (i + 1)}
             name = str(item.get('name') or 'WP%d' % (i + 1))[:32]
-            clean.append({'name': name, 'lat': lat, 'lon': lon})
+            point = {'name': name, 'lat': lat, 'lon': lon}
+            # Optional facing: the compass heading the robot should end up
+            # pointing once it arrives. Absent or blank means any direction,
+            # which is the normal case, so it is dropped from the saved point
+            # rather than stored as a zero that would mean "face north".
+            heading = item.get('heading_deg')
+            if heading is not None and heading != '':
+                try:
+                    point['heading_deg'] = float(heading) % 360.0
+                except (TypeError, ValueError):
+                    return 400, {'ok': False,
+                                 'error': 'waypoint %d has a heading that is not a number' % (i + 1)}
+            clean.append(point)
 
         if not self.store.save('waypoints', {'waypoints': clean}):
             return 500, {'ok': False, 'error': 'could not write the file'}
@@ -892,6 +988,15 @@ class WebServerNode(Node):
                     'message': 'the emergency button is pressed - twist it on '
                                'the robot until it pops back up. This cannot be '
                                'cleared from software.'}
+        # The contactor has welded: we commanded it open and the motor rails are
+        # still live. Power cannot be removed by any means the robot has, which
+        # makes it the last state in which to accept a motion command - and it
+        # was the one stop reason nothing on this side looked at.
+        if 'contactor_stuck' in reasons:
+            return {'reason': 'contactor_stuck', 'clearable': False,
+                    'message': 'the main contactor is welded closed - motor power '
+                               'cannot be cut. Disconnect the battery before '
+                               'going near the wheels.'}
         if 'software_estop' in reasons or estop:
             return {'reason': 'software_estop', 'clearable': True,
                     'message': 'the software e-stop is latched - clear it first'}
@@ -899,6 +1004,11 @@ class WebServerNode(Node):
             return {'reason': 'battery_low', 'clearable': False,
                     'message': 'the battery cutoff is latched - charge or swap '
                                'the pack, then switch the robot off and on'}
+        if 'battery_soft' in reasons:
+            return {'reason': 'battery_soft', 'clearable': False,
+                    'message': 'the pack is below the soft-stop voltage - it '
+                               'recovers on its own once the load comes off, but '
+                               'the robot should be charged rather than nursed'}
         if 'agent_lost' in reasons:
             return {'reason': 'agent_lost', 'clearable': False,
                     'message': 'the robot is not connected'}
@@ -950,6 +1060,12 @@ class WebServerNode(Node):
             turn = float(body.get('turn', 0.0))
         except (TypeError, ValueError):
             return 400, {'ok': False, 'error': 'forward and turn must be numbers'}
+        # NaN passes float() and beats the clamp: min(1.0, nan) is 1.0 and
+        # max(-1.0, 1.0) is 1.0, so {"forward": "nan"} became a full-speed
+        # forward command instead of a rejected request. Every IEEE comparison
+        # with NaN is false, so a clamp can never be the thing that catches it.
+        if not math.isfinite(forward) or not math.isfinite(turn):
+            return 400, {'ok': False, 'error': 'forward and turn must be finite numbers'}
         forward = max(-1.0, min(1.0, forward))
         turn = max(-1.0, min(1.0, turn))
 
@@ -977,6 +1093,15 @@ class WebServerNode(Node):
         if not has_telemetry:
             return 409, {'ok': False, 'error': 'no telemetry from the robot yet'}
 
+        # The same gate every other motion endpoint uses. This one published
+        # straight to /cmd_move, so a latched e-stop or a battery cutoff did not
+        # stop the web UI from asking the robot to rotate on the spot.
+        blocker = self.motion_blocker()
+        if blocker:
+            return 409, {'ok': False, 'error': blocker['message'],
+                         'blocked_by': blocker['reason'],
+                         'clearable': blocker['clearable']}
+
         if 'compass' in body:
             point = str(body.get('compass', '')).upper()
             if point not in self.COMPASS_POINTS:
@@ -985,15 +1110,20 @@ class WebServerNode(Node):
             label = point
         elif 'heading' in body:
             try:
-                target = float(body['heading']) % 360.0
+                heading = float(body['heading'])
             except (TypeError, ValueError):
                 return 400, {'ok': False, 'error': 'heading must be a number'}
+            if not math.isfinite(heading):
+                return 400, {'ok': False, 'error': 'heading must be a finite number'}
+            target = heading % 360.0
             label = '%.0f deg' % target
         else:
             try:
                 delta = float(body.get('deg', 0.0))
             except (TypeError, ValueError):
                 return 400, {'ok': False, 'error': 'deg must be a number'}
+            if not math.isfinite(delta):
+                return 400, {'ok': False, 'error': 'deg must be a finite number'}
             if abs(delta) < 0.5:
                 return 400, {'ok': False, 'error': 'angle too small'}
             target = (current + delta) % 360.0
@@ -1165,15 +1295,175 @@ class WebServerNode(Node):
             self.pub_config.publish(msg)
         self.get_logger().info('controller gains pushed to the firmware')
 
+    # Both calibrations take the same three actions, so they take the same
+    # request shape: {"action": "start" | "finish" | "clear"}.
+    CALIB_ACTIONS = {'start': 1.0, 'finish': 0.0, 'save': 0.0, 'clear': 2.0,
+                     'retry': 3.0, 'cancel': 3.0}
+
+    def _calib_action(self, body):
+        """Read the action out of a calibration request.
+
+        `start` as a bare boolean is still accepted because that is what the
+        original compass buttons sent, and a browser tab left open across an
+        update would otherwise stop working with no visible reason.
+        """
+        action = str(body.get('action', '')).lower()
+        if action in self.CALIB_ACTIONS:
+            return action, self.CALIB_ACTIONS[action]
+        legacy = bool(body.get('start', True))
+        return ('start', 1.0) if legacy else ('finish', 0.0)
+
+    MAG_CALIB_LOG = {
+        'start': 'compass calibration started - turn the robot slowly through a '
+                 'full circle; the progress bar only moves while it turns',
+        'finish': 'compass calibration finished - the board saved it if the sweep '
+                  'covered enough of the circle',
+        'save': 'compass calibration finished - the board saved it if the sweep '
+                'covered enough of the circle',
+        'clear': 'compass calibration cleared - back to raw readings',
+        'cancel': 'compass calibration cancelled - nothing was saved, the stored '
+                  'calibration is untouched',
+    }
+
     def api_mag_calib(self, body, _query):
-        """Compass calibration: start, turn the robot in a slow full circle, finish."""
-        start = bool(body.get('start', True))
+        """QMC5883L calibration: start, turn a full circle, finish. Or clear it."""
+        action, value = self._calib_action(body)
         msg = Float32MultiArray()
-        msg.data = [float(tel.CONFIG_MAG_CALIB), 1.0 if start else 0.0]
+        msg.data = [float(tel.CONFIG_MAG_CALIB), value]
         self.pub_config.publish(msg)
-        self.add_log('web', 'compass calibration %s' % ('started - turn the robot slowly through a full circle'
-                                                        if start else 'finished - result saved on the board'))
-        return 200, {'ok': True, 'calibrating': start}
+        self.add_log('web', self.MAG_CALIB_LOG[action])
+        return 200, {'ok': True, 'action': action, 'calibrating': action == 'start'}
+
+    IMU_CALIB_LOG = {
+        'start': 'IMU calibration started - move the robot in slow figure-of-eights, '
+                 'away from the motors and the battery, until accuracy reaches 2',
+        'finish': 'IMU calibration saved into the BNO085\'s own flash',
+        'save': 'IMU calibration saved into the BNO085\'s own flash',
+        'clear': 'IMU calibration cleared - the sensor was restarted',
+        'retry': 'trying to start the IMU again - if it still fails, unplug BOTH '
+                 'the USB cable and the battery for ten seconds: the sensor runs '
+                 'off the same 3V3 rail and nothing else actually resets it',
+        'cancel': 'IMU calibration stopped - the sensor keeps whatever it had',
+    }
+
+    ROBOT_MDNS_NAME = 'esp32-gps-localize.local'
+
+    def api_find_robot(self, _body, _query):
+        """Is the robot on this network, and can it hear us?
+
+        The web never used to look for the board at all - the connection only
+        goes one way, the board reaches out to the agent - so when it went quiet
+        the page had nothing to say beyond "no telemetry". Answering "is it even
+        on the network?" meant running avahi and a ping sweep by hand, which is
+        not a thing to ask of someone standing in a field.
+
+        Four separate facts, because they fail independently and each one points
+        somewhere different:
+
+          linked   the board is in the ROS graph - the only proof of a session
+          found_at the board answers to its mDNS name, so it IS on this network
+                   even if it has not found the agent yet
+          beacon   we are announcing where the agent is, so a board that can
+                   hear us will come back on its own
+          agent_ip what we are announcing, which is what the board should adopt
+        """
+        found = None
+        try:
+            info = socket.getaddrinfo(self.ROBOT_MDNS_NAME, None, socket.AF_INET)
+            if info:
+                found = info[0][4][0]
+        except (socket.gaierror, OSError):
+            found = None
+
+        beacon = False
+        try:
+            r = subprocess.run(['systemctl', 'is-active', 'gps_localize_beacon'],
+                               capture_output=True, text=True, timeout=5)
+            beacon = r.stdout.strip() == 'active'
+        except (OSError, subprocess.SubprocessError):
+            beacon = False
+
+        with self._lock:
+            last = self.telemetry_time
+        age = (time.time() - last) if last else None
+        linked = age is not None and age < 5.0
+
+        if linked:
+            hint = 'หุ่นเชื่อมต่ออยู่ / the robot is connected'
+        elif found:
+            hint = ('เจอหุ่นในเครือข่ายที่ %s แต่ยังไม่ได้เชื่อมกับ agent — '
+                    'รอสักครู่ / found on the network at %s but not linked to the '
+                    'agent yet; it should adopt the beacon within a few seconds'
+                    % (found, found))
+        elif beacon:
+            hint = ('ไม่เจอหุ่นในเครือข่ายนี้ — กำลังประกาศที่อยู่ agent อยู่ ถ้าหุ่น'
+                    'เข้า Wi-Fi เดียวกันจะต่อเองทันที / not on this network. We are '
+                    'announcing the agent, so it will connect by itself as soon as '
+                    'it joins the same Wi-Fi.')
+        else:
+            hint = ('ไม่เจอหุ่น และไม่ได้ประกาศที่อยู่ agent / robot not found, and '
+                    'the beacon is not running: sudo systemctl start gps_localize_beacon')
+
+        return 200, {'ok': True, 'linked': linked, 'found_at': found,
+                     'robot_name': self.ROBOT_MDNS_NAME, 'beacon': beacon,
+                     'agent_ip': connect_info(self.host, self.port,
+                                              self.friendly_port).get('ip'),
+                     'hint': hint}
+
+    def api_reset_odom(self, _body, _query):
+        """Make where the robot is standing now the origin.
+
+        CONFIG_RESET_ODOM has existed on the board since the beginning and had
+        no way to reach it from a browser - it was defined here and published by
+        nothing. It belongs beside the calibrations because that is where people
+        look for it.
+        """
+        msg = Float32MultiArray()
+        msg.data = [float(tel.CONFIG_RESET_ODOM)]
+        self.pub_config.publish(msg)
+        self.add_log('web', 'odometry zeroed - this point is now 0, 0')
+        return 200, {'ok': True}
+
+    def api_imu_calib(self, body, _query):
+        """BNO085 calibration.
+
+        Unlike the compass there is nothing to sweep and nothing for the host to
+        compute: the sensor calibrates itself from motion. What the robot needs
+        from us is permission to start learning again, and a moment to write the
+        result into its own flash so the figure-of-eight is not repeated after
+        every power cycle. Progress is read from imu_accuracy in telemetry.
+        """
+        action, value = self._calib_action(body)
+
+        # Refuse to save a calibration the sensor does not believe in.
+        #
+        # Saving ENDS the calibration: the BNO085 writes its record and stops
+        # adjusting. Save at accuracy 0 and you have stored a bad record AND
+        # switched off the learning that would have improved it - after which
+        # moving the sensor somewhere magnetically clean does nothing at all,
+        # because nothing is listening any more.
+        #
+        # The web button is disabled below 2 for this reason, but a disabled
+        # button is advice, not enforcement: a curl, a stale tab or a script
+        # walks straight past it. That is exactly how it happened here, and it
+        # then cost a long time to spot, because every symptom pointed at the
+        # sensor rather than at the command that had quietly stopped it.
+        if action in ('finish', 'save'):
+            with self._lock:
+                acc = int(self.telemetry.get('imu_accuracy') or 0)
+            if acc < 2:
+                self.add_log('web', 'refused to save the IMU calibration at %d/3' % acc)
+                return 409, {'ok': False, 'error':
+                             'the sensor reports accuracy %d/3. Saving now would store a '
+                             'bad calibration AND stop it learning - move the robot in '
+                             'figure-of-eights until it reaches 2, then save.' % acc,
+                             'accuracy': acc}
+
+        msg = Float32MultiArray()
+        msg.data = [float(tel.CONFIG_IMU_CALIB), value]
+        self.pub_config.publish(msg)
+        self.add_log('web', self.IMU_CALIB_LOG[action])
+        return 200, {'ok': True, 'action': action, 'calibrating': action == 'start'}
 
     # ------------------------------------------------------------ shutdown
     def close(self):

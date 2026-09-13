@@ -20,9 +20,14 @@
 ; moves or another account runs the robot.
 
 [Unit]
-Description=GPS_Localize robot stack (micro-ROS agent, navigation, web UI)
-After=network-online.target
+Description=GPS_Localize robot stack (navigation, web UI)
+After=network-online.target micro_ros_agent.service
 Wants=network-online.target
+; The agent runs as its own unit so that stopping or restarting this stack does
+; not leave the board with nothing listening on its port. Wants= rather than
+; Requires=: if the agent cannot start, the host half should still come up and
+; say so in the web UI, rather than both halves disappearing together.
+Wants=micro_ros_agent.service
 
 [Service]
 # Lets the web UI bind port 80 while still running as an ordinary user, so the
@@ -36,13 +41,12 @@ Type=simple
 User=__USER__
 WorkingDirectory=__PROJECT__
 Environment=ROS_DOMAIN_ID=10
-# The micro-ROS agent lives in its own workspace, built by micro_ros_setup.
-# Without sourcing it the launch file cannot find the agent package, so it
-# starts the stack WITHOUT an agent - every host node comes up, the web UI
-# works, and the robot can never connect, with nothing in the log saying so.
-# Found on hardware: the board was flashed and joined Wi-Fi, but nothing was
-# listening on UDP 8888.
-ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && [ -f $HOME/uros_ws/install/local_setup.bash ] && source $HOME/uros_ws/install/local_setup.bash; source __PROJECT__/gps_localize_ws/install/setup.bash && ros2 launch gps_localize bringup.launch.py'
+# start_agent:=false because micro_ros_agent.service owns the agent now. Two
+# agents on one UDP port do not share it - the second exits, and which of the
+# two lost the race is not something you can tell from the board's side.
+# The agent workspace is still sourced: other tooling launched from here
+# expects its message types to be on the path.
+ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && [ -f $HOME/uros_ws/install/local_setup.bash ] && source $HOME/uros_ws/install/local_setup.bash; source __PROJECT__/gps_localize_ws/install/setup.bash && ros2 launch gps_localize bringup.launch.py start_agent:=false'
 Restart=always
 RestartSec=5
 KillSignal=SIGINT

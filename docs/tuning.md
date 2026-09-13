@@ -139,7 +139,7 @@ the GPS speed converted to rpm. Within ~15 % is normal and good enough.
 Wrong `R` shows up as a speed that drops too much under load; wrong `Ke` shows
 up as a constant scale error.
 
-`motor.stall_current_a` (default 0.9 A) is the current level that counts as
+`motor.stall_a` (default 2.5 A) is the current level that counts as
 "blocked wheel" when there is no back-EMF. Watch the dashboard current with a
 wheel held by hand and set it a little under what you see.
 
@@ -183,6 +183,11 @@ Settings → `heading.*`. Tune on the surface the robot will actually work on.
 | Sits with a constant offset | raise `heading.ki` slightly (0.1 steps) |
 | Twitches / nervous steering | raise `heading.tol` (deadband) to 2–3° |
 | Turns on the spot too often | raise `HEADING_SPIN_ERR_DEG` (firmware) or `nav.heading_tolerance_deg` |
+| Robot stops and turns on the spot too often on the way to a waypoint | raise `control.spin_above_deg`. Below that heading error it already drives and steers together; 180 means it never stops to turn, which is smoother in an open field and worse in a corridor |
+| Manual drive curves instead of going straight | it should not any more — manual driving holds the heading. If it still curves, check `MANUAL_HOLD_HEADING` is 1 and that the heading source is not garbage; the hold can only be as straight as the heading it is given |
+| After a turn it kicks back the other way before driving on | the heading hold latched before the fused heading had caught up with the robot. It now waits for the yaw rate to be under `MANUAL_HOLD_SETTLE_DPS` for `MANUAL_HOLD_SETTLE_S` first. If a kick is still visible, lengthen the settle - the estimate is lagging further than 0.35 s on this robot |
+| It takes a moment to start holding after a turn | that is the settle window doing its job. Shorten `MANUAL_HOLD_SETTLE_S` if it feels slow, but expect the kick back to return as it approaches zero |
+| Manual drive fights the turn buttons | lower `MANUAL_HOLD_MAX_PWM`. The hold is a trim, not a controller: it must never out-pull the operator |
 
 Typical good values on grass: `kp 6–12`, `ki 0.2–0.6`, `kd 0.8–2.0`.
 
@@ -192,9 +197,23 @@ Settings → **การเดินทาง**:
 
 | Setting | Effect |
 |---|---|
-| `arrive_radius_m` | smaller = more accurate stop, but the robot may hunt around the point. With a consumer M10 and no RTK, 1.0 m is realistic; do not go below 0.6 m |
+| `arrive_radius_m` | how close counts as reached. **Values below 2.0 m are ignored** — the code raises them to that floor, because this receiver cannot resolve a metre. Measured stationary outdoors on 8 satellites at HDOP 1.3: the fix scattered 1.56 m median and 4.86 m worst. A 1 m radius is below the noise, and a mission that drove to the point and never finished is what that looks like |
+| `arrive_hold_s` | how long the robot must **stay** inside the radius before it counts, default 1.5 s. This is the half that stops a wider radius from causing early arrivals: with several metres of scatter a single sample can land inside the circle from well outside it. While the timer runs the robot stands still, because at that range the remaining distance is mostly receiver noise and steering on it drives the robot back out of the circle |
+| `arrive_sigma_k` | the radius also grows with the fusion's own reported uncertainty, by this factor. On a clean fix the sigma is about 1.5 m and the radius stays where it was set; under trees the sigma grows and the radius grows with it, so the mission still finishes instead of circling a point the robot can no longer resolve |
 | `approach_distance_m` / `approach_speed_mps` | how early and how much it slows down |
-| `min_satellites` / `max_hdop` | quality gate; raising `max_hdop` above 3 lets the robot drive on bad data |
+| `min_satellites` / `max_hdop` | **host-side** gate: below this, navigation blocks and the robot stops. Raising `max_hdop` above 3 lets it drive on bad data |
+
+**There is a second set of GPS thresholds, and they live on the board.** These
+two block *navigation*; the board has its own, which decide whether the
+receiver's ground *speed* is believed and whether the GPS counts as a working
+sensor at all. They used to be compiled in, so changing the pair above moved
+only half the robot. They are parameters now, in the **gps** group:
+
+| Board parameter | Default | What it decides |
+|---|---|---|
+| `gps.min_sats_speed` | 6 | Below this the fused speed ignores GPS and runs on the IMU and the motor model. Strict on purpose: standing still indoors on a 3-satellite fix this receiver reported 7.28 m/s |
+| `gps.max_hdop_speed` | 1.5 | Worst HDOP whose ground speed is still believed. Raising it lets indoor noise into the speed estimate, which is what makes the odometry wander |
+| `gps.min_sats_fix` | 4 | Below this the GPS is reported as a missing sensor. A deliberately looser, separate question — a fix too rough to take a speed from is still a fix, and 4 is the minimum for a 3D solution. There is no HDOP term here: bad geometry makes a position less precise, not absent |
 | `waypoint_timeout_s` | protects against a blocked robot pushing forever |
 
 ## 7. Field acceptance test

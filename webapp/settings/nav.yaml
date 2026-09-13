@@ -6,7 +6,6 @@ nav:
   heading_tolerance_deg: 15.0
   command_rate_hz: 5.0
   loop_waypoints: false
-  reverse_allowed: false
   waypoint_timeout_s: 180.0
   discover_heading: true
   discover_speed_mps: 0.15

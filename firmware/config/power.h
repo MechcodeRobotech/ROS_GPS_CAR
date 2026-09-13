@@ -66,8 +66,15 @@
 // voltage with no motors fitted. Which one is A is settled by driving one motor
 // and seeing whose current rises - see E16.
 #define INA226_ADDR_PROCESSOR   0x41      // measured: the ESP32 +5 V rail
-#define INA226_ADDR_MOTOR_A     0x40      // measured: a motor rail at pack voltage
-#define INA226_ADDR_MOTOR_B     0x44      // VCC EMER -> motor B rail
+// These follow the driver boards, so swapping the motor pins swaps these too.
+// Proved by driving ONE wheel at a time - mixing forward and turn so the other
+// side lands on exactly zero PWM: the board on IO25/26/27 draws on 0x40 and the
+// board on IO19/18/4 draws on 0x44. Since IO19/18/4 is the LEFT wheel, 0x44 is
+// motor A. Getting this wrong is not cosmetic and not visible: the back-EMF
+// model would be fed each wheel's current from the OTHER wheel - a wrong number
+// that looks entirely plausible, which has already happened once on this robot.
+#define INA226_ADDR_MOTOR_A     0x44      // left wheel, the board on IO19/18/4
+#define INA226_ADDR_MOTOR_B     0x40      // right wheel, the board on IO25/26/27
 #define INA226_ADDR_FAN         0x45      // VCC ON MODULE -> fan buck   (draft_5, new)
 
 //------------------------------ shunts -----------------------------------//
@@ -93,11 +100,38 @@
 // 3S LiPo. A cell is damaged below about 3.00 V (9.0 V pack); the usual working
 // floor is 3.3-3.5 V/cell. These tiers sit above that on purpose - they trade a
 // little runtime for pack life.
+// PER CELL, then multiplied by the cell count. The thresholds used to be
+// absolute volts for a 3S pack, so fitting a 2S or 4S battery meant every tier
+// was wrong at once - and wrong in the dangerous direction for 4S, where a 3S
+// cutoff of 10.7 V is 2.68 V/cell and the pack would be ruined long before the
+// robot ever stopped.
+//
+// A cell is damaged below about 3.00 V and the usual working floor is
+// 3.3-3.5 V/cell, so these sit above that deliberately: a little runtime traded
+// for pack life. Per cell they are the same numbers as before, just expressed
+// in the unit that actually generalises.
+#define BATT_WARN_V_PER_CELL     3.90f     // orange on the web UI, keep driving
+#define BATT_SOFT_STOP_V_PER_CELL 3.80f    // stop driving, stay powered
+#define BATT_CUTOFF_V_PER_CELL   3.733f     // latch STOP_BATTERY_LOW
+
+// The shipped default. Change it from the web or the console rather than here -
+// battery.cells is a parameter, so a robot that gets a different pack does not
+// need reflashing.
 #define BATT_CELLS              3
-#define BATT_WARN_V             11.4f     // 3.80 V/cell -> orange on the web UI, keep driving
-#define BATT_SOFT_STOP_V        11.0f     // 3.67 V/cell -> stop driving, stay powered
-#define BATT_CUTOFF_V           10.7f     // 3.57 V/cell -> latch STOP_BATTERY_LOW
+#define BATT_WARN_V             (BATT_CELLS * BATT_WARN_V_PER_CELL)
+#define BATT_SOFT_STOP_V        (BATT_CELLS * BATT_SOFT_STOP_V_PER_CELL)
+#define BATT_CUTOFF_V           (BATT_CELLS * BATT_CUTOFF_V_PER_CELL)
 #define BATT_CUTOFF_HOLD_MS     3000      // must stay low this long (ignore load dips)
+
+// Recovery from the SOFT stop, which is not latched and must not chatter.
+//
+// A pack at the soft-stop voltage sags under motor current and springs back the
+// instant the motors stop. With no hysteresis the sequence is: sag, stop,
+// recover, drive, sag - a start-stop oscillation that stresses the gearboxes
+// and drains the pack it is meant to protect. Coming back out needs the voltage
+// clearly above the threshold, and steady there.
+#define BATT_SOFT_HYST_V        0.15f
+#define BATT_SOFT_RECOVER_MS    3000
 
 // There is deliberately NO unlatch voltage. The cutoff is cleared by switching
 // the robot off and starting it again, and by nothing else. A pack sitting at
@@ -111,9 +145,19 @@
 // the pack voltage is unknown rather than low. Never latch on that.
 #define PACK_RAIL_MIN_VALID_V   6.0f
 
-// Sanity window for the ESP32 +5 V rail. Outside it the buck is misbehaving;
-// reported on the web UI, never a reason to stop the robot on its own.
-#define ESP32_RAIL_MIN_V        4.5f
-#define ESP32_RAIL_MAX_V        5.5f
+// Sanity window for the rail that feeds the ESP32. Outside it the buck is
+// misbehaving; reported on the web UI, never a reason to stop the robot alone.
+//
+// THIS IS 3V3 NOW, NOT 5 V. The ESP32 used to be fed from the 5 V rail through
+// the devkit's on-board regulator, sharing that rail with the relay coil. It
+// now has its own 3.3 V buck and VIN is left disconnected, which took the
+// radio's transmit peaks off the coil's rail. Measured after the change: 3.42 V
+// and 172 mA for the ESP32 and every sensor.
+//
+// The window was still 4.5-5.5 V, so a correctly wired board sat permanently
+// outside it. Nothing consumed railOutOfRange() yet, which is the only reason
+// it did not show up as a fault - the value was wrong and simply unread.
+#define ESP32_RAIL_MIN_V        3.0f      // ESP32 needs 3.0 V to run its radio
+#define ESP32_RAIL_MAX_V        3.6f      // absolute maximum for ESP32 and sensors
 
 #endif // POWER_CONFIG_H

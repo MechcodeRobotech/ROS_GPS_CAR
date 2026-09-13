@@ -27,6 +27,10 @@
     <span class="pill" id="pillEsp"><b>ESP32</b><span>—</span></span>
     <span class="pill" id="pillGps"><b>GPS</b><span>—</span></span>
     <span class="pill" id="pillBatt"><b>แบตเตอรี่</b><span>—</span></span>
+    <!-- The control loop, back on the top bar. It is the first thing that shows
+         the firmware is in trouble: it went from 4 ms to 178 ms in one session
+         while every other number here stayed put. -->
+    <span class="pill" id="pillLoop"><b>loop</b><span>—</span></span>
   </div>
 
   <div class="estop-group">
@@ -54,6 +58,9 @@
   <button class="tab" data-tab="map">แผนที่<small>Map</small></button>
   <button class="tab" data-tab="wp">จุดหมาย<small>Waypoints</small></button>
   <button class="tab" data-tab="cfg">ตั้งค่า<small>Settings</small></button>
+  <button class="tab" data-tab="calib">ปรับเทียบ<small>Calibration</small></button>
+  <button class="tab" data-tab="geom">รูปทรงหุ่น<small>Geometry</small></button>
+  <button class="tab" data-tab="board">ค่าในบอร์ด<small>On the robot</small></button>
   <button class="tab" data-tab="topics">หัวข้อ ROS<small>Topics</small></button>
   <button class="tab" data-tab="log">บันทึก<small>Log</small></button>
   <button class="tab" data-tab="help">วิธีเชื่อมต่อ<small>Help</small></button>
@@ -63,8 +70,6 @@
      never needs PWM counts or free heap; someone tuning it does. -->
 <div class="viewswitch">
   <span class="hint">มุมมอง / View</span>
-  <button class="chipbtn active" id="btnSimple">ง่าย · Simple</button>
-  <button class="chipbtn" id="btnAdvanced">ละเอียด · Advanced</button>
   <button class="chipbtn help" id="btnHelp">? วิธีใช้ / Help</button>
 </div>
 
@@ -99,9 +104,23 @@
         <div class="hero-sub" id="heroSub">รอข้อมูลชุดแรกจากหุ่นยนต์ / waiting for the robot</div>
       </div>
     </div>
+    <!-- Which position the robot is steering on. Never implicit: GPS and dead
+         reckoning are metres apart in accuracy, and a driver who does not know
+         which one is live cannot judge whether to trust the map. -->
+    <!-- The sizer is the longest message this banner can ever show, rendered
+         invisibly underneath the live one. Reserving the space with a line
+         count was a guess that only held at one width: the Thai and English
+         halves wrap differently, and on a 320px phone the dead-reckoning
+         message needs more lines than the three that were reserved for it.
+         A twin of the real text reserves the real height, at any width, in
+         any font, with nothing to keep in step by hand. -->
+    <div class="posmode off" id="posMode">
+      <span class="posmode-sizer" aria-hidden="true">ในอาคาร: ใช้ IMU เข็มทิศ และมอเตอร์ (ไม่ใช้ GPS) — ตำแหน่งจะคลาดเคลื่อนขึ้นเรื่อย ๆ / INDOOR: navigating on the IMU, compass and motor model. No GPS - the position drifts, several metres per minute  (±99.9 m)</span>
+      <span id="posModeText"></span>
+    </div>
     <div class="hero-actions">
       <button class="btn go hero-primary" id="heroPrimary" disabled>เริ่มภารกิจ / START</button>
-      <button class="btn hidden" id="heroSecondary">พัก / PAUSE</button>
+      <button class="btn invisible" id="heroSecondary" disabled>พัก / PAUSE</button>
     </div>
   </div>
 
@@ -117,14 +136,48 @@
   </div>
 
   <div class="grid two">
-    <div class="card live-data adv">
-      <h3>ล้อ / Wheels <small>คำนวณจาก IMU (ไม่มี encoder)</small></h3>
-      <table class="kv">
-        <tr><th>ซ้าย / Left</th><td><b id="tRpmL">0.0</b> rpm</td><td><span id="tMpsL">0.00</span> m/s</td><td><span id="tPwmL">0</span> pwm</td></tr>
-        <tr><th>ขวา / Right</th><td><b id="tRpmR">0.0</b> rpm</td><td><span id="tMpsR">0.00</span> m/s</td><td><span id="tPwmR">0</span> pwm</td></tr>
-        <tr><th>หมุน / Yaw rate</th><td colspan="3"><span id="tYawRate">0.0</span> °/s</td></tr>
-        <tr><th>Odometry</th><td colspan="3">x <span id="tOdomX">0.00</span> m · y <span id="tOdomY">0.00</span> m</td></tr>
-      </table>
+    <div style="display: flex; flex-direction: column; gap: var(--sp-3);">
+      <div class="card live-data">
+        <h3>ระบบ / System <small>ESP32</small></h3>
+        <table class="kv">
+          <tr><th>อุณหภูมิ CPU / ESP32 temp</th><td colspan="2"><b id="tCpuTemp">—</b> °C <span id="tCpuTempNote" class="hint"></span></td></tr>
+          <tr class="adv"><th>หน่วยความจำว่าง / Free RAM</th><td colspan="2"><span id="tHeap">—</span> kB · loop <span id="tLoop">—</span> µs</td></tr>
+        </table>
+      </div>
+
+      <div class="card live-data">
+        <h3>ไฟฟ้า / Power <small>INA226 × 4</small></h3>
+        <table class="kv">
+          <!-- The pack has no current sensor of its own. Every INA226 measures on
+                 the BATTERY side of its own buck, so the total draw is all four of
+                 them added together - processor, fans and both motors. The volts
+                 are each measured AFTER their own buck, so those are per-rail and
+                 are not summed. -->
+          <tr><th>แบตเตอรี่ / Battery</th><td><b id="tBattV">0.00</b> V</td><td><span id="tBattA">0.00</span> A</td></tr>
+          <tr><th>สถานะแบต / Batt Status</th><td colspan="2"><b id="tBattStat">—</b></td></tr>
+          <tr class="adv"><th>ตัวประมวลผล / Processor</th><td><b id="tProcV">0.00</b> V</td><td><span id="tProcA">0.00</span> A</td></tr>
+          <tr class="adv"><th>มอเตอร์ A / Motor A</th><td><b id="tMaV">0.00</b> V</td><td><span id="tMaA">0.00</span> A</td></tr>
+          <tr class="adv"><th>มอเตอร์ B / Motor B</th><td><b id="tMbV">0.00</b> V</td><td><span id="tMbA">0.00</span> A</td></tr>
+          <tr class="adv"><th>พัดลม / Fans</th><td><b id="tFanV">0.00</b> V</td><td><span id="tFanA">0.00</span> A</td></tr>
+        </table>
+      </div>
+
+      <div class="card live-data adv">
+        <h3>ล้อ / Wheels <small>คำนวณจาก IMU (ไม่มี encoder)</small></h3>
+        <table class="kv">
+          <tr><th>ซ้าย / Left</th><td><b id="tRpmL">0.0</b> rpm</td><td><span id="tMpsL">0.00</span> m/s</td><td><span id="tPwmL">0</span> pwm</td></tr>
+          <tr><th>ขวา / Right</th><td><b id="tRpmR">0.0</b> rpm</td><td><span id="tMpsR">0.00</span> m/s</td><td><span id="tPwmR">0</span> pwm</td></tr>
+          <tr class="adv"><th>IMU (BNO085)</th><td colspan="3">RPY <span id="tImuRpy">—</span> · mag <span id="tImuAcc">—</span></td></tr>
+          <tr><th>หมุน / Rotation rates</th><td colspan="3">roll <span id="tRollRate">—</span> · pitch <span id="tPitchRate">—</span> · yaw <span id="tYawRate">—</span> °/s</td></tr>
+          <!-- Gravity is already removed by the sensor, so a robot standing still
+               reads about zero on all three - not 9.81 on one of them. -->
+          <tr class="adv"><th>ความเร่ง / Accel <small>หักแรงโน้มถ่วงแล้ว</small></th>
+              <td colspan="3">x <span id="tAccX">—</span> · y <span id="tAccY">—</span> ·
+                  z <span id="tAccZ">—</span> m/s²</td></tr>
+          <tr class="adv"><th>แรงโน้มถ่วง / Gravity <small>คำนวณจาก RPY</small></th><td colspan="3">x <span id="tGravX">—</span> · y <span id="tGravY">—</span> · z <span id="tGravZ">—</span> m/s²</td></tr>
+          <tr><th>พิกัด / Position <small>EKF Fused</small></th><td colspan="3">x <span id="tOdomX">0.00</span> m · y <span id="tOdomY">0.00</span> m</td></tr>
+        </table>
+      </div>
     </div>
 
     <div class="card live-data">
@@ -132,26 +185,26 @@
       <div class="sensors" id="sensorChips"></div>
       <table class="kv adv">
         <tr><th>อ้างอิงทิศจาก / Heading from</th><td colspan="2"><b id="tHeadingRef">—</b></td></tr>
+        <!-- The compass and the IMU checked against each other. Near zero means
+             two independent sources agree, which is worth more than either
+             alone; large means one is disturbed. Without this there is no way
+             to tell a disturbed compass from a drifted gyro - they look
+             identical from outside, and the robot steered to a compass step of
+             9.5 degrees that the gyro flatly contradicted. -->
+        <tr><th>เข็มทิศ vs IMU <small>ต่างกันเท่าไร</small></th>
+            <td colspan="2"><span id="tHeadingAgree">—</span></td></tr>
         <tr><th>เข็มทิศ / Compass</th><td><span id="tMagHeading">—</span>°</td><td><span id="tMagStatus">—</span></td></tr>
         <tr><th>ความเร็วคำนวณจาก / Speed from</th><td colspan="2"><span id="tSpeedSource">—</span></td></tr>
-        <tr><th>รอบล้อจากไฟฟ้า / Wheel rpm (V·A)</th><td>L <span id="tMotorRpmL">—</span></td><td>R <span id="tMotorRpmR">—</span></td></tr>
+        <tr><th>รอบล้อจากไฟฟ้า / Wheel from V·A</th><td>L <span id="tMotorRpmL">—</span></td><td>R <span id="tMotorRpmR">—</span></td></tr>
       </table>
+      <p class="hint" id="tMotorFaultWhy" role="status" aria-live="polite"></p>
       <div class="row">
-        <button class="btn" id="btnMagStart">ปรับเข็มทิศ / Calibrate compass</button>
-        <button class="btn save" id="btnMagFinish" disabled>บันทึกผล / Finish</button>
-        <span class="hint" id="magHint">หมุนหุ่นช้า ๆ ครบ 1 รอบ แล้วกดบันทึก</span>
+        <!-- The buttons themselves live on the Calibration tab, with the
+             progress bar and the instructions. Two places to press "calibrate"
+             is one place too many. -->
+        <button class="btn" data-goto-tab="calib">ปรับเทียบเซ็นเซอร์ / Calibrate sensors →</button>
+        <span class="hint" id="sensorCalibHint"></span>
       </div>
-    </div>
-
-    <div class="card live-data">
-      <h3>ไฟฟ้า / Power <small>INA226 × 4</small></h3>
-      <table class="kv">
-        <tr><th>แบตเตอรี่ / Battery</th><td><b id="tBattV">0.00</b> V</td><td><span id="tBattA">0.00</span> A</td></tr>
-        <tr class="adv"><th>มอเตอร์ A / Motor A</th><td><b id="tMaV">0.00</b> V</td><td><span id="tMaA">0.00</span> A</td></tr>
-        <tr class="adv"><th>มอเตอร์ B / Motor B</th><td><b id="tMbV">0.00</b> V</td><td><span id="tMbA">0.00</span> A</td></tr>
-        <tr class="adv"><th>พัดลม / Fans</th><td><b id="tFanV">0.00</b> V</td><td><span id="tFanA">0.00</span> A</td></tr>
-        <tr class="adv"><th>หน่วยความจำว่าง / Free RAM</th><td colspan="2"><span id="tHeap">—</span> kB · loop <span id="tLoop">—</span> µs</td></tr>
-      </table>
     </div>
   </div>
 
@@ -170,7 +223,12 @@
         <div class="mission-line small warn" id="navBlock"></div>
       </div>
       <div class="row adv">
-        <button class="btn" data-nav="start">เริ่ม / START</button>
+        <!-- START belongs here, with the mission it starts and the controls
+             that follow it. It was briefly moved to the top of the page to
+             remove a duplicate; the duplicate is gone from the top instead,
+             because this is where someone looks when they are setting a
+             mission up. -->
+        <button class="btn go" data-nav="start">เริ่ม / START</button>
         <button class="btn" data-nav="pause">พัก / PAUSE</button>
         <button class="btn" data-nav="resume">ไปต่อ / RESUME</button>
         <button class="btn" data-nav="next">ข้ามจุด / NEXT</button>
@@ -189,6 +247,25 @@
         </div>
         <button class="jog" data-fwd="-1" data-turn="0">▼</button>
       </div>
+      <!-- A joystick, because forward and turn are one gesture on a real robot.
+           The arrow pad can only send one of them at a time, so driving an arc
+           meant alternating between two buttons and getting a zig-zag. The
+           firmware always accepted both at once - linear.x and angular.z in the
+           same Twist - so this is the control catching up with what the robot
+           could already do. -->
+      <div class="joywrap">
+        <div class="joypad" id="joyPad" role="application"
+             aria-label="จอยสติ๊ก / joystick: drag to drive, release to stop">
+          <div class="joyring"></div>
+          <div class="joyknob" id="joyKnob"></div>
+        </div>
+        <div class="joyread">
+          <span class="hint">จอยสติ๊ก / Joystick <small>ลากเพื่อขับ ปล่อยแล้วหยุด</small></span>
+          <div><b id="joyFwd">0.00</b> m/s · <b id="joyTurn">0</b> °/s</div>
+          <span class="hint">เดินหน้า+เลี้ยวพร้อมกันได้ / forward and turn together</span>
+        </div>
+      </div>
+
       <div class="speednow">
         <span class="hint">ความเร็วตอนนี้ / Speed now</span>
         <output id="speedNow">0.18</output><span class="unit">m/s</span>
@@ -216,7 +293,16 @@
           <span class="hint" id="speedMsg"></span>
         </div>
       </div>
-      <p class="hint">แป้นพิมพ์: W A S D หรือปุ่มลูกศร · <b>Space = หยุด</b> · ปล่อยปุ่ม = หยุดทันที<br>กดปุ่มขับ หุ่นจะวิ่งด้วยความเร็วที่ตั้งไว้ด้านบนพอดี / the robot drives at exactly the speed set above</p>
+      <!-- This used to promise the robot drove at exactly the speed set above,
+           which was not true: manual drive was open loop, so the same request
+           meant one speed on a fresh battery and another on a flat one, up a
+           slope, or on carpet. It is closer to true now - the speed loop is
+           closed whenever the speed is actually measured - so the claim says
+           what the firmware does rather than what it was asked to do. -->
+      <p class="hint">แป้นพิมพ์: W A S D หรือปุ่มลูกศร · <b>Space = หยุด</b> · ปล่อยปุ่ม = หยุดทันที<br>
+        กดเดินหน้า/ถอยหลังตรง ๆ หุ่นจะ<b>ล็อกทิศ</b>ให้เอง ไม่วิ่งโค้ง · กดเลี้ยว = ปลดล็อกทันที ปล่อยแล้วล็อกทิศใหม่<br>
+        ความเร็วใช้ PID คุมเมื่อวัดความเร็วได้จริง (มี GPS หรือ IMU) ถ้าเหลือแต่โมเดลมอเตอร์จะไม่ปิดลูป เพราะจะเป็นการวัดตัวเอง /
+        Driving straight holds the heading so it does not curve; a turn releases it. The speed loop closes only when the speed is really measured.</p>
 
       <h4 class="subhead adv">หมุนตามองศา / Turn by angle <small>ใช้ในร่มได้ ไม่ต้องมี GPS</small></h4>
       <div class="row turnrow adv">
@@ -248,27 +334,59 @@
     <h3>แผนที่ท้องถิ่น / Local map <small>เลื่อนเมาส์ดูพิกัด · แตะหรือคลิกเพื่อเลือกจุด</small></h3>
     <div class="empty hidden" id="mapEmpty">
       <b>แผนที่ยังไม่มีจุดอ้างอิง / map has no reference yet</b>
+      <span id="mapEmptyWhy"></span>
       รอให้ GPS จับสัญญาณครั้งแรก หรือกด “ตั้งตำแหน่งเริ่มต้น” เพื่อบอกเองว่าหุ่นอยู่ตรงไหน
+      <span class="muted">หุ่นอาจเชื่อมต่ออยู่ตามปกติ — ดูสถานะลิงก์ด้านบน · The robot may be perfectly connected: check the link chip at the top.</span>
+      <span class="muted" id="mapEmptyWhere"></span>
     </div>
     <div class="mapwrap">
       <canvas id="map" width="900" height="560" aria-label="แผนที่ท้องถิ่น local map"></canvas>
       <div id="mapHud" class="maphud">—</div>
       <div id="mapMenu" class="mapmenu hidden">
         <div class="mapmenu-head" id="mapMenuPos">—</div>
-        <button class="btn go" data-map="goto">ไปที่นี่เลย / Go here</button>
-        <button class="btn save" data-map="add">เพิ่มเข้ารายการ / Add to list</button>
-        <button class="btn" data-map="copy">คัดลอกพิกัด / Copy</button>
+        <button class="btn go" id="mapMenuGoto" data-map="goto">ไปที่นี่เลย / Go here</button>
+        <button class="btn save" id="mapMenuAdd" data-map="add">เพิ่มเข้ารายการ / Add to list</button>
+        <button class="btn attention hidden" id="mapMenuDelete" data-map="delete">ลบจุดนี้ / Delete WP</button>
+        <button class="btn" id="mapMenuCopy" data-map="copy">คัดลอกพิกัด / Copy</button>
         <button class="btn" data-map="close">ปิด / Close</button>
+      </div>
+            <div class="card" id="mapWpCard" style="display: none; position: absolute; left: var(--sp-2); top: 80px; max-height: calc(100% - 96px); max-width: 380px; background: color-mix(in srgb, var(--card) 85%, transparent); z-index: 10; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: flex; flex-direction: column; padding: var(--sp-3);">
+        <h3 id="mapWpToggle" style="cursor: pointer; margin: 0; display: flex; justify-content: space-between; align-items: center; user-select: none;">
+          <span>📋 จุดหมาย / Waypoints</span>
+          <span id="mapWpChevron" style="margin-left: 16px;">▼</span>
+        </h3>
+        <div id="mapWpContent" style="overflow-y: auto; margin-top: var(--sp-3);">
+          <table class="wptable" id="mapWpTable">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>ชื่อ / Name</th>
+                <th>Lat, Lon</th>
+                <th>ทิศ / Head</th>
+                <th>แผนที่ / Map</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </div>
     </div>
     <div class="row">
       <button class="btn" id="mapZoomIn" title="ขยาย / zoom in">+</button>
       <button class="btn" id="mapZoomOut" title="ย่อ / zoom out">−</button>
       <button class="btn" id="mapFit">พอดีจอ / Fit</button>
+      <button class="btn" id="mapCentre">🤖 ไปที่หุ่นยนต์ / Centre on robot</button>
+      <button class="btn" id="mapSat">🛰 ภาพดาวเทียม / Satellite</button>
       <button class="btn" id="mapClear">ล้างเส้นทาง / Clear trail</button>
       <button class="btn" id="mapPoseTool">📍 ตั้งตำแหน่งเริ่มต้น / Set start pose</button>
       <span class="hint">▲ = หุ่นยนต์ · ● = จุดหมาย · ✛ = จุดที่เลือก · เส้นเหลือง = จุดที่กำลังไป</span>
-    </div>
+      </div>
+      <div class="row">
+        <span class="hint">พิกัด / Position <code id="mapLatLon">—</code>
+          · สูง / alt <code id="mapAlt">—</code>
+          · ดาวเทียม / sats <code id="mapSats">—</code>
+          · <span id="mapAttrib" class="muted"></span></span>
+      </div>
     <p class="hint" id="poseHint">
       ใช้เมื่อ <b>ไม่มีสัญญาณ GPS</b> (ทดสอบในร่ม): กดปุ่มด้านบนก่อน แล้วกดค้างบนแผนที่ตรงที่หุ่นอยู่
       ลากไปทางที่หุ่นหันหน้า แล้วปล่อย — เหมือน “2D Pose Estimate” ใน RViz ของ Nav2
@@ -280,9 +398,12 @@
 <section id="tab-wp" class="tabpage">
   <div class="card">
     <h3>รายการจุดหมาย / Waypoints</h3>
-    <p class="hint">พิมพ์ค่า lat/lon จาก Google Maps ได้เลย หรือขับหุ่นไปที่จุดนั้นแล้วกด “เพิ่มจุดที่นี่”</p>
+    <p class="hint">พิมพ์ค่า lat/lon จาก Google Maps ได้เลย หรือขับหุ่นไปที่จุดนั้นแล้วกด “เพิ่มจุดที่นี่” ·
+      ช่อง <b>ทิศ</b> ใส่องศาเข็มทิศ 0-359 ถ้าอยากให้หุ่นหันไปทางนั้นตอนถึงจุด เว้นว่างไว้ = หันทางไหนก็ได้</p>
     <table class="wptable" id="wpTable">
-      <thead><tr><th>#</th><th>ชื่อ / Name</th><th>Latitude</th><th>Longitude</th><th>ระยะ</th><th>จัดการ</th></tr></thead>
+      <thead><tr><th>#</th><th>ชื่อ / Name</th><th>Latitude</th><th>Longitude</th>
+        <th title="ทิศที่ต้องการหันเมื่อถึงจุดนี้ เว้นว่าง = ไม่กำหนด / compass heading to face on arrival, blank = any">ทิศ / Face</th>
+        <th>ระยะ</th><th>จัดการ</th></tr></thead>
       <tbody></tbody>
     </table>
     <div class="empty hidden" id="wpEmpty">
@@ -294,6 +415,7 @@
       <button class="btn" id="wpAddHere">เพิ่มจุดที่นี่ / Add here</button>
       <button class="btn" id="wpAddRow">เพิ่มแถวว่าง / Add row</button>
       <button class="btn go" id="wpSave">บันทึก / SAVE</button>
+      <label style="display: inline-flex; align-items: center; margin-left: var(--sp-3); cursor: pointer; user-select: none;"><input type="checkbox" id="wpLoopToggle" style="margin-right: 6px;"> วนซ้ำ (Loop)</label>
       <span id="wpMsg" class="hint" role="status" aria-live="polite"></span>
     </div>
   </div>
@@ -308,6 +430,31 @@
       ถ้าตั้งเพี้ยนจนหุ่นวิ่งแปลก กด “คืนค่าโรงงาน” ของกลุ่มนั้น
     </p>
     <div class="cfg-tabs" id="cfgGroups"></div>
+
+    <!-- Theme belongs to the "เว็บ / Web" group, with the rest of the settings
+         that describe this browser rather than the robot, so it is shown only
+         while that group is selected. It is not in the toolbar because it is
+         set once and then forgotten, and the toolbar is reserved for things
+         that change while driving. "Auto" follows the device, which is right
+         most of the time and wrong in direct sun on a phone set to dark.
+
+         It sits outside #cfgForm on purpose: renderConfig empties that element
+         on every group change, which would destroy these buttons and the
+         listeners bound to them at startup.
+
+         Hidden with the .hidden CLASS, never the hidden ATTRIBUTE. `.row` sets
+         `display: flex`, and an author rule beats the browser's own
+         `[hidden] { display: none }` at the same specificity - so the attribute
+         was set correctly and the row stayed visible in every group. `.hidden`
+         carries !important for this exact reason. -->
+    <div class="row hidden" id="themeRow">
+      <span class="hint">ธีม / Theme</span>
+      <button class="chipbtn" data-theme-set="auto">อัตโนมัติ / Auto</button>
+      <button class="chipbtn" data-theme-set="light">สว่าง / Light</button>
+      <button class="chipbtn" data-theme-set="dark">มืด / Dark</button>
+      <span class="hint" id="themeNote"></span>
+    </div>
+
     <div id="cfgForm" class="cfg-form"></div>
     <div class="row">
       <button class="btn go" id="cfgSave">บันทึก / SAVE</button>
@@ -317,6 +464,213 @@
     </div>
   </div>
 
+</section>
+
+<!-- ========================= CALIBRATION ============================ -->
+<!-- Every calibration in one place. They used to be scattered: the compass on
+     the dashboard, the IMU only in the USB console's `info` output, and the
+     motor model as bare numbers on the settings page with no hint of how to
+     arrive at them. Nothing here needs a cable or a terminal. -->
+<section id="tab-calib" class="tabpage">
+
+  <div class="card">
+    <h3>ปรับเทียบเซ็นเซอร์ / Calibration
+      <small>ทำครั้งเดียวก็พอ จนกว่าจะย้ายอุปกรณ์ · once is enough, until something moves</small></h3>
+    <p class="hint">
+      ทำตามลำดับ 1 → 2 ก็พอสำหรับการขับปกติ ส่วนข้อ 3 และ 4 ทำเมื่ออยากให้แม่นขึ้น ·
+      Steps 1 and 2 are enough to drive. Steps 3 and 4 are for accuracy, and can
+      wait. Every step is safe to repeat.
+    </p>
+  </div>
+
+  <!-- 1. compass ------------------------------------------------------- -->
+  <div class="card live-data">
+    <h3>1 · เข็มทิศ / Compass <small>QMC5883L · ในโมดูล GPS</small></h3>
+    <p class="hint">
+      กด <b>เริ่ม</b> แล้วหมุนหุ่นช้า ๆ ให้ครบ 1 รอบ (ราว 20 วินาที) แล้วกด <b>บันทึก</b> ·
+      Press <b>Start</b>, turn the robot slowly through one full circle — about
+      20 seconds — then press <b>Finish</b>. The bar below only moves while the
+      robot actually turns, so it shows how much of the circle is really done.
+      Do it away from metal, and with the battery in its normal place.
+    </p>
+    <div class="calib-meter">
+      <div class="calib-bar"><span id="magProgBar" style="width:0%"></span></div>
+      <b id="magProgText">0%</b>
+    </div>
+    <table class="kv">
+      <tr><th>สถานะ / Status</th><td><span id="cMagStatus">—</span></td>
+          <td><span id="cMagCalState">—</span></td></tr>
+      <tr><th>ทิศจากเข็มทิศ / Heading</th><td colspan="2"><span id="cMagHeading">—</span>°</td></tr>
+      <tr><th>หมุนไปแล้ว / Turned so far</th>
+          <td colspan="2"><b id="cMagTurned">—</b> ° จาก 360° <span class="hint">(วัดด้วยไจโร / measured by the gyro)</span></td></tr>
+    </table>
+    <div class="row">
+      <button class="btn big" id="btnMagStart">▶ เริ่ม / Start</button>
+      <button class="btn save big" id="btnMagFinish" disabled>บันทึก / Finish</button>
+      <button class="btn big" id="btnMagCancel" disabled>หยุด ไม่บันทึก / Stop</button>
+      <button class="btn danger big" id="btnMagClear">ล้างค่า / Clear</button>
+    </div>
+    <span class="hint" id="magHint" role="status" aria-live="polite">
+      หมุนหุ่นช้า ๆ ครบ 1 รอบ แล้วกดบันทึก
+    </span>
+    <p class="hint">
+      <b>ล้างค่า</b> คือทางออกเมื่อเข็มทิศตายหลังปรับเทียบ ·
+      <b>Clear</b> is the way back out. The disturbance check only runs once a
+      calibration is stored, so a bad one rejects every reading and the compass
+      goes silently dead — worse than never calibrating at all.
+    </p>
+  </div>
+
+  <!-- 2. IMU ----------------------------------------------------------- -->
+  <div class="card live-data">
+    <h3>2 · ไอเอ็มยู / IMU <small>BNO085 · มาตรวัดความเร่ง ไจโร และแม่เหล็ก</small></h3>
+    <p class="hint">
+      ปรับเทียบพร้อมกันทั้งสามอย่าง — มาตรวัดความเร่ง ไจโร และแม่เหล็ก —
+      เพราะการเคลื่อนไหวชุดเดียวกันสอนได้ทั้งหมด ตัวเลข 0-3 ที่เห็นคือความมั่นใจ
+      ของเซ็นเซอร์เอง ·
+      <b>All three are calibrated together</b> — accelerometer, gyroscope and
+      magnetometer — because the same motion teaches all of them, and there is
+      no reason to leave two of them stale. The 0-3 number is the sensor's own
+      confidence, and the magnetometer is the slowest of the three to earn it,
+      which is why it is the one still showing 0.
+      This sensor calibrates itself from motion; the button only tells it to
+      start learning again. Press <b>Start</b>, then move the robot in slow
+      figure-of-eights — roll it, tip it, turn it — <b>away from the motors and
+      the battery</b>, until the accuracy below reaches <b>2</b>. Then press
+      <b>Save</b> so it survives a power cycle.
+    </p>
+    <div class="calib-meter">
+      <div class="calib-pips" id="imuPips" aria-label="IMU accuracy 0 to 3">
+        <span></span><span></span><span></span><span></span>
+      </div>
+      <b id="imuAccText">—</b>
+    </div>
+    <table class="kv">
+      <tr><th>ความแม่น / Accuracy</th><td colspan="2"><span id="cImuAcc">—</span></td></tr>
+      <tr><th>สถานะ / State</th><td colspan="2"><span id="cImuState">—</span></td></tr>
+      <tr><th>เซ็นเซอร์ตอบว่า / Sensor said</th><td colspan="2"><span id="cImuResult">—</span></td></tr>
+    </table>
+    <div class="row">
+      <button class="btn big" id="btnImuStart">▶ เริ่ม / Start</button>
+      <button class="btn save big" id="btnImuSave">บันทึกลงเซ็นเซอร์ / Save</button>
+      <button class="btn big" id="btnImuCancel">หยุด ไม่บันทึก / Stop</button>
+      <button class="btn danger big" id="btnImuClear">ล้างค่า / Clear</button>
+      <button class="btn big" id="btnImuRetry">ลองเริ่มใหม่ / Retry start</button>
+    </div>
+    <span class="hint" id="imuHint" role="status" aria-live="polite"></span>
+    <p class="hint">
+      ต่ำกว่า 2 ระบบจะไม่ใช้แม่เหล็กของ IMU เลย และจะขึ้นว่า
+      <code>imu_magnetometer_missing</code> ·
+      Below 2 the heading chain refuses this magnetometer outright and reports
+      <code>imu_magnetometer_missing</code>. That is not a fault — it means the
+      sensor has not been moved enough yet, and this is the difference between
+      the two that the dashboard alone could never show.
+    </p>
+  </div>
+
+  <!-- 3. wheels -------------------------------------------------------- -->
+  <div class="card live-data">
+    <h3>3 · ล้อและระยะล้อ / Wheels and track <small>วัดด้วยตลับเมตร · a tape measure</small></h3>
+    <p class="hint">
+      สองค่านี้กำหนดว่า "1 เมตร" และ "1 องศา" แปลว่าอะไรกับหุ่น วัดตอนล้อรับน้ำหนักจริง ·
+      These two decide what a metre and a degree mean to every control loop.
+      Measure the wheel <b>loaded</b>, with the robot's weight on it: a soft tyre
+      is smaller than the one in the catalogue. Measure the track centre-to-centre
+      between the two wheel contact patches. Both are refused while the robot is
+      moving, for the obvious reason.
+    </p>
+    <table class="kv">
+      <tr><th>เส้นผ่านศูนย์กลางล้อ / Wheel diameter</th>
+          <td colspan="2"><b id="cWheelDia">—</b> m</td></tr>
+      <tr><th>ระยะล้อ / Track width</th><td colspan="2"><b id="cTrack">—</b> m</td></tr>
+      <tr><th>ความเร็วล้อตอนนี้ / Wheel speed now</th>
+          <td>L <span id="cMpsL">—</span> m/s</td><td>R <span id="cMpsR">—</span> m/s</td></tr>
+    </table>
+    <div class="row">
+      <button class="btn" data-goto-params="robot.">แก้ค่าล้อ / Edit these →</button>
+    </div>
+  </div>
+
+  <!-- 4. motor model --------------------------------------------------- -->
+  <div class="card live-data">
+    <h3>4 · แบบจำลองมอเตอร์ / Motor model <small>ใช้ตอน GPS หาย · the GPS-less fallback</small></h3>
+    <p class="hint">
+      เมื่อไม่มี GPS หุ่นเดาความเร็วจากแรงดันและกระแสของมอเตอร์ ค่าพวกนี้คือสิ่งที่ทำให้เดาถูก ·
+      With no GPS the robot works out its speed from motor volts and amps alone.
+      These numbers are what make that guess right, and the defaults came from a
+      datasheet rather than from this robot. Read the live values below while the
+      wheels turn, then set them on the next page.
+    </p>
+    <table class="kv">
+      <tr><th>มอเตอร์ A / Motor A</th><td><b id="cMaV">—</b> V</td><td><span id="cMaA">—</span> A</td></tr>
+      <tr><th>มอเตอร์ B / Motor B</th><td><b id="cMbV">—</b> V</td><td><span id="cMbA">—</span> A</td></tr>
+      <tr><th>PWM</th><td>L <span id="cPwmL">—</span></td><td>R <span id="cPwmR">—</span></td></tr>
+      <tr><th>รอบจากไฟฟ้า / Wheel rpm from V·A</th>
+          <td>L <span id="cModelL">—</span></td><td>R <span id="cModelR">—</span></td></tr>
+      <tr><th>เทียบกับที่วัดได้ / vs fused</th>
+          <td>L <span id="cWheelL">—</span></td><td>R <span id="cWheelR">—</span></td></tr>
+    </table>
+    <p class="hint">
+      ถ้าสองแถวล่างต่างกันมาก ให้แก้ <code>motor.ke</code> ก่อน แล้วค่อยแก้
+      <code>motor.resistance</code> ·
+      If the last two rows disagree, adjust <code>motor.ke</code> first, then
+      <code>motor.resistance</code>. The diode drops are a measurement, not a
+      tuning knob: put a meter across each series diode with the motor running.
+    </p>
+    <div class="row">
+      <button class="btn" data-goto-params="motor.">แก้ค่ามอเตอร์ / Edit these →</button>
+    </div>
+  </div>
+
+  <!-- 5. zero ---------------------------------------------------------- -->
+  <div class="card live-data">
+    <h3>5 · ตั้งศูนย์ / Zero the position <small>ทำได้ทุกเมื่อ · any time</small></h3>
+    <p class="hint">
+      ล้างระยะที่เดินมา ให้จุดที่ยืนอยู่ตอนนี้เป็น 0,0 ·
+      Clears the distance travelled so that where the robot is standing now
+      becomes the origin. This is not really a calibration — it is here because
+      it is the other thing people look for on this page.
+    </p>
+    <table class="kv">
+      <tr><th>ตำแหน่ง / Position</th><td>x <span id="cOdomX">—</span> m</td>
+          <td>y <span id="cOdomY">—</span> m</td></tr>
+      <tr><th>ความไม่แน่นอน / Uncertainty</th><td colspan="2">±<span id="cSigma">—</span> m</td></tr>
+    </table>
+    <div class="row">
+      <button class="btn" id="btnCalibResetOdom">ตั้งศูนย์ / Reset odometry</button>
+    </div>
+  </div>
+
+</section>
+
+<!-- ============================ GEOMETRY ============================= -->
+<!-- The 42 mounting numbers, laid out by the thing they describe instead of as
+     one alphabetical list. Read as a flat list they were unusable: every mount
+     looks like every other mount, and "geometry.caster.fl.qy" tells you nothing
+     about which card it belongs to until you have parsed the whole name. -->
+<section id="tab-geom" class="tabpage">
+  <div class="card">
+    <h3>รูปทรงหุ่น / Robot geometry
+      <small>วัดจากกลางหุ่น · measured from the middle of the robot</small></h3>
+    <p class="hint">
+      แกน x ไปข้างหน้า, y ไปทางซ้าย, z ขึ้นบน หน่วยเป็นเมตร วัดจาก
+      <b>จุดกึ่งกลางตัวหุ่น</b> ซึ่งเป็นจุดเดียวที่วัดด้วยตลับเมตรได้จริง ·
+      <b>x forward, y left, z up, in metres, from the MIDDLE of the robot</b> —
+      the one point you can find with a tape measure without first working
+      something else out. The drive axle is not entered here: it is exactly
+      halfway between the two drive wheels, so the firmware derives it and it can
+      never disagree with them.
+    </p>
+    <div class="row">
+      <button class="btn" id="geomReload">โหลดใหม่ / Reload</button>
+      <span id="geomMsg" class="hint" role="status" aria-live="polite"></span>
+    </div>
+  </div>
+  <div id="geomCards"></div>
+</section>
+
+<!-- ====================== STORED ON THE ROBOT ======================= -->
+<section id="tab-board" class="tabpage">
   <div class="card">
     <h3>ค่าที่เก็บในหุ่นยนต์ / Stored on the robot
       <small>บันทึกในบอร์ด ไม่ใช่ในคอมฯ · kept on the board, not on this PC</small></h3>
@@ -327,11 +681,28 @@
       PC, a reboot and a reflash. Values marked <b>stopped</b> can only be
       changed while the robot is standing still.
     </p>
+    <!-- Two settings pages exist because there are two places a setting can
+         live, and confusing them wastes an afternoon. This tab is the ROBOT's
+         own memory; the Settings tab is this PC's. Saying so here is cheaper
+         than working it out from behaviour. -->
+    <p class="hint">
+      <b>ไม่ต้องแฟลช / No flashing involved.</b>
+      เขียนผ่านการเชื่อมต่อที่ใช้อยู่ ลงหน่วยความจำของบอร์ดโดยตรง มีผลทันที ·
+      Writing sends the value over the live link straight into the board's
+      memory and it takes effect at once — this is not a firmware update and
+      nothing is recompiled. The <b>ตั้งค่า / Settings</b> tab is a different
+      thing: those values belong to this PC (navigation, the web server), and
+      they stay here when the robot is taken somewhere else.
+    </p>
     <div class="row">
-      <button class="btn" id="paramsReload">โหลดใหม่ / Reload</button>
+      <button class="btn go" id="paramsWriteAll">เขียนทั้งหมดลงหุ่นยนต์ / Write all to robot</button>
+      <button class="btn" id="paramsReload">ดึงค่าจากหุ่นยนต์ / Pull from robot</button>
       <button class="btn danger" id="paramsReset">คืนค่าเริ่มต้น / Reset all</button>
       <span id="paramsMsg" class="hint" role="status" aria-live="polite"></span>
     </div>
+    <input type="search" id="paramsFilter" class="cfg-filter"
+           placeholder="ค้นหา / search: battery, diode, wheel…">
+    <div class="cfg-tabs" id="paramGroups"></div>
     <div id="paramsForm" class="cfg-form"></div>
   </div>
 </section>
@@ -399,6 +770,29 @@
         <p class="muted" id="cxNote"></p>
       </div>
     </div>
+  </div>
+
+  <div class="card live-data">
+    <h3>หาหุ่นยนต์ / Find the robot
+      <small>ตรวจให้อัตโนมัติ · checked automatically while the robot is missing</small></h3>
+    <table class="kv">
+      <tr><th>เชื่อมต่อแล้ว / Linked</th><td colspan="2"><b id="frLinked">—</b></td></tr>
+      <tr><th>เจอในเครือข่าย / On this network</th><td colspan="2"><span id="frFound">—</span></td></tr>
+      <tr><th>ประกาศที่อยู่ agent / Announcing agent</th><td colspan="2"><span id="frBeacon">—</span></td></tr>
+    </table>
+    <p class="hint" id="frHint" role="status" aria-live="polite"></p>
+    <div class="row">
+      <button class="btn" id="frNow">ตรวจเดี๋ยวนี้ / Check now</button>
+    </div>
+    <p class="hint">
+      หุ่นเป็นฝ่ายต่อเข้ามาหาเครื่องนี้ ไม่ใช่เครื่องนี้ไปหาหุ่น เราจึงประกาศที่อยู่ของ agent
+      ออกไปทุก 2 วินาที หุ่นที่ยังไม่ได้เชื่อมจะรับที่อยู่นั้นเองภายในไม่กี่วินาที
+      เปลี่ยน Wi-Fi หรือย้ายเครื่องก็ต่อกลับเองโดยไม่ต้องตั้งค่าอะไร ·
+      The robot connects to <em>us</em>, never the other way round, so this PC
+      announces where the agent is every 2 seconds. An unlinked board adopts it
+      within a few seconds. Change Wi-Fi or move the PC and it finds its way
+      back with nothing to configure.
+    </p>
   </div>
 
   <div class="card">

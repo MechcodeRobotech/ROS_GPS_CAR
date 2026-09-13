@@ -14,6 +14,7 @@ number of clients is capped, so RAM use is constant no matter how long the
 robot runs or how badly a client misbehaves.
 """
 
+import hashlib
 import json
 import mimetypes
 import os
@@ -231,6 +232,13 @@ class _Handler(BaseHTTPRequestHandler):
             self._run(handler, None, query)
             return
 
+        # The firmware image the board fetches when told to pull an update. It
+        # lives in the PlatformIO build tree rather than the web directory, so
+        # it is served explicitly instead of being copied and going stale.
+        if path == '/firmware.bin':
+            self._firmware()
+            return
+
         self._static(path)
 
     # ----------------------------------------------------------------- POST
@@ -275,6 +283,38 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(500, {'ok': False, 'error': str(exc)})
             return
         self._send_json(status, payload)
+
+    def _firmware(self):
+        """Serve the built firmware so the ROBOT can fetch it.
+
+        Pull rather than push: ArduinoOTA needs the PC to open a connection to
+        the board, and behind a Windows hotspot's NAT the board has no address
+        the PC can reach. An outbound GET from the board traverses that fine -
+        it is the same direction the micro-ROS link already works in.
+        """
+        candidates = [
+            os.path.expanduser('~/.pio_workspaces/GPS_Localize/build/wifi/firmware.bin'),
+            os.path.join(os.path.dirname(self.app.static_dir), 'firmware', 'firmware.bin'),
+        ]
+        target = next((c for c in candidates if os.path.isfile(c)), None)
+        if target is None:
+            self._send_json(404, {'ok': False,
+                                  'error': 'no firmware.bin built yet - run pio run -e wifi',
+                                  'looked_in': candidates})
+            return
+        try:
+            with open(target, 'rb') as handle:
+                body = handle.read()
+        except OSError as exc:
+            self._send_json(500, {'ok': False, 'error': str(exc)})
+            return
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/octet-stream')
+        self.send_header('Content-Length', str(len(body)))
+        # HTTPUpdate checks this against its own build to skip a pointless flash.
+        self.send_header('x-MD5', hashlib.md5(body).hexdigest())
+        self.end_headers()
+        self.wfile.write(body)
 
     def _static(self, path):
         if path in ('/', ''):

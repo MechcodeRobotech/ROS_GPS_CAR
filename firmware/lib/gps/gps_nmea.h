@@ -33,34 +33,77 @@ public:
     tx_pin_ = tx_pin;
     baud_   = baud;
 
-    serial_->begin(baud_, SERIAL_8N1, rx_pin_, tx_pin_);
-    serial_->setRxBufferSize(512);
+    openPort(baud_);
     if (!auto_baud || candidates == nullptr || n_candidates == 0) return true;
 
     for (uint8_t i = 0; i < n_candidates; ++i) {
-      if (i > 0) {
+      if (i > 0 || candidates[0] != baud_) {
         serial_->end();
-        serial_->begin(candidates[i], SERIAL_8N1, rx_pin_, tx_pin_);
-      } else if (candidates[0] != baud_) {
-        serial_->end();
-        serial_->begin(candidates[0], SERIAL_8N1, rx_pin_, tx_pin_);
+        openPort(candidates[i]);
       }
       baud_ = candidates[i];
+      // Record what each baud actually produced. A receiver at the wrong baud
+      // still yields a trickle of framing garbage, so "some bytes" is not
+      // success - but the baud with FAR more bytes than the others is the real
+      // one, and that is the only way to find it without a scope.
+      const uint32_t before = bytes_seen_;
+      if (probe_n_ < PROBE_MAX) probe_baud_[probe_n_] = candidates[i];
       uint32_t t0 = millis();
+      bool ok = false;
       while (millis() - t0 < probe_ms) {
-        if (update() || sentences_ok_ > 0) return true;
+        if (update() || sentences_ok_ > 0) { ok = true; break; }
         delay(2);
       }
+      if (probe_n_ < PROBE_MAX) {
+        probe_bytes_[probe_n_] = bytes_seen_ - before;
+        ++probe_n_;
+      }
+      if (ok) return true;
     }
     return sentences_ok_ > 0;
+  }
+
+  //--------------------------- probe report ---------------------------//
+  /** How many candidate bauds were tried. */
+  uint8_t probeCount() const { return probe_n_; }
+  uint32_t probeBaud(uint8_t i)  const { return i < probe_n_ ? probe_baud_[i] : 0; }
+  uint32_t probeBytes(uint8_t i) const { return i < probe_n_ ? probe_bytes_[i] : 0; }
+
+  /** Open the UART with a buffer big enough for a burst of NMEA.
+   *
+   * setRxBufferSize() MUST come before begin(). The ESP32 core refuses to
+   * resize a running port and reports it only as an error log line - the port
+   * then works perfectly well at the default 256 bytes, so nothing looks wrong.
+   * Seen on hardware as "RX Buffer can't be resized when Serial is already
+   * running" on every boot.
+   */
+  void openPort(uint32_t baud) {
+    if (!serial_) return;
+    serial_->setRxBufferSize(512);
+    serial_->begin(baud, SERIAL_8N1, rx_pin_, tx_pin_);
   }
 
   /** Feed the parser. Returns true when a sentence updated the solution. */
   bool update() {
     bool updated = false;
-    uint16_t budget = GPS_MAX_BYTES_PER_CALL;
-    while (serial_ && serial_->available() && budget--) {
-      char c = (char)serial_->read();
+    
+    if (!serial_) return false;
+    int avail = serial_->available();
+    if (avail <= 0) return false;
+    
+    // Process up to GPS_MAX_BYTES_PER_CALL bytes per control loop.
+    if (avail > GPS_MAX_BYTES_PER_CALL) avail = GPS_MAX_BYTES_PER_CALL;
+    
+    uint8_t chunk[128];
+    if (avail > (int)sizeof(chunk)) avail = sizeof(chunk);
+    
+    // HardwareSerial::read(uint8_t*, size_t) fetches from the IDF ring buffer
+    // without blocking for timeouts since we only ask for available bytes.
+    size_t read_bytes = serial_->read(chunk, avail);
+    
+    for (size_t i = 0; i < read_bytes; i++) {
+      char c = (char)chunk[i];
+      ++bytes_seen_;
       if (c == '$') { len_ = 0; buf_[len_++] = c; capture_ = true; continue; }
       if (!capture_) continue;
       if (c == '\r' || c == '\n') {
@@ -75,6 +118,7 @@ public:
       if (len_ < GPS_LINE_MAX - 1) buf_[len_++] = c;
       else { len_ = 0; capture_ = false; }   // overlong line -> drop it
     }
+    
     return updated;
   }
 
@@ -94,6 +138,8 @@ public:
   bool     courseValid() const { return course_valid_; }
   uint32_t lastFixMs()  const { return last_fix_ms_; }
   uint32_t baud()       const { return baud_; }
+  /** Raw bytes read at any baud. Zero means nothing is transmitting. */
+  uint32_t bytesSeen()  const { return bytes_seen_; }
   uint32_t sentencesOk()   const { return sentences_ok_; }
   uint32_t sentencesBad()  const { return sentences_bad_; }
 
@@ -202,6 +248,11 @@ private:
   HardwareSerial *serial_ = nullptr;
   int      rx_pin_ = -1, tx_pin_ = -1;
   uint32_t baud_   = 115200;
+  uint32_t bytes_seen_ = 0;   // raw bytes off the wire, any baud
+  static const uint8_t PROBE_MAX = 8;
+  uint32_t probe_baud_[PROBE_MAX]  = {0};
+  uint32_t probe_bytes_[PROBE_MAX] = {0};
+  uint8_t  probe_n_ = 0;
 
   char     buf_[GPS_LINE_MAX];
   char    *fields_[GPS_MAX_FIELDS];

@@ -12,9 +12,11 @@ one spelling and written with another. That is what this script checks.
 Exit code 0 = clean, 1 = something to fix. Safe to run any time, it only reads.
 """
 
+import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 
@@ -120,7 +122,7 @@ def check_web_assets(app_js, html, css):
         got = html.count(marker)
         check(got == want, 'index.html contains %s exactly %d time(s) (found %d)'
               % (marker, want, got))
-    for tab in ('dash', 'map', 'wp', 'cfg', 'topics', 'log', 'help'):
+    for tab in ('dash', 'map', 'wp', 'cfg', 'calib', 'geom', 'board', 'topics', 'log', 'help'):
         check(html.count('id="tab-%s"' % tab) == 1, 'exactly one #tab-%s section' % tab)
     ids_html = set(re.findall(r'id="([A-Za-z0-9_]+)"', html))
     ids_js = set(re.findall(r"\$\('([A-Za-z0-9_]+)'\)", app_js))
@@ -152,6 +154,257 @@ def check_web_assets(app_js, html, css):
             if rule and 'display:' in rule.group(0):
                 notes.append('.%s sets display and is used with .hidden '
                              '(safe: .hidden is !important)' % name)
+
+    # The same trap one layer down, and this one is a FAILURE rather than a note.
+    #
+    # `.hidden` is safe because it carries !important. The `hidden` ATTRIBUTE is
+    # not: the browser's own `[hidden] { display: none }` sits at the same
+    # specificity as any author rule, and the author stylesheet wins. So an
+    # element that a component rule gives `display` to cannot be hidden with the
+    # attribute, and the failure is silent - the property is set, the DOM says
+    # hidden="", and the element stays on screen.
+    #
+    # Seen for real: the theme row is a `.row`, `.row` sets `display: flex`, and
+    # `themeRow.hidden = true` did nothing. It appeared under every settings
+    # group instead of only under the Web one.
+    for element_id in set(re.findall(r"\$\('([A-Za-z0-9_]+)'\)\.hidden\s*=", app_js)):
+        tag = re.search(r'<[^>]*id="%s"[^>]*>' % re.escape(element_id), html)
+        if not tag:
+            continue
+        classes = re.search(r'class="([^"]*)"', tag.group(0))
+        clashing = []
+        for name in (classes.group(1).split() if classes else []):
+            rule = re.search(r'\.' + re.escape(name) + r'\s*\{[^}]*\}', css)
+            if rule and re.search(r'display\s*:', rule.group(0)):
+                clashing.append(name)
+        check(not clashing,
+              '#%s is toggled with the hidden attribute and no class of its own '
+              'sets display %s - use the .hidden class instead'
+              % (element_id, clashing or ''))
+
+
+def check_map_has_one_compass(app_js):
+    """Exactly one compass is drawn on the map, and it is legible over imagery.
+
+    There were two for a while - drawCompass() and drawCompassRose() - both
+    placed in the top-right corner of the same canvas and both called from
+    drawMap(), so they sat on top of each other. Neither was wrong on its own,
+    which is why it survived: each function looked correct in isolation and the
+    fault only existed in the pair.
+
+    The legibility half is checked too. The map draws over a dark grid, pale
+    street tiles and dark aerial imagery, and the theme's colour tokens are
+    chosen to sit on the page background - over satellite they disappear, which
+    is what made the grid, the scale bar and the compass unreadable in the one
+    view where they matter most. Map furniture therefore states its own colours.
+    """
+    section('map: one compass, readable on any ground')
+    drawers = re.findall(r'function (drawCompass\w*)\s*\(', app_js)
+    check(len(drawers) == 1,
+          'exactly one compass-drawing function (found %s)' % (drawers or 'none'))
+    for name in drawers:
+        calls = len(re.findall(r'(?<!function )\b%s\s*\(' % name, app_js))
+        check(calls == 1, '%s is called once, not stacked on itself (%d call(s))'
+              % (name, calls))
+
+    for helper in ('function mapLabel(', 'function mapPlate('):
+        check(helper in app_js,
+              '%s exists - map text needs a casing to survive imagery' % helper.split('(')[0][9:])
+    # The scale bar and the compass must not be painted in theme tokens.
+    check('mapLabel(stepText' in app_js,
+          'the scale bar uses the cased label, not a bare theme fill')
+
+
+def check_layout_never_shifts(app_js, html, css):
+    """Nothing that changes with the robot's state may move a control.
+
+    The report was "the web shifts every time there is an alert or something
+    changes, so I press the wrong point". Every cause found was the same shape:
+    an element whose SIZE depends on live data, sitting above a control.
+
+    Four of them, all fixed, all checked here because each was invisible until
+    someone was driving:
+
+    - the four health pills re-flowed because their values are different
+      lengths ("ไม่พบ" -> "0.3 s"), which changed where the row wrapped and so
+      the toolbar's height;
+    - the state subtitle grew a second line when stop reasons appeared;
+    - the stale-data marker existed only in the stale state, so it added a grid
+      row the moment the link hiccuped;
+    - the position-source banner was toggled with `hidden`, which dropped it
+      out of the flow and moved the START button underneath it.
+
+    The rule they share: hide with `visibility`, never with `display` or the
+    `hidden` attribute, for anything above a control - and reserve the space of
+    the longest thing that can appear there.
+    """
+    section('layout: state changes never move a control')
+
+    # The value half of each pill has a reserved width, so no wrap can move.
+    # Stability comes from the fixed number of grid tracks, not from the pill
+    # sizing itself to its text. An auto-fitting row re-wraps when a value gets
+    # longer, and a re-wrap changes the toolbar's height, which moves every
+    # control on the page.
+    #
+    # Two spellings satisfy that, and both are accepted:
+    #
+    #   grid-template-columns: repeat(N, minmax(0, 1fr))   a hand-counted list
+    #   grid-auto-flow: column                             the count comes from
+    #                                                      the children
+    #
+    # The second is preferred and is what is there now. The hand-counted list
+    # has its own failure: the number lives only in the CSS, nothing ties it to
+    # how many pills the HTML actually contains, and adding a sixth pill
+    # silently dropped the row onto two lines - the exact re-wrap this check
+    # exists to prevent, walked straight past because the property was present.
+    #
+    # What is NOT acceptable is auto-fit or auto-fill, which re-flow on width
+    # and bring the original bug back.
+    pills = re.search(r'\.pills\s*\{(.*?)\}', css, re.S)
+    body = pills.group(1) if pills else ''
+    fixed_tracks = 'grid-template-columns' in body and 'auto-f' not in body
+    one_line = re.search(r'grid-auto-flow\s*:\s*column', body) is not None
+    check(bool(pills) and (fixed_tracks or one_line),
+          'the pill row cannot re-wrap (fixed tracks, or a column flow that '
+          'takes its count from the children)')
+    check(bool(re.search(r'\.pill\s*>\s*span\s*\{[^}]*text-overflow', css, re.S)),
+          'a pill value that outgrows its track is trimmed, never widened')
+
+    # The subtitle carries the stop reasons and must stay on one line.
+    sub = re.search(r'\.subtitle\s*\{(.*?)\}', css, re.S)
+    check(bool(sub) and 'nowrap' in sub.group(1),
+          'the state subtitle is clamped to one line at every width')
+
+    # The stale marker is always in the flow, only invisible when live.
+    marker = re.search(r'\.grid\.tiles::before\s*\{(.*?)\}', css, re.S)
+    check(bool(marker) and 'content' in marker.group(1),
+          'the stale-data marker reserves its row unconditionally')
+    check(bool(marker) and 'visibility' in marker.group(1),
+          'the stale-data marker is hidden with visibility, not by dropping out')
+
+    # The position-source banner keeps its space.
+    pos = re.search(r'\.posmode\s*\{(.*?)\}', css, re.S)
+    check(bool(pos) and 'min-height' in pos.group(1),
+          'the position-source banner reserves the height of its longest message')
+    check('.posmode.off' in css, '.posmode.off hides it without freeing its space')
+    check('hidden' not in re.sub(r'/\*.*?\*/', '', html, flags=re.S).split('id="posMode"')[0][-80:],
+          'the position-source banner does not start with the hidden attribute')
+    check(not re.search(r'\bpm\.hidden\s*=', app_js),
+          'app.js never toggles the position banner with .hidden')
+
+    # A scrollbar appearing must not narrow the page under a centred control.
+    check('scrollbar-gutter' in css, 'the scrollbar gutter is reserved')
+
+    # Hints that are empty until something happens hold their line.
+    for hint in ('#tMotorFaultWhy', '#sensorCalibHint'):
+        rule = re.search(re.escape(hint) + r'[^{]*\{(.*?)\}', css, re.S)
+        check(bool(rule) and 'min-height' in rule.group(1),
+              '%s reserves its line while it is empty' % hint)
+
+    # The banner's height is reserved by a twin of the longest message it can
+    # show, not by a line count. A count is a guess about how the text wraps and
+    # it was wrong at 320px, where the Thai and English halves wrap differently:
+    # three lines were reserved, the message needed more, and START moved.
+    check('.posmode-sizer' in css and 'posmode-sizer' in html,
+          'the position banner reserves its height with a sizer twin')
+    check(not re.search(r'\bpm\.textContent\s*=', app_js),
+          'app.js writes the banner text to its span, not over the sizer twin')
+
+    # Anything the CSS positions from a measured value needs something to
+    # measure it. --toolbar-height was referenced with a 240px fallback and
+    # never set, so the error banner floated a quarter of the way down a laptop
+    # screen. It is fixed BELOW the toolbar because at a higher z-index it
+    # covered the EMERGENCY STOP and swallowed the taps meant for it, so the
+    # offset being right is a safety property, not a cosmetic one.
+    if '--toolbar-height' in set(re.findall(r'var\(\s*(--[a-z-]+)\s*,', css)):
+        check('--toolbar-height' in app_js,
+              'app.js measures the toolbar that the CSS positions against')
+    banner = re.search(r'\.banner\s*\{(.*?)\}', css, re.S)
+    if banner:
+        z = re.search(r'z-index:\s*(\d+)', banner.group(1))
+        bar = re.search(r'\.topbar\s*\{(.*?)\}', css, re.S)
+        zbar = re.search(r'z-index:\s*(\d+)', bar.group(1)) if bar else None
+        check(bool(z) and bool(zbar) and int(z.group(1)) < int(zbar.group(1)),
+              'the error banner sits under the toolbar, never over the E-STOP')
+
+
+def check_imu_mounting_is_stated_once(imu_h, param_table):
+    """The IMU's mounting orientation is one physical fact, described twice.
+
+    `IMU_ACC_FORWARD_SIGN` decides which way forward acceleration points, and
+    `IMU_YAW_OFFSET_DEG` squares the sensor's heading to the chassis. On this
+    robot the sensor is fitted with its printed X arrow pointing at the REAR, so
+    both have to say so - the sign negative and the offset 180.
+
+    They were allowed to disagree, and the failure was quiet. The offset was 0
+    and the sign +1 while the sensor faced backwards, so the estimator was fed
+    forward acceleration negated: a steady 0.18 m/s forward command produced a
+    fused speed of anywhere from -0.36 to +0.34 m/s, NEGATIVE while the robot
+    was plainly driving forwards. Nothing reported an error. It was blamed on
+    integration drift for an afternoon.
+
+    Half-fixing it is worse than not fixing it. A heading squared up while the
+    acceleration still points backwards looks right and is not, so this refuses
+    the combination rather than either value on its own.
+    """
+    section('IMU mounting: one fact, stated consistently')
+    sign = re.search(r'#define\s+IMU_ACC_FORWARD_SIGN\s+\(([-+][\d.]+)f\)', imu_h)
+    offs = re.search(r'#define\s+IMU_YAW_OFFSET_DEG\s+([-\d.]+)f', imu_h)
+    check(bool(sign) and bool(offs), 'both mounting constants are present')
+    if not (sign and offs):
+        return
+    reversed_acc = sign.group(1).startswith('-')
+    reversed_yaw = abs(abs(float(offs.group(1))) - 180.0) < 1.0
+    check(reversed_acc == reversed_yaw,
+          'the acceleration sign and the yaw offset agree about which way the '
+          'sensor faces (sign %s, offset %s)' % (sign.group(1), offs.group(1)))
+    # The geometry parameter describes the same mounting and must follow it.
+    check('IMU_YAW_OFFSET_DEG' in param_table,
+          'geometry.imu.yaw defaults from IMU_YAW_OFFSET_DEG, not a second copy')
+
+
+def check_topic_echo_matches_publisher_qos(web_py):
+    """The Topics page must not subscribe RELIABLE to a BEST_EFFORT publisher.
+
+    DDS does not connect that pair and reports nothing, so the page sits on
+    "waiting" for ever. It sat there for exactly the topics people open it to
+    look at - /imu/data, /telemetry, /odom, /gps/fix - because every topic the
+    robot publishes is BEST_EFFORT while the echo passed a plain depth, which
+    means RELIABLE.
+
+    A plain integer depth is the trap: it looks like "queue 10" and silently
+    carries a reliability policy with it.
+    """
+    section('topics page: QoS matched to the publisher')
+    check('_echo_qos' in web_py,
+          'the topic echo derives its QoS instead of passing a bare depth')
+    check('get_publishers_info_by_topic' in web_py,
+          'it asks the graph what the publisher actually offers')
+    m = re.search(r"st\['sub'\]\s*=\s*self\.create_subscription\([^)]*\)", web_py, re.S)
+    check(bool(m) and 'qos' in (m.group(0).lower()),
+          'the echo subscription is created with a QoS profile, not a depth')
+
+
+def check_connection_dot_states(css):
+    """The connection dot really is scoped to the four connection states.
+
+    It was not. A find-and-replace pasted the .lanurl block between each
+    `[data-conn="..."]` selector and its own `.live-dot` declarations, and
+    because a CSS comment does not separate a selector from its body, the state
+    selector bound itself to .lanurl and all four .live-dot rules were left
+    unscoped. The last one won: the dot was blue and pulsing for ever, whatever
+    the connection was doing. The single indicator whose whole job is to say
+    whether the numbers are live said "connecting" permanently, and it looked
+    perfectly plausible.
+    """
+    section('connection dot: one rule per state')
+    for state in ('live', 'stale', 'offline', 'connecting'):
+        check(re.search(r'\[data-conn="%s"\]\s*\.live-dot\s*\{' % state, css) is not None,
+              'the %s state has its own .live-dot rule' % state)
+    # An unscoped .live-dot rule may only be the base one.
+    bare = re.findall(r'(?m)^\.live-dot\s*\{', css)
+    check(len(bare) == 1,
+          'exactly one unscoped .live-dot rule - the base (found %d)' % len(bare))
 
 
 def check_design_system(css, html):
@@ -249,6 +502,7 @@ def check_yaml(py_all):
                         ('estimator', ('heading_source', 'mag_enable', 'mag_tau_s',
                                        'mag_declination_deg', 'track_m')),
                         ('nav', ('cruise_speed_mps', 'arrive_radius_m',
+                                 'arrive_hold_s', 'arrive_sigma_k',
                                  'allow_dead_reckoning', 'discover_heading')),
                         ('safety', ('heartbeat_rate_hz', 'require_web_heartbeat'))):
         path = PKG / 'config' / (group + '.yaml')
@@ -282,8 +536,13 @@ def check_firmware_headers(main_cpp):
                                                  'nav_msgs', 'geometry_msgs', 'builtin')):
             continue
         # Arduino core, ESP32 SDK and PlatformIO lib_deps live outside lib/
+        # HTTPUpdate.h and its WiFi dependencies ship with the ESP32 Arduino core,
+        # like the rest of this list - they are not project headers and will
+        # never appear under lib/ or src/.
         if inc in ('Arduino.h', 'Wire.h', 'Preferences.h', 'ESPmDNS.h', 'config.h',
-                   'stdio.h', 'math.h', 'string.h', 'micro_ros_platformio.h'):
+                   'stdio.h', 'math.h', 'string.h', 'micro_ros_platformio.h',
+                   'HTTPUpdate.h', 'HTTPClient.h', 'WiFiClient.h', 'Update.h',
+                   'WiFiUdp.h', 'esp_wifi.h'):
             continue
         check(False, 'main.cpp includes <%s> but no such header is in lib/ or src/' % inc)
 
@@ -407,7 +666,7 @@ def check_branch_publisher():
               'publish_branches.sh writes %s with a closed heredoc' % name)
 
     for expected in ('Dockerfile', 'docker-compose.yml', 'docker-compose.windows.yml',
-                     'docker-compose.serial.yml',
+                     'docker-compose.serial.yml', 'docker-compose.serial-transport.yml', '.dockerignore',
                      'docker-entrypoint.sh', 'install.sh', 'README.md'):
         check(expected in written,
               'docker branch gets %s' % expected)
@@ -449,12 +708,9 @@ def check_js_syntax():
 def check_compose_merge():
     """The Windows Docker override must really override.
 
-    network_mode: host is Linux-only; on Docker Desktop the container sits in
-    a VM, so "host" is that VM and the robot on your Wi-Fi can never reach the
-    agent. The override has to replace it with published ports. Compose
-    REPLACES sequences rather than appending, which is why devices must be
-    reset explicitly - get that wrong and Windows tries to bind a serial port
-    that does not exist.
+    The Desktop deployment uses published ports rather than depending on its
+    optional host-network feature. Compose merges device lists, so absent
+    devices must not be declared in the base configuration.
 
     Checked by extracting both compose files from the publisher and merging
     them here, so it is verified on every run without Docker installed.
@@ -534,6 +790,18 @@ def check_compose_merge():
     check('/root/.bashrc' in body,
           'interactive container shells source ROS (docker exec skips the entrypoint)')
     check('healthcheck' in merged, 'healthcheck survives the merge')
+    serial = yaml.safe_load(heredoc('docker-compose.serial.yml', 'SERIALCOMPOSE') or '{}')
+    runtime = yaml.safe_load(heredoc('docker-compose.serial-transport.yml', 'TRANSPORTCOMPOSE') or '{}')
+    serial_service = serial.get('services', {}).get('gps_localize', {})
+    runtime_service = runtime.get('services', {}).get('gps_localize', {})
+    check(serial_service.get('devices') == ['${SERIAL_DEVICE:-/dev/ttyUSB0}:/dev/ttyUSB0'],
+          'USB device is selectable and maps to the serial agent path')
+    check('transport:=serial' in runtime_service.get('command', []) and
+          'serial_device:=/dev/ttyUSB0' in runtime_service.get('command', []),
+          'serial runtime override selects the serial agent explicitly')
+    ignored = heredoc('.dockerignore', 'DOCKERIGNORE') or ''
+    check('firmware/config/network_secrets.h' in ignored.splitlines(),
+          'Docker build context excludes local Wi-Fi credentials')
 
 
 
@@ -599,8 +867,30 @@ def check_docs_current():
     motor = read(FW / 'config' / 'motor.h')
 
     def const(src, name):
-        m = re.search(r'#define\s+%s\s+([0-9.]+)f?' % name, src)
-        return m.group(1).rstrip('.') if m else None
+        """The numeric value of a #define, following one level of arithmetic.
+
+        The battery tiers are no longer literals: they are the per-cell figure
+        multiplied by the cell count, so a 2S/3S/4S pack needs no other change.
+        A regex that only matched digits therefore read them as absent, and this
+        check went from proving the thresholds to silently failing. Resolve the
+        simple `(A * B)` form so the values stay checkable in the form they are
+        now written.
+        """
+        m = re.search(r'#define\s+%s\s+([0-9.]+)f?\s*(?://|$)' % name, src, re.M)
+        if m:
+            return m.group(1).rstrip('.')
+        m = re.search(r'#define\s+%s\s+\(\s*(\w+)\s*\*\s*(\w+)\s*\)' % name, src)
+        if not m:
+            return None
+        parts = []
+        for token in m.groups():
+            if re.fullmatch(r'[0-9.]+', token):
+                parts.append(float(token)); continue
+            sub = const(src, token)
+            if sub is None:
+                return None
+            parts.append(float(sub))
+        return ('%.4f' % (parts[0] * parts[1])).rstrip('0').rstrip('.')
 
     # The live values, read from the firmware rather than assumed.
     cutoff = const(power, 'BATT_CUTOFF_V')
@@ -799,6 +1089,37 @@ def check_portability():
 
 
 
+def check_firmware_version_contract():
+    """The host's idea of the firmware version must match the firmware's own.
+
+    telemetry_split compares the board's reported version against
+    HOST_EXPECTS_FIRMWARE and tells the user to update one side or the other.
+    The constant was left at 104 while the firmware reached 161, so every boot
+    produced "board firmware 1.61 is NEWER than this host expects (1.4) - update
+    the host with git pull", which was false and unfixable by pulling. A warning
+    that is always on is a warning nobody reads.
+
+    Bumping the firmware version is also what makes an OTA provable: with both
+    images reporting the same number, nothing downstream can tell which one is
+    actually running.
+    """
+    section('firmware version contract')
+    vh = ROOT / 'firmware' / 'config' / 'version.h'
+    split = ROOT / 'gps_localize_ws' / 'src' / 'gps_localize' / 'gps_localize' / 'telemetry_split.py'
+    if not (vh.exists() and split.exists()):
+        return
+    major = re.search(r'#define\s+FIRMWARE_VERSION_MAJOR\s+(\d+)', read(vh))
+    minor = re.search(r'#define\s+FIRMWARE_VERSION_MINOR\s+(\d+)', read(vh))
+    expects = re.search(r'HOST_EXPECTS_FIRMWARE\s*=\s*(\d+)', read(split))
+    if not (major and minor and expects):
+        check(False, 'firmware version and host expectation are both readable')
+        return
+    firmware = int(major.group(1)) * 100 + int(minor.group(1))
+    check(firmware == int(expects.group(1)),
+          'telemetry_split expects the firmware version the firmware actually is '
+          '(firmware %d, host expects %s)' % (firmware, expects.group(1)))
+
+
 def check_microros_library_fresh():
     """A built micro-ROS library must be newer than the message it compiled.
 
@@ -810,12 +1131,51 @@ def check_microros_library_fresh():
     the wifi env had been regenerated, serial had not.
 
     The fix is always the same, so it is printed with the failure.
+
+    colcon.meta is an input for the same reason. It sets the transport MTU,
+    and a library built before a change to it keeps the old value with no
+    error anywhere - which is how /odom stayed silent for so long (T186).
     """
     section('micro-ROS library is not stale')
+
+    # The transport MTU must fit the largest message the firmware publishes.
+    #
+    # Every firmware publisher is BEST_EFFORT, and a best-effort XRCE stream
+    # cannot fragment: a message bigger than one MTU is refused on every
+    # publish, silently. nav_msgs/Odometry serialises to 724 bytes - two
+    # 36-wide float64 covariance arrays - and the MTU was 512, so /odom never
+    # arrived while every smaller topic worked. The trap is WHICH MTU:
+    # micro_ros_platformio's Wi-Fi and serial transports are CUSTOM
+    # transports, so UCLIENT_UDP_TRANSPORT_MTU - the one colcon.meta used to
+    # raise - is compiled in and never used.
+    meta = ROOT / 'firmware' / 'colcon.meta'
+    if meta.exists():
+        try:
+            names = json.loads(read(meta)).get('names', {})
+        except ValueError:
+            names = None
+            check(False, 'firmware/colcon.meta is valid JSON')
+        if names is not None:
+            rmw_args = names.get('rmw_microxrcedds', {}).get('cmake-args', [])
+            client_args = names.get('microxrcedds_client', {}).get('cmake-args', [])
+            mtu = 512                                    # micro-XRCE-DDS default
+            for arg in client_args:
+                found = re.match(r'-DUCLIENT_CUSTOM_TRANSPORT_MTU=(\d+)$', arg)
+                if found:
+                    mtu = int(found.group(1))
+            if '-DRMW_UXRCE_TRANSPORT=custom' in rmw_args:
+                need = LARGEST_FIRMWARE_MSG_BYTES + XRCE_FRAMING_BYTES
+                check(mtu >= need,
+                      'custom-transport MTU %d fits the largest firmware message '
+                      '(Odometry, %d bytes + framing = %d) - set '
+                      'UCLIENT_CUSTOM_TRANSPORT_MTU; the UDP one is not used'
+                      % (mtu, LARGEST_FIRMWARE_MSG_BYTES, need))
+
     msg = ROOT / 'gps_localize_ws' / 'src' / 'gps_localize_msgs' / 'msg' / 'Telemetry.msg'
-    if not msg.exists():
+    inputs = [p for p in (msg, meta) if p.exists()]
+    if not inputs:
         return
-    msg_mtime = msg.stat().st_mtime
+    newest = max(p.stat().st_mtime for p in inputs)
 
     ws = pathlib.Path.home() / '.pio_workspaces' / 'GPS_Localize' / 'libdeps'
     if not ws.is_dir():
@@ -828,16 +1188,25 @@ def check_microros_library_fresh():
         lib = env / 'micro_ros_platformio' / 'libmicroros' / 'libmicroros.a'
         if not lib.exists():
             continue                      # not built yet: nothing to be stale
-        if lib.stat().st_mtime < msg_mtime:
+        if lib.stat().st_mtime < newest:
             stale.append(env.name)
     check(not stale,
-          'every built micro-ROS library is newer than Telemetry.msg %s'
-          % (stale or ''))
+          'every built micro-ROS library is newer than Telemetry.msg and '
+          'colcon.meta %s' % (stale or ''))
     if stale:
         for env in stale:
             problems.append(
                 'fix: rm -rf ~/.pio_workspaces/GPS_Localize/libdeps/%s/'
-                'micro_ros_platformio/libmicroros && pio run -e %s' % (env, env))
+                'micro_ros_platformio/{libmicroros,build} && pio run -e %s '
+                '(with the scoped git settings from CLAUDE.md)' % (env, env))
+
+
+# The largest message the firmware publishes, serialised, and a margin for the
+# XRCE session, submessage and WRITE_DATA headers around it. Measured with
+# rclpy.serialization.serialize_message: Odometry 724, Imu 324, Telemetry 260,
+# NavSatFix 125. Re-measure if a bigger message is ever added to the firmware.
+LARGEST_FIRMWARE_MSG_BYTES = 724
+XRCE_FRAMING_BYTES = 32
 
 
 
@@ -1038,6 +1407,108 @@ def check_imu_guard_is_presence_not_freshness():
 
 
 
+def check_stream_qos_matches_on_both_sides():
+    """A best-effort publisher and a reliable subscriber do not talk, silently.
+
+    DDS reliability compatibility is asymmetric. A RELIABLE publisher will feed a
+    BEST_EFFORT subscriber quite happily, but a BEST_EFFORT publisher and a
+    RELIABLE subscriber never match - and nothing says so. The topic still
+    appears in `ros2 topic list`, the publisher still reports as connected, and
+    not one message is delivered. This project has been caught by the durability
+    half of the same rule twice already.
+
+    The firmware publishes four streams best-effort, because a reliable publish
+    blocks inside the 100 Hz control callback waiting for the agent to
+    acknowledge - measured at 7.5 Hz on hardware before the change. That means
+    every host subscriber to those four topics MUST be best-effort too. This
+    check enforces the pairing in both directions, so moving one side alone fails
+    here rather than on the robot.
+    """
+    section('stream QoS pairs up on both sides')
+
+    qos_py = ROOT / 'gps_localize_ws' / 'src' / 'gps_localize' / 'gps_localize' / 'qos.py'
+    body = read(qos_py)
+    if not body:
+        check(False, 'gps_localize/qos.py exists')
+        return
+    check('BEST_EFFORT' in body, 'qos.py defines a best-effort stream profile')
+
+    # Which topics the firmware publishes best-effort.
+    main_cpp = read(ROOT / 'firmware' / 'src' / 'main.cpp')
+    fw_best = set()
+    fw_reliable = set()
+    for line in main_cpp.splitlines():
+        if 'ROS_NS "' not in line:
+            continue
+        topic = line.split('ROS_NS "', 1)[1].split('"', 1)[0]
+        if 'rclc_publisher_init_best_effort' in line:
+            fw_best.add(topic)
+        elif 'rclc_publisher_init_default' in line:
+            fw_reliable.add(topic)
+    # The init call and the topic string are often on separate lines, so pair
+    # each publisher with the topic that follows it.
+    lines = main_cpp.splitlines()
+    for i, line in enumerate(lines):
+        for kind, bucket in (('best_effort', fw_best), ('default', fw_reliable)):
+            if 'rclc_publisher_init_%s' % kind not in line:
+                continue
+            for j in range(i, min(i + 3, len(lines))):
+                if 'ROS_NS "' in lines[j]:
+                    bucket.add(lines[j].split('ROS_NS "', 1)[1].split('"', 1)[0])
+                    break
+
+    expected = {'/telemetry', '/imu/data', '/odom', '/gps/fix'}
+    check(expected <= fw_best,
+          'firmware publishes the four streams best-effort  [missing: %s]'
+          % (sorted(expected - fw_best) or 'none'))
+    check(not (expected & fw_reliable),
+          'none of the four is also published reliably  [%s]'
+          % (sorted(expected & fw_reliable) or 'none'))
+
+    # Every host subscription to one of those topics must use stream_qos.
+    pkg = ROOT / 'gps_localize_ws' / 'src' / 'gps_localize' / 'gps_localize'
+    bad = []
+    for src in sorted(pkg.glob('*.py')):
+        if src.name == 'qos.py':
+            continue
+        for n, line in enumerate(read(src).splitlines(), 1):
+            if 'create_subscription' not in line:
+                continue
+            for topic in expected:
+                # /odom/gps is a host topic, not the board's /odom.
+                if "'%s'" % topic not in line and '"%s"' % topic not in line:
+                    continue
+                if 'stream_qos' not in line:
+                    bad.append('%s:%d %s' % (src.name, n, topic))
+    check(not bad,
+          'every host subscriber to a streamed topic uses stream_qos  [%s]'
+          % ('; '.join(bad) if bad else 'all match'))
+
+
+def check_web_app_actually_runs():
+    """web/app.js must not throw while loading.
+
+    `node --check` proves it parses; it says nothing about whether it RUNS. The
+    failure that prompted this was pure runtime - a `var` used at start-up but
+    assigned two hundred lines lower down. Hoisting left it undefined, the
+    start-up threw, and everything after it including connect() never ran. The
+    page sat on "connecting..." against a robot that was publishing perfectly
+    well, and every other check in this file was green.
+    """
+    section('web/app.js runs, not merely parses')
+    smoke = ROOT / 'tools' / 'web_smoke.js'
+    if not smoke.exists():
+        check(False, 'tools/web_smoke.js exists')
+        return
+    if not shutil.which('node'):
+        note('node not installed, so the web smoke test was skipped')
+        return
+    r = subprocess.run(['node', str(smoke)], capture_output=True, text=True, timeout=60)
+    check(r.returncode == 0,
+          'app.js loads without throwing  [%s]'
+          % (r.stdout.strip().splitlines() or ['no output'])[0])
+
+
 def check_param_manifest_matches_the_header():
     """params.json must be regenerated whenever the parameter table changes.
 
@@ -1065,6 +1536,47 @@ def check_param_manifest_matches_the_header():
             problems.append(line.strip())
 
 
+def check_connect_qr(web_py):
+    """Every QR field in WebConnect is filled, and the docs point at the right one.
+
+    A QR that is wrong in any of these ways still LOOKS like a QR, and the
+    failure lands on whoever is standing next to the robot with a phone that
+    will not connect. So each of them is checked here rather than left to
+    whoever next edits the message.
+
+    An unset string field publishes as '' with no error, so adding a field to
+    the .msg and forgetting the line that fills it produces a topic that is
+    present, latched, and empty.
+
+    Which field the docs recommend matters just as much: qr_ascii is drawn in
+    the terminal's own text colour, so on a dark theme it is an inverted code
+    that no scanner will read. qr_ansi states its colours and works on either.
+    """
+    section('web connect QR')
+    msg = read(ROOT / 'gps_localize_ws' / 'src' / 'gps_localize_msgs'
+               / 'msg' / 'WebConnect.msg')
+    fields = set(re.findall(r'^string (\w+)', msg, re.M))
+    check('qr_ansi' in fields and 'qr_ascii' in fields,
+          'WebConnect carries both QR forms')
+    for field in sorted(f for f in fields if f.startswith('qr_')):
+        check(re.search(r'msg\.%s\s*=' % field, web_py) is not None,
+              'web_server fills %s' % field)
+
+    qr_py = read(PKG / 'gps_localize' / 'qr.py')
+    for form in ('to_ansi', 'to_ascii'):
+        found = re.search(r'def %s\(text: str, quiet: int = (\d+)' % form, qr_py)
+        check(found is not None and int(found.group(1)) >= 4,
+              '%s leaves the spec quiet zone of 4 modules' % form)
+
+    # Anything telling a person which field to echo must say qr_ansi. The
+    # terminal is dark far more often than it is light.
+    for name in ('docs/topics.md', 'gps_localize_ws/src/gps_localize_msgs/msg/WebConnect.msg',
+                 'gps_localize_ws/src/gps_localize/gps_localize/web_server.py'):
+        text = read(ROOT / name)
+        check('--field qr_ascii' not in text,
+              '%s recommends qr_ansi, not qr_ascii' % name)
+
+
 def main():
     main_cpp = read(FW / 'src' / 'main.cpp')
     telemetry_py = read(PKG / 'gps_localize' / 'telemetry.py')
@@ -1075,18 +1587,29 @@ def main():
     print('GPS_Localize QC  -  %s' % ROOT)
     check_nodes_import()
     check_telemetry_message()
+    check_firmware_version_contract()
     check_microros_library_fresh()
     check_docker_image_fresh()
     check_telemetry_consumers()
     check_test_count_claims()
     check_imu_guard_is_presence_not_freshness()
+    check_stream_qos_matches_on_both_sides()
+    check_web_app_actually_runs()
     check_param_manifest_matches_the_header()
+    check_connect_qr(web_py)
     check_telemetry(main_cpp, telemetry_py)
     check_config_selectors(main_cpp, telemetry_py, web_py)
     check_topics(main_cpp, py_all)
     check_endpoints(read(WEB / 'app.js'), web_py, viewer_py)
     check_js_syntax()
     check_web_assets(read(WEB / 'app.js'), read(WEB / 'index.html'), read(WEB / 'style.css'))
+    check_map_has_one_compass(read(WEB / 'app.js'))
+    check_layout_never_shifts(read(WEB / 'app.js'), read(WEB / 'index.html'),
+                              read(WEB / 'style.css'))
+    check_connection_dot_states(read(WEB / 'style.css'))
+    check_topic_echo_matches_publisher_qos(read(PKG / 'gps_localize' / 'web_server.py'))
+    check_imu_mounting_is_stated_once(read(ROOT / 'firmware' / 'config' / 'imu.h'),
+                                      read(ROOT / 'firmware' / 'src' / 'params' / 'param_table.h'))
     check_design_system(read(WEB / 'style.css'), read(WEB / 'index.html'))
     check_yaml(py_all)
     check_firmware_headers(main_cpp)

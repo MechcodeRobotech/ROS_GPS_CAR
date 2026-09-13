@@ -1,0 +1,346 @@
+GPS_Localize QC  -  /home/mannaja/GPS_Localize
+
+[nodes import cleanly]
+  ok    every node module imports (14 checked) 
+
+[telemetry message]
+  ok    Telemetry.msg exists in the workspace
+  ok    firmware/extra_packages carries the message (micro-ROS needs it compiled in, and a symlink is not followed)
+  ok    the firmware copy is a real directory, not a symlink
+  ok    the two copies of Telemetry.msg are identical
+  ok    Telemetry.msg and telemetry.py FIELDS agree (64 fields)
+  ok    no node still subscribes to telemetry as Float32MultiArray 
+
+[micro-ROS library is not stale]
+  ok    custom-transport MTU 1024 fits the largest firmware message (Odometry, 724 bytes + framing = 756) - set UCLIENT_CUSTOM_TRANSPORT_MTU; the UDP one is not used
+  ok    every built micro-ROS library is newer than Telemetry.msg and colcon.meta 
+
+[docker image is not older than the interfaces]
+  FAIL  gps_localize:latest is newer than every workspace source (stale against Telemetry.msg)
+
+[telemetry consumers use the message, not .data]
+  ok    no node unpacks telemetry from .data 
+  ok    unpack() decodes a named message (76 fields)
+
+[documented host-test counts are the real one]
+  ok    every documented host-test count is 254 
+
+[IMU guard uses presence, not freshness]
+  ok    update() still has its crash guard
+  ok    the guard tests presence, not freshness  [if (!begun_) return false;]
+  ok    the guard tests begun_  [if (!begun_) return false;]
+
+[stream QoS pairs up on both sides]
+  ok    qos.py defines a best-effort stream profile
+  ok    firmware publishes the four streams best-effort  [missing: none]
+  ok    none of the four is also published reliably  [none]
+  ok    every host subscriber to a streamed topic uses stream_qos  [all match]
+
+[web/app.js runs, not merely parses]
+  ok    app.js loads without throwing  [web_smoke: app.js executed with no exception]
+
+[parameter manifest is in step with the firmware table]
+  ok    params.json matches param_table.h 
+
+[web connect QR]
+  ok    WebConnect carries both QR forms
+  ok    web_server fills qr_ansi
+  ok    web_server fills qr_ascii
+  ok    to_ansi leaves the spec quiet zone of 4 modules
+  ok    to_ascii leaves the spec quiet zone of 4 modules
+  ok    docs/topics.md recommends qr_ansi, not qr_ascii
+  ok    gps_localize_ws/src/gps_localize_msgs/msg/WebConnect.msg recommends qr_ansi, not qr_ascii
+  ok    gps_localize_ws/src/gps_localize/gps_localize/web_server.py recommends qr_ansi, not qr_ascii
+
+[telemetry: every declared field is actually set]
+  ok    every field in Telemetry.msg is assigned in publishTelemetry (64 fields)
+  ok    publishTelemetry sets nothing that the message does not declare 
+
+[config topic selectors: firmware <-> web_server]
+  ok    python selectors [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] all exist in firmware [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+  ok    CONFIG_ESTIMATOR is defined
+  ok    CONFIG_HEADING_PID is defined
+  ok    CONFIG_IMU_CALIB is defined
+  ok    CONFIG_MAG_CALIB is defined
+  ok    CONFIG_MOTOR_MODEL is defined
+  ok    CONFIG_MOTOR_RAMP is defined
+  ok    CONFIG_PARAM_RESET is defined
+  ok    CONFIG_PARAM_SET is defined
+  ok    CONFIG_PULL_UPDATE is defined
+  ok    CONFIG_RESET_ODOM is defined
+  ok    CONFIG_SET_HEADING is defined
+  ok    CONFIG_SPEED_PID is defined
+
+[ROS topics: firmware <-> nodes]
+  ok    firmware topic /cmd_manual has a node on the other end
+  ok    firmware topic /cmd_move has a node on the other end
+  ok    firmware topic /config/pid has a node on the other end
+  ok    firmware topic /estop has a node on the other end
+  ok    firmware topic /gps/fix has a node on the other end
+  ok    firmware topic /heartbeat has a node on the other end
+  ok    firmware topic /params/values has a node on the other end
+  ok    firmware topic /telemetry has a node on the other end
+
+[HTTP endpoints: UI <-> robot server <-> windows viewer]
+  ok    robot server serves every endpoint the UI calls 
+  ok    windows viewer serves every endpoint the UI calls 
+
+[web UI: javascript parses]
+  ok    app.js parses
+
+[web UI: ids, hooks and the hide utility]
+  ok    index.html contains <html exactly 1 time(s) (found 1)
+  ok    index.html contains <body> exactly 1 time(s) (found 1)
+  ok    index.html contains <main> exactly 1 time(s) (found 1)
+  ok    index.html contains </main> exactly 1 time(s) (found 1)
+  ok    index.html contains </html> exactly 1 time(s) (found 1)
+  ok    index.html contains <footer exactly 1 time(s) (found 1)
+  ok    index.html contains class="jog exactly 5 time(s) (found 5)
+  ok    exactly one #tab-dash section
+  ok    exactly one #tab-map section
+  ok    exactly one #tab-wp section
+  ok    exactly one #tab-cfg section
+  ok    exactly one #tab-calib section
+  ok    exactly one #tab-geom section
+  ok    exactly one #tab-board section
+  ok    exactly one #tab-topics section
+  ok    exactly one #tab-log section
+  ok    exactly one #tab-help section
+  ok    every element the JS looks up exists in the HTML 
+  ok    no duplicate element ids 
+  ok    data-nav buttons are wired up in JS
+  ok    data-map buttons are wired up in JS
+  ok    data-speed buttons are wired up in JS
+  ok    data-turnrate buttons are wired up in JS
+  ok    data-compass buttons are wired up in JS
+  ok    data-turn-deg buttons are wired up in JS
+  ok    data-tab buttons are wired up in JS
+  ok    .hidden uses !important so it always wins over component rules
+
+[map: one compass, readable on any ground]
+  ok    exactly one compass-drawing function (found ['drawCompassRose'])
+  ok    drawCompassRose is called once, not stacked on itself (1 call(s))
+  ok    mapLabel exists - map text needs a casing to survive imagery
+  ok    mapPlate exists - map text needs a casing to survive imagery
+  ok    the scale bar uses the cased label, not a bare theme fill
+
+[layout: state changes never move a control]
+  ok    the pill row cannot re-wrap (fixed tracks, or a column flow that takes its count from the children)
+  ok    a pill value that outgrows its track is trimmed, never widened
+  ok    the state subtitle is clamped to one line at every width
+  ok    the stale-data marker reserves its row unconditionally
+  ok    the stale-data marker is hidden with visibility, not by dropping out
+  ok    the position-source banner reserves the height of its longest message
+  ok    .posmode.off hides it without freeing its space
+  ok    the position-source banner does not start with the hidden attribute
+  ok    app.js never toggles the position banner with .hidden
+  ok    the scrollbar gutter is reserved
+  ok    #tMotorFaultWhy reserves its line while it is empty
+  ok    #sensorCalibHint reserves its line while it is empty
+  ok    the position banner reserves its height with a sizer twin
+  ok    app.js writes the banner text to its span, not over the sizer twin
+  ok    app.js measures the toolbar that the CSS positions against
+  ok    the error banner sits under the toolbar, never over the E-STOP
+
+[connection dot: one rule per state]
+  ok    the live state has its own .live-dot rule
+  ok    the stale state has its own .live-dot rule
+  ok    the offline state has its own .live-dot rule
+  ok    the connecting state has its own .live-dot rule
+  ok    exactly one unscoped .live-dot rule - the base (found 1)
+
+[topics page: QoS matched to the publisher]
+  ok    the topic echo derives its QoS instead of passing a bare depth
+  ok    it asks the graph what the publisher actually offers
+  ok    the echo subscription is created with a QoS profile, not a depth
+
+[IMU mounting: one fact, stated consistently]
+  ok    both mounting constants are present
+  ok    the acceleration sign and the yaw offset agree about which way the sensor faces (sign -1.0, offset 180.0)
+  ok    geometry.imu.yaw defaults from IMU_YAW_OFFSET_DEG, not a second copy
+
+[design system]
+  ok    token --bg is defined
+  ok    token --card is defined
+  ok    token --sunk is defined
+  ok    token --line is defined
+  ok    token --txt is defined
+  ok    token --mut is defined
+  ok    token --acc is defined
+  ok    token --on-acc is defined
+  ok    token --ok is defined
+  ok    token --warn is defined
+  ok    token --err is defined
+  ok    spacing tokens stay on the 4px scale (['4', '8', '12', '16', '24'])
+  ok    at most 5 type-size tokens (['12', '14', '15', '18', '26'])
+  ok    few hardcoded font sizes outside the scale ([10, 11, 20, 22, 24, 26])
+  ok    no colour repeated 3+ times outside :root 
+  ok    touch targets: @media (pointer: coarse) block exists
+  ok    motion: prefers-reduced-motion block exists
+  ok    body cannot scroll sideways
+  ok    wide content scrolls inside its own container
+  ok    has content breakpoints [560, 820, 1200]
+  ok    grids shrink instead of overflowing (minmax(min(...)))
+  ok    state styling present: loading
+  ok    state styling present: empty
+  ok    state styling present: error + retry
+  ok    state styling present: stale
+  ok    focus ring is styled, not removed
+  ok    status regions announce themselves (aria-live)
+  ok    every input has a label or aria-label 
+  ok    tab "dash" has at most one primary button per view (1)
+  ok    tab "map" has at most one primary button per view (1)
+  ok    tab "wp" has at most one primary button per view (1)
+  ok    tab "cfg" has at most one primary button per view (1)
+  ok    tab "calib" has at most one primary button per view (0)
+  ok    tab "geom" has at most one primary button per view (0)
+  ok    tab "board" has at most one primary button per view (1)
+  ok    tab "topics" has at most one primary button per view (0)
+  ok    tab "log" has at most one primary button per view (0)
+  ok    tab "help" has at most one primary button per view (0)
+
+[configuration files]
+  ok    robot.yaml has its "robot:" section
+  ok    nav.yaml has its "nav:" section
+  ok    pid.yaml has its "pid:" section
+  ok    motor.yaml has its "motor:" section
+  ok    estimator.yaml has its "estimator:" section
+  ok    safety.yaml has its "safety:" section
+  ok    web.yaml has its "web:" section
+  ok    waypoints.yaml has its "waypoints:" section
+  ok    motor.yaml defines the keys the code reads 
+  ok    estimator.yaml defines the keys the code reads 
+  ok    nav.yaml defines the keys the code reads 
+  ok    safety.yaml defines the keys the code reads 
+
+[firmware config split]
+  ok    config.h includes exactly the headers on disk (11)
+  ok    pins.h exists
+  ok    robot.h exists
+  ok    motor.h exists
+  ok    imu.h exists
+  ok    compass.h exists
+  ok    gps.h exists
+  ok    power.h exists
+  ok    control.h exists
+  ok    safety.h exists
+  ok    network.h exists
+  ok    version.h exists
+
+[firmware layout: lib/ vs src/]
+  ok    no robot-specific headers left in lib/ 
+  ok    every -I path in platformio.ini exists 
+  ok    every src/ header directory is on an include path 
+  ok    local library PIDF with a .cpp is declared in lib_deps
+
+[branch publisher]
+  ok    publish_branches.sh writes Dockerfile with a closed heredoc
+  ok    publish_branches.sh writes README.md with a closed heredoc
+  ok    publish_branches.sh writes docker-compose.serial.yml with a closed heredoc
+  ok    publish_branches.sh writes docker-compose.windows.yml with a closed heredoc
+  ok    publish_branches.sh writes docker-compose.yml with a closed heredoc
+  ok    publish_branches.sh writes docker-entrypoint.sh with a closed heredoc
+  ok    publish_branches.sh writes install.sh with a closed heredoc
+  ok    docker branch gets Dockerfile
+  ok    docker branch gets docker-compose.yml
+  ok    docker branch gets docker-compose.windows.yml
+  ok    docker branch gets docker-compose.serial.yml
+  ok    docker branch gets docker-entrypoint.sh
+  ok    docker branch gets install.sh
+  ok    docker branch gets README.md
+  ok    branch workspace has a subset defined
+  ok    branch firmware has a subset defined
+  ok    branch docker has a subset defined
+
+[docker compose merge]
+  ok    both compose files parse as YAML
+  ok    linux uses host networking (needed for DDS discovery)
+  ok    windows override drops host networking
+  ok    windows override publishes UDP 8888 for the robot
+  ok    windows override publishes TCP 8080 for the browser
+  ok    base compose declares no devices (a missing one blocks container creation)
+  ok    the serial port is available as an opt-in override
+  ok    interactive container shells source ROS (docker exec skips the entrypoint)
+  ok    healthcheck survives the merge
+
+[installer]
+  ok    install.sh is valid bash 
+  ok    install.sh is executable
+  ok    install.sh --check runs cleanly
+  ok    install.sh --check never targets a bare root path
+  ok    install.sh --dry-run runs cleanly
+  ok    install.sh --dry-run never targets a bare root path
+  ok    install.sh --dry-run --docker runs cleanly
+  ok    install.sh --dry-run --docker never targets a bare root path
+  ok    install.sh --uninstall --dry-run runs cleanly
+  ok    install.sh --uninstall --dry-run never targets a bare root path
+
+[docs match the code]
+  ok    battery thresholds are readable from power.h (11.4 / 10.71)
+  ok    no doc still quotes the old 9.9 V cutoff 
+  ok    no doc still quotes the old 10.8 V warning 
+  ok    no doc still quotes the old 0.45 V diode drop 
+  ok    no doc still refers to mor_luam (removed) 
+  ok    no doc still uses the old ros2-agent hostname 
+  ok    no doc still points at headers that moved to src/ 
+  ok    no doc still describes telemetry as 42 packed floats 
+  ok    no doc still says position is uncorrected dead reckoning 
+  ok    topics.md names the telemetry type correctly 
+  ok    planhtml.py names the telemetry type correctly 
+  ok    viewer_server.py names the telemetry type correctly 
+  ok    the current cutoff (10.71 V) is documented somewhere
+  ok    the measured diode drop (0.181 V) is documented somewhere
+  ok    every project path named in the docs exists 
+
+[portability: nothing machine-specific in git]
+  ok    no committed file hardcodes a home directory outside a comment 
+  ok    the systemd unit is a template, not one machine's copy
+  ok    install.sh substitutes the placeholders rather than copying
+
+[host tests]
+  info   test_compass.cpp            13 tests
+  info   test_console.cpp            20 tests
+  info   test_drive_control.cpp      41 tests
+  info   test_estimator.cpp          43 tests
+  info   test_fusion.cpp              9 tests
+  info   test_imu_rate.cpp            4 tests
+  info   test_lever_arm.cpp           7 tests
+  info   test_motor_model.cpp        20 tests
+  info   test_mount_rotation.cpp      8 tests
+  info   test_params.cpp             12 tests
+  info   test_pidf.cpp               18 tests
+  info   test_pose_ekf.cpp            7 tests
+  info   test_safety_gps.cpp         44 tests
+  info   test_wifi_store.cpp          8 tests
+  ok    run_compass_tests is called by the test runner
+  ok    run_console_tests is called by the test runner
+  ok    run_drive_tests is called by the test runner
+  ok    run_estimator_tests is called by the test runner
+  ok    run_fusion_tests is called by the test runner
+  ok    run_imu_rate_tests is called by the test runner
+  ok    run_lever_arm_tests is called by the test runner
+  ok    run_motor_model_tests is called by the test runner
+  ok    run_mount_rotation_tests is called by the test runner
+  ok    run_param_tests is called by the test runner
+  ok    run_pidf_tests is called by the test runner
+  ok    run_pose_ekf_tests is called by the test runner
+  ok    run_safety_gps_tests is called by the test runner
+  ok    run_wifi_store_tests is called by the test runner
+  ok    test suite has 254 cases
+
+[windows viewer build]
+  info   exe present, freshness not checked on this platform
+
+notes (expected, not problems):
+  - .banner sets display and is used with .hidden (safe: .hidden is !important)
+  - .mapmenu sets display and is used with .hidden (safe: .hidden is !important)
+  - .row sets display and is used with .hidden (safe: .hidden is !important)
+  - .viewerbar sets display and is used with .hidden (safe: .hidden is !important)
+  - /cmd_vel is an external interface (standard teleop input (teleop_twist_keyboard, joysticks))
+  - /imu/data is an external interface (sensor output for rviz / bag files)
+  - /odom is an external interface (odometry output for rviz / bag files)
+  - exe freshness not checked on linux (Windows-only artifact; the Linux UI is served from web/)
+
+QC FAILED - 2 problem(s):
+  - gps_localize:latest is newer than every workspace source (stale against Telemetry.msg)
+  - fix: rebuild the image from the docker branch (git worktree add <dir> origin/docker && docker build -t gps_localize:latest <dir>)

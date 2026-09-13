@@ -200,7 +200,11 @@ class ParamRegistry {
       paramStorageKey(table_[i].key, key);
       if (overridden_[i]) {
         store_->putFloat(key, value_[i]);
-      } else {
+      } else if (store_->isKey(key)) {
+        // Only erase a key that is actually there. Preferences logs an ERROR
+        // line for every erase of a missing key, and store() walks the whole
+        // table on every set - so one `set` printed an error per
+        // non-overridden parameter and buried the reply in noise.
         store_->remove(key);
       }
     }

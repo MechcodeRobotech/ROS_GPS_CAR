@@ -23,7 +23,7 @@
 // Major.minor. Minor for additions the host can ignore, major when something
 // the host relies on changes shape.
 #define FIRMWARE_VERSION_MAJOR  1
-#define FIRMWARE_VERSION_MINOR  4
+#define FIRMWARE_VERSION_MINOR  62
 #define FIRMWARE_VERSION        ((FIRMWARE_VERSION_MAJOR) * 100 + (FIRMWARE_VERSION_MINOR))
 
 // __DATE__ and __TIME__ come from the compiler, so this identifies the exact

@@ -296,6 +296,9 @@ class Viewer:
         route('POST', '/api/estop', self.sim_estop)
         route('POST', '/api/set_pose', self.sim_set_pose)
         route('POST', '/api/mag_calib', self.sim_unsupported)
+        route('POST', '/api/imu_calib', self.sim_unsupported)
+        route('POST', '/api/reset_odom', self.sim_unsupported)
+        route('GET', '/api/find_robot', self.sim_unsupported)
         route('POST', '/api/manual_limits', self.sim_limits)
 
     def sim_unsupported(self, _body, _query):

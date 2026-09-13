@@ -26,6 +26,86 @@ ESP32 pin map, GPS and IMU are unchanged from draft_2.
 | IO18 | MOTOR B IN2 | out | Motor B direction |
 | IO4 | MOTOR B EN | out (PWM) | Motor B speed |
 | IO21 | SDA | I²C | BNO085, 4× INA226, QMC5883L in the GPS module |
+
+**The I²C bus runs at 400 kHz, and that number was re-measured.** It was dropped
+to 100 kHz once to stop the BNO085 resetting, together with a longer timeout,
+and the timeout was the half that helped. Every judgement of the clock after
+that was made while the IMU was refusing to start, so the bus was nearly idle
+and 100 kHz looked fine. With the sensor actually streaming, SHTP moves a whole
+cargo per report and a few hundred bytes at 100 kHz is tens of milliseconds —
+the control loop ran 45 to 161 ms per tick, against 0.56 ms with the sensor
+dead. At 400 kHz it is 1 to 8 ms. `ImuBno085::update()` also has a time budget per
+tick, which bounds the loop whatever the bus does.
+
+**That budget is 4 ms, and 2 ms was too tight.** Events are drained in arrival
+order, so a budget that runs out part way through starves whatever sits at the
+back of the queue - which was always the rotation vector. Measured at 2 ms: the
+sensor was asked for 200 reports a second and 113 were collected, with the
+rotation vector getting 0 to 6 Hz of its 50 while the gyroscope got 65 of 100.
+At 4 ms: 168 to 187 of 200, and the rotation vector 43 to 49 of 50. The loop
+runs 4.6 to 9.3 ms against a 10 ms period, so this is close to the ceiling - if
+control periods start being missed, this is the first number to bring back
+down.
+
+**The BNO085 is mounted BACKWARDS.** Its printed X arrow points at the rear of
+the robot, so `IMU_ACC_FORWARD_SIGN` is −1 and `IMU_YAW_OFFSET_DEG` is 180.
+Those two describe one physical fact and must never disagree — `tools/qc.py`
+refuses the combination where they do, because half-fixing it is worse than not
+fixing it: a heading squared up while the acceleration still points backwards
+looks right and is not.
+
+It was wrong for a long time and nothing reported an error. With the sign at +1
+the estimator was fed forward acceleration negated, so it believed the robot was
+accelerating backwards whenever it drove forwards. Measured on the floor: a
+steady 0.18 m/s forward command produced a fused speed reading anywhere from
+−0.36 to +0.34 m/s, negative while the robot was plainly moving forwards. That
+was blamed on integration drift for an afternoon; it was the mounting.
+
+**The Wi-Fi radio was browning out the IMU.** The BNO085 reset itself constantly
+and lost its calibration each time — 34 resets in 68 seconds at worst — and
+every symptom pointed at the sensor or the bus. The comparison that settled it:
+`tools_imu/imu_only.cpp` is the same board, the same sensor and the same bus
+with **no Wi-Fi**, and it runs for minutes with zero resets at a steady 3/3. An
+ESP32 transmit burst at the default 20 dBm is a few hundred milliamps, and on
+USB alone — no battery holding the rail up — that browns out a sensor sharing
+3V3. `WIFI_TX_POWER` is **13 dBm** for that reason: one reset in 165 seconds
+afterwards, and the IMU survived an over-the-air update without a power cycle
+for the first time. The proper fix is a battery or bulk capacitance on the
+sensor supply, after which the power can go back up.
+
+**Ask the BNO085 for ONE rotation vector, and make it the game one.**
+`IMU_REPORT_MODE` in `config/imu.h` decides, and it is deliberately separate
+from `HEADING_SOURCE`: those answer different questions — which reports the
+sensor publishes, and which absolute references the estimator may use — and
+deriving one from the other meant neither could be chosen without disturbing
+the other.
+
+It matters more than it sounds, because **both** things this robot reads from
+the sensor come from that one report. The heading backbone is the sensor's own
+integrated orientation — not a gyro rate integrated in our control loop; the
+sensor corrects its own drift against gravity at its own rate, and redoing that
+in the loop would be strictly worse because every late cycle is rotation that
+silently never happened. Roll and pitch from the same report tilt-compensate the
+QMC5883L, so a starved rotation vector quietly makes the compass wrong on any
+slope as well.
+
+The game vector is the one to keep: it is that integrated orientation, immune to
+magnets because it uses no magnetometer at all, and north comes separately from
+the compass and the GPS course — both cross-checked against it. The
+magnetometer-referenced vector would give absolute heading directly, but from a
+magnetometer sitting next to the motors: the sensor this robot trusts least,
+made the backbone of everything.
+
+**The BNO085 runs one fusion, never two.** `MODE_BOTH` asks for the game
+rotation vector and the magnetometer-referenced one together and only ever
+delivers one of them properly — proved from both directions. With the
+magnetometer calibration still running, the game vector got 50-70 Hz and the
+magnetometer-referenced one 0.0-0.5 Hz of the 10 it asked for; saving the
+calibration to the sensor's flash flipped it, giving `rv` 9.6 Hz and starving
+the game vector to 2-7. Halving the game rate changed neither. The gyroscope is
+unaffected at 90 Hz throughout, so yaw *rate* is always available. This matters
+less than it sounds: the magnetometer-referenced vector is the third absolute
+heading source, behind the GPS course and the QMC5883L.
 | IO22 | SCL | I²C | 3.3 k pull-ups on the board |
 | IO16 | GPS RX (net) | in | ESP RX ← GPS TX |
 | IO17 | GPS TX (net) | out | ESP TX → GPS RX |
@@ -64,7 +144,7 @@ VCC BATT ─ fuse ─ mushroom ─ relay ─ VCC EMER ─┬─[MOTOR_A_SENSOR]�
 
 | Sensor | Measures | Default address | Shunt |
 |---|---|---|---|
-| PROCESSOR_SENSOR | ESP32 +5 V rail, current from the battery side | 0x41 | 0.1 Ω / 0.8 A |
+| PROCESSOR_SENSOR | the rail feeding the ESP32 — **3V3 since the board moved onto its own buck**, measured 3.42 V / 172 mA for the ESP32 plus every sensor. Was the 5 V rail, shared with the relay coil. | 0x41 | 0.1 Ω / 0.8 A |
 | MOTOR_A_SENSOR | VCC EMER → motor A rail, **before the diode** | 0x40 | 0.01 Ω / 3 A |
 | MOTOR_B_SENSOR | VCC EMER → motor B rail, **before the diode** | 0x44 | 0.01 Ω / 3 A |
 | FAN_SENSOR | VCC ON MODULE → fan buck (draft_5, new) | 0x45 | 0.1 Ω / 1.5 A |
@@ -89,9 +169,9 @@ separate diodes:
 
 ```c
 // firmware/config/motor.h        (or Settings → มอเตอร์ on the web UI)
-#define MOTOR_A_DIODE_VF_V      1.81f   // MEASURED on this board, left
+#define MOTOR_A_DIODE_VF_V      0.181f  // MEASURED on this board, left
 #define MOTOR_A_DIODE_R_OHM     0.03f   // slope, 0 = flat drop
-#define MOTOR_B_DIODE_VF_V      1.90f   // MEASURED on this board, right
+#define MOTOR_B_DIODE_VF_V      0.168f  // MEASURED on this board, right
 #define MOTOR_B_DIODE_R_OHM     0.03f
 ```
 
@@ -100,8 +180,8 @@ separate diodes:
 for the processor and fan rails, too small for the motors. Fit 0.01 Ω on the
 two motor sensors and keep `INA226_SHUNT_MOTOR_OHM` in sync.
 
-Battery protection lives in `power.h`, as 3S LiPo tiers: warn at 11.4 V
-(3.80 V/cell), soft stop at 11.0 V, and hard cut at 10.7 V held for 3 s. A cell
+Battery protection lives in `power.h`, as 3S LiPo tiers: warn at 11.7 V
+(3.90 V/cell), soft stop at 11.4 V, and hard cut at 11.199 V held for 3 s. A cell
 is damaged below about 3.0 V/cell (9.0 V pack), so these sit well clear of it.
 
 The warning and the soft stop follow the voltage back up on their own. **The

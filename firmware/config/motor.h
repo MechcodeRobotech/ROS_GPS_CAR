@@ -23,7 +23,8 @@
 
 //-------------------------- direction / braking --------------------------//
 #define MOTOR_A_INVERT          false     // LEFT wheel
-#define MOTOR_B_INVERT          false     // RIGHT wheel
+#define MOTOR_B_INVERT          true      // RIGHT wheel - wired reversed on the robot;
+                                          // see the note in pins.h for how this was found
 #define MOTOR_BRAKE_ON_STOP     true      // true = short brake, false = coast
 
 //--------------------- series diode (draft_5) ----------------------------//
@@ -47,9 +48,9 @@
 // larger than a small-signal Schottky: at ~12 V they are 15% of the rail, so
 // getting them wrong makes the back-EMF wheel speed read high whenever the
 // motor model is the fallback. Editable from the web UI (T69).
-#define MOTOR_A_DIODE_VF_V      1.81f     // measured, left
+#define MOTOR_A_DIODE_VF_V      0.181f    // measured, left
 #define MOTOR_A_DIODE_R_OHM     0.03f
-#define MOTOR_B_DIODE_VF_V      1.90f     // measured, right
+#define MOTOR_B_DIODE_VF_V      0.168f    // measured, right
 #define MOTOR_B_DIODE_R_OHM     0.03f
 // The fan buck has a diode too (FAN_DIODE), but it sits after the fan sensor
 // and the firmware neither controls nor measures the fans, so it needs no
@@ -63,7 +64,23 @@
 #define MOTOR_KE_V_PER_RPM      0.12f     // 12 V / 100 rpm output shaft (datasheet)
 #define MOTOR_RESISTANCE_OHM    5.0f      // winding + TB6612 + wiring, >>> MEASURE <<<
 #define MOTOR_MIN_DUTY_FOR_EST  0.12f     // below this duty the estimate is not published
-#define MOTOR_STALL_CURRENT_A   0.9f      // that much current with no back-EMF = blocked wheel
+#define MOTOR_STALL_CURRENT_A   2.5f      // that much current with no back-EMF = blocked wheel.
+                                          // MEASURED, not guessed. Free-running on blocks these
+                                          // motors draw 0.17-0.33 A; at full speed they peak at
+                                          // 1.12 A; and an instant forward/backward reversal at
+                                          // full speed - the harshest thing the robot can be
+                                          // asked to do - peaks at 2.28 A on rail A and 2.18 A
+                                          // on B, because the back-EMF adds to the applied
+                                          // voltage instead of opposing it.
+                                          //
+                                          // So anything at or below ~2.3 A is normal operation.
+                                          // It sat at 0.9 A and then 1.0 A, both BELOW the
+                                          // legitimate reversal peak - a real stall was
+                                          // indistinguishable from a hard direction change, and
+                                          // only the 400 ms hold below stopped it firing. 2.5 A
+                                          // clears the measured peak with margin and still sits
+                                          // well inside the INA226's 3.0 A calibration range.
+                                          // Tunable live as motor.stall_a.
 #define MOTOR_OPEN_CURRENT_A    0.04f     // commanded but no current = broken wire / dead channel
 
 #endif // MOTOR_CONFIG_H

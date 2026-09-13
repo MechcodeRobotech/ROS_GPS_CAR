@@ -1,0 +1,10 @@
+ALIGN advance: ALIGN index= 1 align_target= None
+next tick: TypeError unsupported operand type(s) for -: 'NoneType' and 'float'
+require_fix=false, no position: TypeError cannot unpack non-iterable NoneType object
+99-second-old dead reckoning usable: (True, '')
+DISCOVER with unusable GPS: commanded speed= 0.15
+bad nav index: ValueError invalid literal for int() with base 10: 'bad'
+manual NaN: (200, {'ok': True, 'speed': 0.18, 'turn': 0.0})
+datum shifted 1 degree: unchanged fused EN= (0.0, 0.0) new interpreted latlon= (11.0, 11.0)
+malformed nav config HTTP status= 200
+nav reload: ValueError could not convert string to float: 'bad'

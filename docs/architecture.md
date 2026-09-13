@@ -25,6 +25,13 @@ That is why the agent is not optional, and why the robot vanishes from
 `ros2 topic list` the moment the agent stops even though the ESP32 is still
 transmitting.
 
+Because it is not optional, it runs as its own systemd unit,
+`micro_ros_agent.service`, rather than as a child of the bringup launch. The
+launch is started with `start_agent:=false` so exactly one agent binds UDP 8888.
+The split exists so that restarting or stopping the host stack - something done
+often while working on it - does not take down the one process the board is
+trying to reach.
+
 ---
 
 ## The picture
@@ -71,7 +78,13 @@ There is a serial alternative on the same code path
 (`set_microros_serial_transports(Serial)`, `main.cpp:942`), selected at build
 time by the PlatformIO environment: `-e wifi` or `-e serial`.
 
-**Finding the agent.** The firmware does not depend on a fixed IP. It resolves
+**Finding the agent.** The firmware does not depend on a fixed IP, and since the
+address can now be set and remembered on the board, it does not depend on being
+reflashed either. In order it tries: an address set by hand (`agent <host|ip>` on
+the USB console, kept in NVS), then mDNS, then plain DNS, then the address that
+last carried a real session, then the compile-time fallback, then the DHCP
+gateway. Only a genuine session updates the remembered address — a successful
+ping proves the agent is reachable, not that a session can be built. It resolves
 in order (`main.cpp:729`, `:734`):
 
 1. mDNS — `<AGENT_HOSTNAME>.local`, UDP 5353
@@ -128,7 +141,7 @@ if the two sides ever disagree.
 | `/gps_localize/odom` | `nav_msgs/Odometry` |
 | `/gps_localize/imu/data` | `sensor_msgs/Imu` |
 | `/gps_localize/gps/fix` | `sensor_msgs/NavSatFix` |
-| `/gps_localize/telemetry` | `gps_localize_msgs/Telemetry` — **44 named fields** |
+| `/gps_localize/telemetry` | `gps_localize_msgs/Telemetry` — **56 named fields** |
 
 **Host → robot**
 
@@ -163,7 +176,7 @@ at different points**, which caused a real bug and is documented in
 
 | Sensor | Voltage measured at | Current measured at |
 |---|---|---|
-| processor `0x41` | the ESP32 **+5 V rail**, after the buck | the **battery** side, including the buck |
+| processor `0x41` | the rail feeding the ESP32 — **3V3**, from its own buck, since the board was taken off the shared 5 V rail | the **battery** side, including the buck |
 | fan `0x45` | the fan +5 V rail | source, through the fan buck |
 | motor A `0x40` | **VCC EMER — this is the pack voltage** | source → driver → motor |
 | motor B `0x44` | same node as A | source → driver → motor |
@@ -193,6 +206,46 @@ heading rather than stopping the robot:
 
 ```
 GPS course  >  QMC5883 compass  >  BNO085 magnetometer  >  gyro only
+
+That is a priority order, and on its own it is not enough: it says which source
+to prefer, not whether the preferred one is telling the truth. The compass and
+the BNO085's magnetometer are both absolute and both fooled by the same things —
+a motor drawing current, a steel bench, rebar in a floor. The IMU's fused yaw is
+fooled by none of them, because it comes from the gyroscope; it drifts slowly,
+which is why it needs an absolute reference at all, but over the seconds a
+disturbance lasts it is the honest one.
+
+So every absolute reference is **checked against the IMU before it is believed**.
+A reference that disagrees by more than `agree_tol_deg` is refused, and
+`heading_innov_deg` and `heading_gated` report the disagreement so it can be
+seen rather than guessed at. Measured on this robot: the compass moved 9.5° in
+0.3 s while the gyroscope reported about 1 °/s, and applied blind that step went
+straight into the heading and the manual hold steered to it.
+
+Two details stop the gate causing worse problems than it solves. The **first**
+alignment is never gated — before it there is nothing to disagree with, and
+gating it would mean the robot never finds north at all. And a disagreement that
+**persists** past `agree_recover_s` is accepted: a gate that can never give up
+locks out a correct sensor for ever if the gyro really has drifted.
+
+Manual driving is no longer outside that chain. It used to be open loop end to
+end — the jog buttons produced a speed and a turn rate, those became two PWM
+numbers, and nothing ever compared where the robot pointed with where it had
+been pointing. Two motors are never identical, so "forward" drove an arc.
+Commanding straight now latches the heading and the heading PID trims the wheel
+difference to keep it; commanding a turn releases the hold and re-latches it on
+release, so steering stays direct. The correction is clamped (`MANUAL_HOLD_MAX_PWM`)
+because it is a trim and must never out-pull the person holding the button.
+
+The **speed** loop is closed in manual as well, for the same reason: the
+feed-forward from PWM to speed is a guess, so the same request gave one speed on
+a fresh battery and another on a flat one, up a slope or on carpet. It closes
+only when the fused speed was measured **independently of the motors** — GPS, or
+IMU acceleration. With neither, the estimator falls back to the motor model,
+which is computed from the very PWM being set; a loop closed on that compares
+the output with itself, learns nothing, and winds its integral up chasing an
+error that cannot close. `DriveController::speedClosed()` reports which of the
+two is happening.
 ```
 
 **Speed** — a complementary filter: IMU acceleration for the fast component,
@@ -231,11 +284,12 @@ bitfield. Motion is allowed only when all of them are clear:
 | `STOP_HEARTBEAT_LOST` | the browser stopped sending heartbeats |
 | `STOP_CMD_TIMEOUT` | the command stream stalled while moving |
 | `STOP_AGENT_LOST` | the micro-ROS agent went away |
-| `STOP_BATTERY_SOFT` | pack below 11.0 V — stop driving, stay powered |
-| `STOP_BATTERY_LOW` | pack below 10.7 V for 3 s — latched |
+| `STOP_BATTERY_SOFT` | pack below 11.4 V — stop driving, stay powered |
+| `STOP_BATTERY_LOW` | pack below 3.733 V/cell for 3 s — 11.199 V on 3S — latched |
 | `STOP_STARTUP` | boot lockout |
 
-3S LiPo tiers: warn 11.4, soft stop 11.0, hard cut 10.7, clear 11.1. A cell is
+3S LiPo tiers: warn 11.7 V, soft stop 11.4 V, hard cut 11.199 V (about 11.2 V).
+The hard cutoff is latched and requires a power cycle; it has no voltage-only clear threshold. A cell is
 damaged below about 3.0 V/cell (9.0 V pack); these sit well above that.
 
 **The control loops run on the ESP32 at 100 Hz, not on the host.** A Wi-Fi
@@ -252,7 +306,7 @@ firmware/          ESP32, PlatformIO
   config/          tunables and the pin map
   lib/             reusable drivers: INA226, BNO085, TB6612, QMC5883, NMEA, PIDF
   src/             this robot: estimator, control, safety, power
-  test/            175 host tests, run with pio test -e native
+  test/            261 host tests, run with pio test -e native
 gps_localize_ws/   ROS 2 Humble workspace
   .../gps_localize/  the five nodes, web UI, launch files, config
 webapp/            the no-ROS viewer, for a PC with no robot
@@ -275,7 +329,8 @@ generated from `main`, never edited by hand.
 | 8080 | TCP | the web UI |
 | 5353 | UDP | mDNS `.local` names (optional but convenient) |
 
-On Windows, Docker publishes these but the firewall drops them by default:
+For Windows Wi-Fi, Docker publishes TCP 8080 and UDP 8888; mDNS is not published.
+Windows Firewall can block the published ports:
 `setup/setup_windows.ps1` opens both and warns if the network profile is Public,
 where Private/Domain rules do not apply at all.
 
@@ -328,9 +383,9 @@ and losing every off-the-shelf tool — for a robot whose whole point is
 navigation, throwing away rviz and bag files is a bad trade.
 
 And the efficiency argument mostly does not apply here, because the design
-already sidesteps it. Telemetry is **one** message of 44 fields rather than 44
+already sidesteps it. Telemetry is **one** message of 61 fields rather than 61
 topics, so the per-message DDS overhead people worry about is paid once per
-cycle, not forty-four times.
+cycle, not fifty-six times.
 
 It used to be a packed `Float32MultiArray` — genuinely a binary payload wearing
 a ROS message as a wrapper, which is the raw-UDP tradeoff smuggled inside ROS:
@@ -368,3 +423,11 @@ sensor drivers, none of which a custom protocol removes.
 **When plain UDP would win:** a sensor node that only ever ships one fixed
 struct to one consumer, on hardware too small for micro-ROS, where nobody needs
 bags or rviz. That is not this robot.
+
+## Windows USB deployment
+
+The USB deployment uses usbipd-win to attach the ESP32 to WSL2 Ubuntu and runs
+Docker Engine in that same distribution. Compose maps the Linux serial device
+into the container, and the serial-transport override launches the agent at
+115200 baud. Firmware must be built with `-e serial`. USB flashing alone does
+not change Wi-Fi firmware into serial firmware. See [Docker guide](docker.md).

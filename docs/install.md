@@ -6,33 +6,33 @@
 > The rest of this page is what it does, in case you want to do it by hand or
 > something goes wrong. See [setup/README.md](../setup/README.md).
 
+For **Docker on Linux or Windows, including USB through WSL2**, use the
+[Docker guide](docker.md). This page covers a native Ubuntu server.
+A fresh Git clone does not include the optional Windows viewer executable.
+
 ## 1. ROS 2 Humble and the micro-ROS agent
 
-```bash
-sudo apt update
-sudo apt install -y ros-humble-desktop python3-colcon-common-extensions \
-                    ros-humble-micro-ros-msgs python3-yaml git
-# micro-ROS agent (binary package on Humble)
-sudo apt install -y ros-humble-micro-ros-agent
-```
-
-If your apt mirror has no `ros-humble-micro-ros-agent`, build it once:
+Use Ubuntu 22.04. Clone the full source and let the checked-in installer configure
+ROS repositories, dependencies, the agent, the workspace, and service units:
 
 ```bash
-mkdir -p ~/uros_ws/src && cd ~/uros_ws
-git clone -b humble https://github.com/micro-ROS/micro-ROS-Agent.git src/micro_ros_agent
-rosdep install --from-paths src --ignore-src -y
-colcon build && echo 'source ~/uros_ws/install/setup.bash' >> ~/.bashrc
+git clone https://github.com/MechcodeRobotech/ROS_GPS_CAR.git ~/GPS_Localize
+cd ~/GPS_Localize
+bash setup/install.sh --check
+bash setup/install.sh --native
 ```
 
-Nothing else is needed: the web UI is pure Python standard library, no pip, no
-internet at run time.
+Repository access is required. The installer may request sudo. Inspect
+`bash setup/install.sh --native --dry-run` to see its actions first. Humble's
+micro-ROS agent is built from source; do not assume an apt package named
+`ros-humble-micro-ros-agent` exists. Runtime web assets are served locally;
+installation and first firmware builds need internet.
 
 ## 2. Build this workspace
 
 ```bash
 # copy the repository to the robot PC, then
-cd ~/gps_localize_ws
+cd ~/GPS_Localize/gps_localize_ws
 source /opt/ros/humble/setup.bash
 colcon build --symlink-install
 source install/setup.bash
@@ -68,17 +68,19 @@ Then in `config/network.h` keep `USE_AGENT_HOSTNAME 1` and set
 then the fixed `AGENT_IP` as a fallback — and it repeats the lookup while
 waiting for the agent, so it follows the PC to a new address without a reflash.
 
-Put the fallback address in `firmware/config/network.h`:
+Create the ignored first-boot network seed from the checked-in template:
 
-```c
-static const char* WIFI_SSID = "your-ssid";
-static const char* WIFI_PASS = "your-password";
-#define USE_AGENT_HOSTNAME 1
-static const char*     AGENT_HOSTNAME = "mannaja";      // preferred: found by name
-static const IPAddress AGENT_IP(192, 168, 50, 242);    // fallback only
-static const uint16_t  AGENT_PORT = 8888;
-#define ROS_DOMAIN_ID 10
+```bash
+cd ~/GPS_Localize
+cp firmware/config/network_secrets.example.h firmware/config/network_secrets.h
 ```
+
+Edit `WIFI_NETWORKS` and the OTA password in that local file. Never commit it.
+The board's saved NVS network list takes precedence after initial setup; use
+Wi-Fi settings in the web UI or the 115200-baud console's `wifi add` command to
+change an existing board. `agent <PC-LAN-IP>` saves the server address;
+`agent auto` restores discovery. Check `agent` to see the current choice.
+Defaults such as port and domain live in `firmware/config/network.h`.
 
 `ROS_DOMAIN_ID` must be the same on both sides. The launch file sets it to 10.
 
@@ -87,19 +89,14 @@ static const uint16_t  AGENT_PORT = 8888;
 ```bash
 sudo apt install -y python3-pip && pip install -U platformio
 source /opt/ros/humble/setup.bash        # micro_ros_platformio reads $ROS_DISTRO
-cd firmware
+cd ~/GPS_Localize/firmware
 pio run -e wifi -t upload                # Wi-Fi transport (normal)
 pio device monitor -b 115200             # check the boot messages
 ```
 
-Expected boot output:
-
-```
-[GPS] listening at 115200 baud
-```
-
-plus a line for any INA226 or the BNO085 that is missing. A clean board prints
-nothing else — that is normal, the ESP32 only talks over micro-ROS after that.
+Inspect boot logs for Wi-Fi, agent discovery, and sensor status. GPS baud is
+automatically probed; a single fixed boot string is not a health check. Close
+the monitor before running a serial agent or flashing again.
 
 Serial transport fallback (no Wi-Fi):
 
@@ -111,7 +108,7 @@ ros2 launch gps_localize bringup.launch.py transport:=serial serial_device:=/dev
 ## 5. Run
 
 ```bash
-source ~/gps_localize_ws/install/setup.bash
+source ~/GPS_Localize/gps_localize_ws/install/setup.bash
 ros2 launch gps_localize bringup.launch.py
 ```
 
@@ -172,27 +169,59 @@ webapp\run_windows.bat                 :: Windows, uses exe\GPS_Localize_Viewer.
 webapp/run_ubuntu.sh                   # Ubuntu, uses system python3
 ```
 
-It shows a permanent "VIEW ONLY" bar, pops a warning on start, disables every
-control button and answers `/api/nav`, `/api/manual` and `/api/estop` with HTTP
-403. Files it saves land in `webapp/exe/settings/` — copy them to
+By default it shows a labelled simulation and controls a simulated robot.
+Use `--no-demo` for read-only mode. The optional executable is not in Git;
+install Python 3 and PyYAML or build it using `webapp/build_exe.bat`. Saved
+settings live beside the executable or under `webapp/settings/` for Python; copy them to
 `~/.gps_localize/` on the robot PC to use them for real. Details:
 [../webapp/README.md](../webapp/README.md).
 
 ## 7. Autostart on boot
 
+Two units. `setup/install.sh` installs both; by hand it is:
+
 ```bash
-sudo cp ~/gps_localize_ws/src/gps_localize/systemd/gps_localize.service /etc/systemd/system/
-sudo nano /etc/systemd/system/gps_localize.service   # set User= and the paths
+cd ~/GPS_Localize/gps_localize_ws/src/gps_localize/systemd
+sudo cp micro_ros_agent.service gps_localize.service /etc/systemd/system/
+sudo nano /etc/systemd/system/micro_ros_agent.service   # set User= and the paths
+sudo nano /etc/systemd/system/gps_localize.service      # the same two
 sudo systemctl daemon-reload
+sudo systemctl enable --now micro_ros_agent
 sudo systemctl enable --now gps_localize
-journalctl -u gps_localize -f
 ```
+
+Checking them:
+
+```bash
+systemctl status micro_ros_agent      # is the board's agent up?
+systemctl status gps_localize         # is the rest of the stack up?
+journalctl -u micro_ros_agent -f      # watch the agent, board sessions appear here
+journalctl -u gps_localize -f         # watch the nodes
+```
+
+**Why the agent is its own unit.** It used to be started by
+`bringup.launch.py`, which meant it shared that launch's fate: stopping the
+stack to work on it, or a node failing to start, also stopped the thing the
+board is trying to reach. The board then retried against a host that looked
+completely healthy to whoever was standing at it. Now `gps_localize.service`
+runs the launch with `start_agent:=false` and the agent has its own restart
+policy, so restarting the stack does not drop the board's link.
+
+Exactly one agent may bind the port. If you start the launch by hand while the
+service is running, pass `start_agent:=false` or the second agent exits with
+`Address already in use` — and which of the two lost the race is not visible
+from the board's side.
+
+The agent listens on **UDP 8888**, and that number is fixed: the firmware is
+built to connect to it, and on a VirtualBox host the port-forward rule names it
+too. Changing it means changing all three together.
 
 ## Troubleshooting
 
 | Symptom | Check |
 |---|---|
-| `ros2 node list` shows no firmware node | agent running? same `ROS_DOMAIN_ID`? UDP 8888 open? serial monitor shows which address the ESP32 resolved |
+| board is on Wi-Fi but never links | it may be aiming at the wrong address. Plug in USB, open the serial console at 115200 and type `agent` — it prints where it is looking and why. `agent <ip-of-this-pc>` points it somewhere else and takes effect at once; `agent auto` returns to discovery. Both are stored on the board, so this survives a reboot and needs no reflash |
+| `ros2 node list` shows no firmware node | `systemctl status micro_ros_agent` first - it is a separate unit and can be down while the rest of the stack is up. Then: same `ROS_DOMAIN_ID`? UDP 8888 open? serial monitor shows which address the ESP32 resolved |
 | ESP32 prints `name lookup failed` | `avahi-daemon` not installed/running on the PC, or the Wi-Fi AP blocks multicast — use the `AGENT_IP` fallback or a DHCP reservation |
 | Web page loads but every value is `—` | `ros2 topic hz /gps_localize/telemetry`; if empty the ESP32 is not connected |
 | Red LED blinks fast all the time | heartbeat or command timeout — is `safety_watchdog` running, is the browser open? |

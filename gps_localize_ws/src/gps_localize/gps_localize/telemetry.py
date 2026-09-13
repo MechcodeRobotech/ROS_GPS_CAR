@@ -23,10 +23,15 @@ FIELDS = (
     'wheel_rpm_right',    # 7
     'wheel_mps_left',     # 8
     'wheel_mps_right',    # 9
+    'roll_rate_dps',
+    'pitch_rate_dps',
     'yaw_rate_dps',       # 10 counter-clockwise positive
-    'pwm_left',           # 11
-    'pwm_right',          # 12
-    'battery_v',          # 13 pack voltage, read from the motor rail (VCC EMER).
+    'imu_roll_deg',       # 11
+    'imu_pitch_deg',      # 12
+    'imu_yaw_deg',        # 13
+    'pwm_left',           # 14
+    'pwm_right',          # 15
+    'battery_v',          # 16 pack voltage, read from the motor rail (VCC EMER).
                           #    NOT the processor sensor: that one measures the
                           #    ESP32 +5 V rail. See firmware/config/power.h.
     'battery_a',          # 14 whole-module draw, measured on the battery side
@@ -68,6 +73,43 @@ FIELDS = (
     'reset_reason',       # 45 esp_reset_reason(): 9 = brownout, 4 = panic
     'uptime_s',           # 46 seconds since boot
     'esp32_temp_c',       # 47 die temperature, NaN if the chip has no usable sensor
+    'mag_calib_progress',  # 48 how far round the circle the compass sweep got,
+                           #    0..1, as the fraction of 16 sectors visited.
+                           #    Sample count is not progress: standing still
+                           #    piles up samples and calibrates nothing.
+    'imu_accuracy',        # 49 BNO085's own confidence in its magnetometer,
+                           #    0 unreliable .. 3 high. The heading chain will
+                           #    not use the sensor below 2.
+    'imu_calib_state',     # 50 0 idle, 1 learning, 2 saved, 3 refused
+    'imu_calib_result',    # 51 what the sensor said: 0 SH2_OK, otherwise a
+                           #    negative sh2_err.h code (-100 = IMU never began)
+    'mag_turned_deg',      # 52 degrees actually turned during the compass sweep,
+                           #    from the IMU's fused heading. Signed, so rocking
+                           #    cancels. The independent check on a measurement
+                           #    that would otherwise judge itself.
+    'imu_acc_x',           # 53 linear acceleration, m/s^2, GRAVITY REMOVED - a
+    'imu_acc_y',           # 54 robot standing still reads ~0 on all three, not
+    'imu_acc_z',           # 55 9.81 on one. This is what the speed estimator eats.
+    'imu_resets',          # 56 times the BNO085 has reset itself since boot.
+                           #    Each one is a gap in the stream, and a gap over
+                           #    IMU_STALE_MS reads as the IMU going missing.
+    'imu_hz_rv',           # 57 delivered rate of each BNO085 report, Hz. Asked
+    'imu_hz_game',         # 58 for: 10, 100, 100, 50. Four reports share one
+    'imu_hz_gyro',         # 59 I2C bus and the slowest starves first, so a low
+    'imu_hz_accel',        # 60 rv beside healthy fast rates is a full bus, not
+                           #    a broken magnetometer. They looked identical on
+                           #    the dashboard, and one was mistaken for the other.
+    'heading_innov_deg',   # 61 how far the absolute heading reference sits from
+                           #    the IMU's own fused yaw, signed degrees. Near
+                           #    zero = two independent sources agree, which is
+                           #    worth more than either alone. Large = one of
+                           #    them is disturbed.
+    'heading_gated',       # 62 1 while a reference is being refused for
+                           #    disagreeing. Not a fault - it is the cross-check
+                           #    working, and it clears by itself.
+    'wifi_rssi_dbm',       # 63 signal strength at the ROBOT, dBm, negative. 0 =
+                           #    not associated. The number that separates "the
+                           #    firmware is stuck" from "it drove out of range".
 )
 
 # Derived, never hand-written. This was a literal 44 while FIELDS had grown to
@@ -83,11 +125,72 @@ MOTOR_FAULTS = (
     (1 << 3, 'right_open_circuit'),
 )
 
+# What to actually DO about each one. "open circuit" reads like a broken wire,
+# and on this robot it was not: the right channel drew 0.001 A against the
+# left's 0.6 A for 24 consecutive moves, then worked perfectly after the robot
+# was fully unpowered for ten seconds. A wire does not repair itself. A motor
+# driver latching into thermal or overcurrent protection behaves exactly like
+# that - it stays off until VM is removed, whatever the logic inputs say.
+MOTOR_FAULT_ADVICE = {
+    'left_open_circuit':
+        'no current at all on the left rail while it is being driven. If a full '
+        'power-down (10 s, battery AND USB) brings it back, the driver latched '
+        'into protection rather than a wire breaking',
+    'right_open_circuit':
+        'no current at all on the right rail while it is being driven. If a full '
+        'power-down (10 s, battery AND USB) brings it back, the driver latched '
+        'into protection rather than a wire breaking',
+    'left_stalled':
+        'current above motor.stall_a with the wheel not turning. Often the '
+        'threshold rather than the motor - check it on the Calibration tab',
+    'right_stalled':
+        'current above motor.stall_a with the wheel not turning. Often the '
+        'threshold rather than the motor - check it on the Calibration tab',
+}
+
 STATE_NAMES = {0: 'IDLE', 1: 'AUTO', 2: 'MANUAL', 3: 'ESTOP', 4: 'COMM_LOSS'}
 HEADING_REF_NAMES = {0: 'relative (no absolute reference)', 1: 'compass (QMC5883L)',
                      2: 'GPS course', 3: 'IMU magnetometer'}
 MAG_STATUS_NAMES = {0: 'none', 1: 'ok', 2: 'disturbed'}
 MAG_CALIB_NAMES = {0: 'idle', 1: 'turning', 2: 'saved', 3: 'failed'}
+IMU_CALIB_NAMES = {0: 'idle', 1: 'learning', 2: 'saved', 3: 'refused'}
+# What the BNO085's accuracy number means to a person deciding whether to keep
+# waving the robot about. 2 is the line the heading chain draws.
+IMU_ACCURACY_NAMES = {0: 'unreliable', 1: 'low', 2: 'medium (usable)',
+                      3: 'high'}
+
+# sh2_err.h, so a refusal can say what actually happened rather than only that
+# it happened. Only the codes these three commands can produce are named.
+IMU_CALIB_RESULTS = {
+    0: 'ok',
+    -1: 'general sensor error',
+    -2: 'bad parameter',
+    -3: 'another command is still running',
+    -4: 'I2C error talking to the sensor',
+    -5: 'the sensor rejected the command',
+    -6: 'timed out waiting for the sensor',
+    # Our own codes from imu_bno085.h, for the failures sh2 never sees. Three
+    # different actions, which is why they are three different codes.
+    # Proved on hardware: this state survives every software reset - a USB
+    # flash, an over-the-air update, ESP.restart() - and clears the moment the
+    # board is fully unpowered for ten seconds. Retrying, an SHTP soft reset, a
+    # longer I2C timeout, draining the backlog and a burst of handshakes were
+    # all tried and none of them help.
+    -100: 'the IMU never started - it clears only on a FULL power-down: '
+          'unplug BOTH the USB cable and the battery for 10 seconds',
+    -101: 'nothing answers at the IMU address - check the I2C wiring',
+    -102: 'the IMU answers but is not running - power-cycle the robot '
+          '(its reset line is not wired, so a reboot does not reset it)',
+    -103: 'not sent: the robot is being driven. Stop it and try again',
+    # The handshake worked and then every report was refused. Measured on the
+    # robot at firmware 1.39: rv, game, gyro and accel all at 0.0 Hz against 10,
+    # 100, 100 and 50 asked for, with a clean open and zero resets. Nothing used
+    # to look at what enableReport() returned, so this failure reported 'ok' for
+    # its last operation and 'missing' for its data - two true statements that
+    # together named nothing at all.
+    -104: 'the IMU opened but refused to turn any report on - a FULL power-down '
+          'clears it: unplug BOTH the USB cable and the battery for 10 seconds',
+}
 SPEED_SOURCE_NAMES = {0: 'none', 1: 'IMU + GPS', 2: 'GPS only',
                       3: 'IMU + motor model', 4: 'motor model only'}
 
@@ -110,6 +213,13 @@ STOP_FLAGS = (
     (1 << 5, 'agent_lost'),
     (1 << 6, 'battery_low'),
     (1 << 7, 'startup_lockout'),
+    # Bit 8 existed in the firmware and was missing here, so a soft battery stop
+    # arrived as an unnamed bit and showed as no reason at all.
+    (1 << 8, 'battery_soft'),
+    # We opened the contactor and the motor rails are still live. The one fault
+    # where pressing emergency does NOT remove power, and only the INAs can see
+    # it - every other check would report a safely stopped robot.
+    (1 << 9, 'contactor_stuck'),
 )
 
 
@@ -133,11 +243,18 @@ def unpack(data):
     out['heading_ref_name'] = HEADING_REF_NAMES.get(int(out['heading_ref']), 'unknown')
     out['mag_status_name'] = MAG_STATUS_NAMES.get(int(out['mag_status']), 'unknown')
     out['mag_calib_name'] = MAG_CALIB_NAMES.get(int(out['mag_calib_state']), 'unknown')
+    out['imu_calib_name'] = IMU_CALIB_NAMES.get(int(out['imu_calib_state']), 'unknown')
+    out['imu_accuracy_name'] = IMU_ACCURACY_NAMES.get(int(out['imu_accuracy']), 'unknown')
+    out['imu_calib_result_name'] = IMU_CALIB_RESULTS.get(
+        int(out['imu_calib_result']), 'sh2 error %d' % int(out['imu_calib_result']))
     out['speed_source_name'] = SPEED_SOURCE_NAMES.get(int(out['speed_source']), 'unknown')
     out['missing_sensors'] = [name for bit, name in SENSOR_HEALTH
                               if int(out['sensor_health']) & bit]
     out['motor_fault_names'] = [name for bit, name in MOTOR_FAULTS
                                 if int(out['motor_faults']) & bit]
+    out['motor_fault_advice'] = [MOTOR_FAULT_ADVICE[n]
+                                 for n in out['motor_fault_names']
+                                 if n in MOTOR_FAULT_ADVICE]
     return out
 
 
@@ -151,13 +268,26 @@ CONFIG_HEADING_PID = 0.0
 CONFIG_SPEED_PID = 1.0
 CONFIG_ESTIMATOR = 2.0
 CONFIG_RESET_ODOM = 3.0
-CONFIG_MAG_CALIB = 4.0      # [4, 1] start turning, [4, 0] finish and save to flash
+CONFIG_MAG_CALIB = 4.0      # [4, 1] start turning, [4, 0] finish and save to
+                            # flash, [4, 2] clear - forget it and go back to raw.
+                            # Clear is reachable from the web, not only over USB:
+                            # a bad calibration kills the compass outright, and
+                            # needing a cable to undo it strands the robot.
 CONFIG_MOTOR_RAMP = 5.0     # [5, accel_ramp_s, decel_ramp_s]
 CONFIG_MOTOR_MODEL = 6.0    # [6, ke, resistance, stall_a, dA_vf, dA_r, dB_vf, dB_r]
 CONFIG_SET_HEADING = 7.0    # [7, heading_deg] - "set start pose" from the map
+# [10] - tell the board to FETCH new firmware from this host over HTTP.
+#
+# The opposite direction from ArduinoOTA, and deliberately so: a push needs the
+# board to be directly addressable, which it is not when it sits behind a
+# Windows hotspot's NAT. An outbound fetch traverses that happily - it is the
+# same path the micro-ROS link already uses.
+CONFIG_PULL_UPDATE = 10.0
 CONFIG_PARAM_SET = 8.0      # [8, index, value] - one parameter, addressed by
                             # index because this topic is a float array and
                             # cannot carry a name. The index comes from
                             # config/params.json, generated from the firmware
                             # table and checked by qc.py.
 CONFIG_PARAM_RESET = 9.0    # [9] every parameter back to its default
+CONFIG_IMU_CALIB = 11.0     # [11, 1] start learning, [11, 0] save into the
+                            # BNO085's own flash, [11, 2] clear and restart it

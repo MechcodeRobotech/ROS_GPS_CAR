@@ -1,0 +1,3 @@
+zero-speed during spin: pwm=420,-420 spinning=1
+turn with 10-second-old command: motion_requested=0 allowMotion=1 cmd_timeout_flag=0
+reverse positive heading error: left=-1023 right=-653 (clockwise needs left>right)

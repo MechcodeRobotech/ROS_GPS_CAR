@@ -30,6 +30,23 @@
 #define STOP_STARTUP            (1u << 7) // boot lockout still active
 #define STOP_BATTERY_SOFT       (1u << 8) // pack below BATT_SOFT_STOP_V - stop driving,
                                           // not latched, clears when the voltage recovers
+#define STOP_CONTACTOR_STUCK    (1u << 9) // we opened the contactor and the motor rails
+                                          // are STILL live - the only way to catch a
+                                          // welded contact, and the one fault where
+                                          // pressing emergency does not remove power
+
+//=================== Contactor cross-check ===================//
+// The emergency input tells us what the SWITCH says. The motor-rail INAs tell
+// us what the RAILS are actually doing. Believing only the first means a welded
+// contactor reads as a safe robot: the button is pressed, the firmware has
+// dropped IO14, every flag says stopped - and the motors are still connected to
+// the pack. Only the INA can see that, so it is worth checking.
+//
+// Generous, because it must never cry wolf: the contactor takes time to open,
+// the rail capacitance takes longer to bleed down, and the INAs are read at
+// 5 Hz. A real weld holds the rail up indefinitely; a normal opening is well
+// under a second.
+#define CONTACTOR_SETTLE_MS     1500      // grace after commanding open, before judging
 
 //======================= LED patterns ========================//
 // Red LED behaviour (green LED is hardwired to 5 V, firmware never touches it)

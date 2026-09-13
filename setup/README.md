@@ -49,7 +49,7 @@ chmod +x setup_and_run.sh          # ครั้งแรกครั้งเ�
 * **กด Enter เฉย ๆ** → เปิดโปรแกรมดูอย่างเดียวในเครื่อง (ควบคุมหุ่นไม่ได้)
 
 ถ้ายังไม่มีไฟล์ `.exe` และเครื่องมี Python อยู่ จะถามว่าจะสร้างให้ไหม
-Windows รัน ROS 2 Humble ไม่ได้ ตัวหุ่นต้องรันบนเครื่อง Ubuntu เสมอ
+Windows สามารถรันเซิร์ฟเวอร์หุ่นจริงผ่าน Docker ได้: Wi-Fi ใช้ Docker Desktop; USB ใช้ WSL2 + Docker Engine ภายใน Ubuntu ดู [คู่มือ Docker](../docs/docker.md)
 
 ## ลำดับการใช้งานจริงหน้างาน
 
@@ -68,3 +68,11 @@ Windows รัน ROS 2 Humble ไม่ได้ ตัวหุ่นต้อ
 | `port 8080 is already in use` | มีโปรแกรมเปิดอยู่แล้ว: `sudo systemctl stop gps_localize` หรือปิดหน้าต่างเดิม |
 | มือถือเปิดเว็บไม่ได้ | ต้องอยู่ Wi-Fi เดียวกัน และไฟร์วอลล์ต้องเปิด 8080/tcp (สคริปต์ถามให้ตอนติดตั้ง) |
 | หน้าเว็บขึ้นแต่ค่าว่างหมด | บอร์ด ESP32 ยังไม่ต่อ ดู `ros2 topic hz /gps_localize/telemetry` และ [../docs/install.md](../docs/install.md) |
+
+## Docker and Windows USB
+
+For the complete server on Windows, use [docs/docker.md](../docs/docker.md).
+`setup_and_run.bat` is a browser/viewer launcher; it does not install the Docker
+server or attach USB. `setup_windows.ps1` configures the Docker Desktop Wi-Fi
+firewall rules. WSL USB requires usbipd attachment and a Docker daemon in the
+same Ubuntu distribution, as described in the guide.

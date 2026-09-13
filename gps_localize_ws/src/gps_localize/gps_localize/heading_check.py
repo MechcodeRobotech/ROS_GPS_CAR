@@ -16,6 +16,7 @@ import math
 import sys
 
 import rclpy
+from gps_localize.qos import stream_qos
 from rclpy.node import Node
 from gps_localize_msgs.msg import Telemetry
 
@@ -34,7 +35,7 @@ class HeadingCheck(Node):
         self.refs = {}
         self.speeds = []
         self.start = self.now()
-        self.create_subscription(Telemetry, NS + '/telemetry', self.on_telemetry, 20)
+        self.create_subscription(Telemetry, NS + '/telemetry', self.on_telemetry, stream_qos(20))
         self.create_timer(0.5, self.tick)
         self.get_logger().info('collecting for %.0f s - keep the robot still' % seconds)
 

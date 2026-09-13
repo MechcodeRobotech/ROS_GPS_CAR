@@ -95,7 +95,8 @@ public:
   float esp32RailVoltage() const { return esp32_rail_v_; }
   float moduleCurrent()    const { return module_a_; }
   bool  railValid()        const { return rail_valid_; }
-  /** The +5 V buck is out of its sanity window. Worth showing on the web UI;
+  /** The ESP32's own supply is out of its sanity window - 3V3 since the board
+   *  was moved off the 5 V rail onto its own buck. Worth showing on the web UI;
    *  never a reason to stop the robot on its own. */
   bool  railOutOfRange() const {
     return rail_valid_ &&

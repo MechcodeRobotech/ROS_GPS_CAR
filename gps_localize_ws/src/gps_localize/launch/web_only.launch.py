@@ -7,7 +7,7 @@ without any hardware connected.
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, TimerAction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -16,7 +16,18 @@ def generate_launch_description():
     runtime_config_dir = LaunchConfiguration('runtime_config_dir')
     params = [{'runtime_config_dir': runtime_config_dir}]
 
+    open_browser = TimerAction(
+        period=2.0,
+        actions=[
+            ExecuteProcess(
+                cmd=['python3', '-c', 'import webbrowser; webbrowser.open("http://localhost:8080")'],
+                output='screen'
+            )
+        ]
+    )
+
     return LaunchDescription([
+        open_browser,
         DeclareLaunchArgument('runtime_config_dir', default_value='~/.gps_localize'),
         Node(package='gps_localize', executable='web_server', name='web_server',
              parameters=params, output='screen'),

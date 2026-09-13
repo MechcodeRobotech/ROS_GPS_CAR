@@ -3,7 +3,7 @@
 หุ่นยนต์วิ่งกลางแจ้งตาม GPS waypoint · ESP32 (micro-ROS) + ROS 2 Humble + เว็บควบคุมในเครื่อง
 
 Outdoor GPS-waypoint robot. The ESP32 closes the heading and speed loops
-locally at 100 Hz; the Ubuntu machine plans the route, watches the safety
+locally at 100 Hz; the server (native Ubuntu or a Linux Docker container) plans the route, watches the safety
 chain and serves a local web UI. Wired to
 schematic **draft_5** (`SCH_Schematic1_5-draft_5_2026-08-04.pdf`).
 
@@ -50,7 +50,7 @@ firmware/                 ESP32 firmware (PlatformIO, micro-ROS)
                           gps, power, control, safety, network (index: config.h)
   lib/                    motor, INA226, GPS NMEA, IMU, compass, estimator, PIDF, safety
   src/main.cpp            100 Hz control loop + micro-ROS entities
-  test/                   175 host tests (pio test -e native)
+  test/                   261 host tests (pio test -e native)
 gps_localize_ws/src/gps_localize/
   gps_localize/           ROS 2 nodes (waypoint_nav, gps_odom, safety_watchdog, web_server)
   config/                 one YAML per topic: robot, nav, pid, motor, estimator,
@@ -58,8 +58,8 @@ gps_localize_ws/src/gps_localize/
   web/                    the web UI (3 files, no frameworks, works offline)
   launch/                 bringup.launch.py, web_only.launch.py
 setup/                    one-click check + install + run (Ubuntu) and a Windows launcher
-webapp/                   desktop viewer: the same UI without ROS (VIEW ONLY)
-  exe/GPS_Localize_Viewer.exe   ready to run on Windows, no Python needed
+webapp/                   offline demonstration viewer (no real robot connection)
+  exe/GPS_Localize_Viewer.exe   optional local build, not included in Git
   run_windows.bat / run_ubuntu.sh
 tools/qc.py               cross-file QC (telemetry layout, endpoints, topics, CSS, exe freshness)
 docs/                     hardware, architecture, topics, install, web guide, tuning, safety
@@ -70,10 +70,18 @@ docs/                     hardware, architecture, topics, install, web guide, tu
 | Machine | Runs | Can drive the robot? |
 |---|---|---|
 | Robot PC (Ubuntu 22.04 + Humble) | `ros2 launch gps_localize bringup.launch.py` → serves port 8080 to the whole Wi-Fi | yes — it is the server |
+| Windows Docker server | Docker Desktop Wi-Fi, or WSL2 Docker Engine USB; see [Docker guide](docs/docker.md) | yes, subject to hardware acceptance |
 | Phone / tablet / laptop on the same Wi-Fi | just a browser at `http://<robot-ip>:8080` | yes, full control, no install |
 | Windows or Ubuntu PC with no robot | `webapp/run_windows.bat` / `run_ubuntu.sh` | **no real robot** — every button drives a simulated one, clearly labelled; good for training |
 
-## Quick start — one click
+## Installation choices
+
+For Docker on Linux or Windows, including **Windows USB into Docker**, follow
+[docs/docker.md](docs/docker.md). It lists required software and exact build,
+flash, run, stop, update, and troubleshooting commands.
+[All documentation](docs/README.md) · [Verification evidence](docs/docker_verification.md).
+
+## Quick start — native Ubuntu
 
 ```bash
 cd setup && chmod +x setup_and_run.sh && ./setup_and_run.sh
@@ -90,11 +98,15 @@ view-only app). Details: [setup/README.md](setup/README.md).
 Manual route, if you prefer to do it yourself:
 
 ```bash
-cd ~/gps_localize_ws && colcon build --symlink-install
+cd ~/GPS_Localize/gps_localize_ws
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install
 source install/setup.bash
 ros2 launch gps_localize bringup.launch.py     # web UI on port 8080
 
-cd firmware && pio run -e wifi -t upload       # edit config/network.h first
+cd ~/GPS_Localize/firmware
+# Create config/network_secrets.h from its example first; see docs/install.md.
+pio run -e wifi -t upload
 ```
 
 Step-by-step install, autostart and troubleshooting: [docs/install.md](docs/install.md).
@@ -136,7 +148,7 @@ turns onto the bearing.
 
 ```bash
 python3 tools/qc.py                    # cross-file contract check, no build needed
-cd firmware && pio test -e native      # 175 host tests: PID, fusion, ramp, motor model, safety, NMEA
+cd firmware && pio test -e native      # 261 host tests: PID, fusion, ramp, motor model, safety, NMEA
 ```
 
 ## Web UI

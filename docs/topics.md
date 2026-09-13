@@ -7,16 +7,16 @@ All ROS topics live under `/gps_localize`. `ROS_DOMAIN_ID = 10` (firmware
 
 | Topic | Type | Rate | Notes |
 |---|---|---|---|
-| `/gps_localize/odom` | `nav_msgs/Odometry` | 20 Hz | IMU+GPS dead reckoning, ENU frame `odom` → `base_link` |
-| `/gps_localize/imu/data` | `sensor_msgs/Imu` | 50 Hz | BNO085 quaternion, gyro, gravity-free accel |
+| `/gps_localize/odom` | `nav_msgs/Odometry` | 10 Hz | IMU+GPS dead reckoning, ENU frame `odom` → `base_link`. Silent until T186: at 724 bytes it is the one firmware message larger than the old 512-byte transport MTU, and a best-effort stream cannot fragment |
+| `/gps_localize/imu/data` | `sensor_msgs/Imu` | 20 Hz | BNO085 quaternion, gyro, gravity-free accel |
 | `/gps_localize/gps/fix` | `sensor_msgs/NavSatFix` | ≤5 Hz | published when a new solution arrives |
-| `/gps_localize/telemetry` | `gps_localize_msgs/Telemetry` | 10 Hz | 44 named fields, listed below |
+| `/gps_localize/telemetry` | `gps_localize_msgs/Telemetry` | 10 Hz | 64 named fields, listed below |
 
 ## Split out by `telemetry_split` — subscribe to these, not to `/telemetry`
 
 `/telemetry` is the board's wire format: one compact frame, all `float32`, no
 timestamp. `telemetry_split` turns each frame into six properly typed topics, so
-nothing has to know the layout of a 44-field message to read a battery voltage.
+nothing has to know the layout of a 64-field message to read a battery voltage.
 
 | Topic | Type | Carries |
 |---|---|---|
@@ -29,17 +29,44 @@ nothing has to know the layout of a 44-field message to read a battery voltage.
 
 ## How to reach the web UI, from the command line
 
-    ros2 topic echo --once --field qr_ascii /gps_localize/web/connect
+    ros2 topic echo --once --field qr_ansi /gps_localize/web/connect
 
 `/gps_localize/web/connect` (`gps_localize_msgs/WebConnect`) is latched, so the
 answer is there the moment you ask, and republished when the machine changes
 address. `--field url` gives just the address.
 
-**Use `--field`.** Plain `ros2 topic echo` renders a multi-line string with a
-blank line between every row, which doubles the QR's row spacing and stops it
-scanning - while still looking exactly like a QR, which is the dangerous part.
-Checked by scanning both: the `--field` form reads back correctly, the plain
-form reads back as nothing.
+Or, without ROS on the path, the same thing from the project directory:
+
+    python3 tools/robot_qr.py
+
+Two details in that command are load-bearing, and both produce a code that
+still looks exactly like a QR when they are wrong, which is the dangerous part.
+
+**Use `--field`.** Plain `ros2 topic echo` prints the QR as one escaped line,
+truncated after the first hundred or so characters — a `"  █▀▀▀▀▀█ ▄ ...`
+fragment rather than a code. Untruncated it is no better: it puts a blank line
+between every row, which doubles the QR's row spacing.
+
+**Use `qr_ansi`, not `qr_ascii`.** The two carry the same address and differ
+only in how they survive the terminal:
+
+| Field | Drawn as | Scans on |
+|---|---|---|
+| `qr_ansi` | block cells with the colours stated in the output | any terminal theme |
+| `qr_ascii` | half-block characters in the terminal's own text colour | a **light** background only |
+
+On a dark theme `qr_ascii` comes out inverted, and an inverted QR is refused
+outright by zbar and by many phone cameras. `qr_ascii` is still published,
+because colour cannot go everywhere — use it for a log, a file, or anything to
+be pasted somewhere else.
+
+Checked by scanning, not by looking: `test_qr.py` rasterises both forms the way
+a terminal grid paints them, at four cell shapes and on both themes, and reads
+them back with `zbarimg`.
+
+If the code comes out wrapped, the window is too narrow — the code needs about
+70 columns. `tools/robot_qr.py` measures the window and says so rather than
+printing a QR that cannot work.
 
 These carry real types and named constants, so `msg.fix_quality ==
 GpsStatus.FIX_RTK_FIXED` replaces remembering that 4 means RTK. They are also
@@ -82,10 +109,14 @@ stops for more than 500 ms while motion was requested stops the robot.
 | 1 | `kp, ki, kd, kf, tol, i_min, i_max` → speed PID |
 | 2 | `heading_source, align_min_mps, align_tau_s, gps_tau_s, model_tau_s, track_m, mag_enable, mag_tau_s, mag_still_mps, declination_deg, mount_offset_deg` |
 | 3 | *(nothing)* → reset odometry and the estimator |
-| 4 | `1` start compass calibration · `0` finish and save it to the ESP32 flash |
+| 4 | `1` start compass calibration · `0` finish and save it to the ESP32 flash · `2` clear it and go back to raw readings |
 | 5 | `accel_ramp_s, decel_ramp_s` → motor acceleration ramp |
 | 6 | `ke_v_per_rpm, resistance_ohm, stall_current_a, diodeA_vf, diodeA_r, diodeB_vf, diodeB_r` → electrical motor model |
 | 7 | `heading_deg` → pin the heading by hand ("set start pose" on the map) and restart odometry |
+| 8 | `index, value` → set one parameter, addressed by index; bounds and the moving guard are enforced on the board |
+| 9 | *(nothing)* → every parameter back to its compiled-in default |
+| 10 | *(nothing)* → pull a firmware image from the host over Wi-Fi and flash it |
+| 11 | `1` start BNO085 calibration · `0` save it into the sensor's own flash · `2` clear it and restart the sensor. The firmware also saves it **by itself** the first time accuracy reaches 3/3, so a brown-out reset no longer loses the calibration |
 
 ## Telemetry array layout
 
@@ -125,6 +156,25 @@ Mirror of `firmware/src/main.cpp::publishTelemetry` and
 | 35 / 36 | `motor_rpm_left` / `motor_rpm_right` | wheel rpm from the INA226 volts+amps (back-EMF) |
 | 37 | `motor_faults` | bit0 left stalled · bit1 right stalled · bit2 left open circuit · bit3 right open circuit |
 | 38 / 39 | `fan_v` / `fan_a` | fan rail INA226 (schematic draft_5) |
+| 40 | `esp32_rail_v` | ESP32 rail volts — health of the processor buck |
+| 41 | `pack_valid` | 1 pack voltage is measurable · 0 the motor rail is unpowered, so the pack is *unknown*, not low |
+| 42 | `pos_sigma_m` | 1-sigma position uncertainty from the EKF, m |
+| 43 | `pos_anchored` | 1 the EKF has had at least one fix · 0 still open-loop dead reckoning |
+| 44 | `firmware_version` | major×100 + minor; 0 from a board too old to send it |
+| 45 | `reset_reason` | `esp_reset_reason()`: 9 brownout, 4 panic |
+| 46 | `uptime_s` | seconds since boot |
+| 47 | `esp32_temp_c` | die temperature, NaN when the chip has no usable sensor |
+| 48 | `mag_calib_progress` | how far round the circle the compass sweep has got, 0..1; zero unless a sweep is running |
+| 49 | `imu_accuracy` | the BNO085's own confidence in its magnetometer, 0 unreliable .. 3 high; below 2 the heading chain refuses it |
+| 50 | `imu_calib_state` | 0 idle · 1 learning · 2 saved to the sensor's flash · 3 refused |
+| 51 | `imu_calib_result` | what the sensor said: 0 SH2_OK, else a negative `sh2_err.h` code (−100 never started, −101 nothing at that address, −102 answers but is not running, −103 refused because the robot is moving, −104 opened but refused to turn any report on). Reports the DRIVER's own diagnosis whenever the driver never started — it used to report the last calibration *command*, which defaults to 0 and therefore read "ok" on a board whose IMU had never opened |
+| 53 / 54 / 55 | `imu_acc_x` / `_y` / `_z` | linear acceleration from the BNO085, m/s². **Gravity already removed** — standing still reads ~0 on all three, not 9.81 on one. This is what the speed estimator consumes |
+| 52 | `mag_turned_deg` | degrees actually turned during the compass sweep, from the **gyro**. Signed, so rocking back and forth cancels. Independent of the magnetometer being calibrated, which is the point |
+| 56 | `imu_resets` | times the BNO085 has reset **itself** since boot. A rising count with a healthy accuracy is a power or bus problem, not a calibration one, and the two look identical on a dashboard |
+| 61 | `heading_innov_deg` | how far the absolute heading reference sits from the IMU's own fused yaw, signed degrees. The compass and the BNO085 magnetometer both claim to know north and both are fooled by the same things; the gyroscope is fooled by none of them. Near zero means two independent sources agree, which is worth more than either alone |
+| 62 | `heading_gated` | 1 while a reference is being **refused** for disagreeing with the IMU. Not a fault — the cross-check working. It clears when the disturbance passes, and a disagreement that outlasts `agree_recover_s` is accepted anyway, because a gate that can never give up would lock out a correct sensor for ever if the gyro really had drifted |
+| 63 | `wifi_rssi_dbm` | Wi-Fi signal **at the robot**, dBm, negative. `0` means the board is not associated at all — the firmware sends a literal zero rather than the plausible-looking negative number the ESP32 API returns while disconnected. Better than −60 is strong, −70 works, past −80 the link starts dropping frames and the micro-ROS session is rebuilt |
+| 57 / 58 / 59 / 60 | `imu_hz_rv` / `_game` / `_gyro` / `_accel` | the DELIVERED rate of each BNO085 report, Hz, against the 10 / 100 / 100 / 50 asked for. Four reports share one I²C bus and the slowest starves first, so a low `rv` beside healthy fast rates is a full bus rather than a bad magnetometer — they are indistinguishable without this, and one was mistaken for the other for hours |
 
 ### `sensor_health` bits
 
@@ -133,7 +183,7 @@ Mirror of `firmware/src/main.cpp::publishTelemetry` and
 | 0 | `imu_missing` | no fresh BNO085 data — heading falls back to GPS course / compass |
 | 1 | `gps_missing` | no fix — speed falls back to the motor model, navigation blocks |
 | 2 | `compass_missing` | QMC5883L absent or disturbed — standing-still heading comes from the IMU magnetometer |
-| 3 | `imu_magnetometer_missing` | BNO085 rotation vector unreliable (accuracy < medium) |
+| 3 | `imu_magnetometer_missing` | BNO085 rotation vector unusable — accuracy below medium, **or** the report stale for more than ten of its own periods (it runs at 10 Hz, so one second). Those are different faults: a sensor reading 3/3 whose report is not arriving is a bus or driver problem, not a magnetometer that needs waving about. `imu_hz_rv` tells them apart |
 | 4 | `heading_relative_only` | no absolute reference at all — heading is gyro-only, drive with care |
 
 ### `stop_flags` bits
@@ -146,9 +196,10 @@ Mirror of `firmware/src/main.cpp::publishTelemetry` and
 | 3 | `heartbeat_lost` | no ROS heartbeat (network) |
 | 4 | `command_timeout` | command stream stalled |
 | 5 | `agent_lost` | micro-ROS agent unreachable |
-| 6 | `battery_low` | pack under 10.7 V for 3 s (latched) |
-| 8 | `battery_soft` | pack under 11.0 V - stop driving, not latched |
+| 6 | `battery_low` | pack under 3.733 V/cell for 3 s — 11.199 V on 3S — latched |
 | 7 | `startup_lockout` | first 1.5 s after boot |
+| 8 | `battery_soft` | pack under 11.4 V - stop driving, not latched |
+| 9 | `contactor_stuck` | commanded open, motor rails still live - a welded contact. The emergency stop cannot remove power in this state |
 
 ## ROS-side topics
 
@@ -200,7 +251,7 @@ Config groups (one YAML file each): `robot`, `nav`, `pid`, `motor`,
 
 ```bash
 ros2 topic echo /gps_localize/telemetry --once
-ros2 topic hz /gps_localize/imu/data                 # ~50 Hz
+ros2 topic hz /gps_localize/imu/data                 # ~20 Hz
 ros2 topic pub -1 /gps_localize/cmd_move geometry_msgs/msg/Twist \
   '{linear: {x: 0.2}, angular: {z: 90.0}}'           # 0.2 m/s heading east
 ros2 topic pub -1 /gps_localize/cmd_move geometry_msgs/msg/Twist \

@@ -1,10 +1,12 @@
 # Waypoint list. Normally you never edit this by hand - use the web UI:
 #   "เพิ่มจุดที่นี่ / Add here" records the robot's current position.
 # lat/lon are WGS-84 decimal degrees, the same numbers Google Maps shows.
+#
+# This file is the SAVED list and it survives a restart, so a list built once
+# is still there the next time the web UI is opened. The shipped point below is
+# only what a robot with no saved list starts from; the moment anything is added
+# or edited from the web, this file is rewritten and the default is gone.
 waypoints:
   - name: WP1
-    lat: 13.736717
-    lon: 100.523186
-  - name: WP2
-    lat: 13.736817
-    lon: 100.523286
+    lat: 18.7889332
+    lon: 98.9553871

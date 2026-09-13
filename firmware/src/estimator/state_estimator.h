@@ -61,6 +61,11 @@ public:
     float   mag_tau_s        = 4.0f;   // magnetometer pull-in while standing still
     float   mag_still_mps    = 0.10f;  // "standing still" threshold
     bool    mag_enable       = true;
+    // How far an absolute reference may disagree with the IMU's own fused yaw
+    // before it is treated as disturbed rather than believed. See the gate in
+    // update() for why this exists and why it has to be able to give up.
+    float   agree_tol_deg    = 25.0f;
+    float   agree_recover_s  = 8.0f;
     float   gps_tau_s        = 1.5f;
     float   model_tau_s      = 2.5f;
     float   acc_deadband     = 0.08f;
@@ -78,6 +83,12 @@ public:
     aligned_      = false;
     heading_ref_  = REF_NONE;
     x_ = y_ = 0.0f;
+    // The gate's memory goes too. Carrying a disagreement across a reset would
+    // let a stale disturbance from before the reset open the tolerance
+    // immediately afterwards, which is the one moment the gate matters most.
+    heading_innov_deg_ = 0.0f;
+    disagree_s_    = 0.0f;
+    mag_rejecting_ = false;
   }
 
   /**
@@ -86,7 +97,8 @@ public:
    * @param imu_yaw    yaw from the IMU [deg], already converted to compass sense
    * @param yaw_rate   yaw rate [rad/s], counter-clockwise positive (raw gyro Z)
    * @param acc_fwd    forward acceleration [m/s^2], gravity removed
-   * @param gps_ok     fix is valid and fresh
+   * @param gps_ok     the fix is good enough to take a ground SPEED from
+   * @param gps_fix_ok the receiver has a position at all (a looser, separate test)
    * @param gps_speed  ground speed [m/s]
    * @param gps_course course over ground [deg], only used when gps_course_ok
    * @param model_mps  open-loop speed implied by the current PWM (fallback reference)
@@ -100,15 +112,37 @@ public:
     float imu_yaw = 0.0f;          // relative yaw [deg], compass sense
     float yaw_rate = 0.0f;         // [rad/s], counter-clockwise positive
     float acc_fwd = 0.0f;          // forward acceleration [m/s^2], gravity removed
-    bool  gps_ok = false;          // fix is valid and fresh
+    // Good enough to believe the receiver's VELOCITY: strict, because a
+    // marginal fix reports plausible-looking nonsense ground speeds.
+    bool  gps_ok = false;
+    // The receiver has a POSITION at all: fresh, real, enough satellites for a
+    // 3D solution. Looser on purpose, and a different question - this is what
+    // decides whether the GPS is reported as a working sensor. Defaults to
+    // false so a caller that sets neither is told the GPS is missing rather
+    // than being told it is fine.
+    bool  gps_fix_ok = false;
     float gps_speed = 0.0f;
     float gps_course = 0.0f;       // course over ground [deg]
     bool  gps_course_ok = false;   // course is meaningful (robot actually moving)
     bool  mag_ok = false;          // QMC5883L in the GPS module, calibrated and undisturbed
     float mag_heading = 0.0f;
-    bool  imu_mag_ok = false;      // BNO085 rotation vector, accuracy >= medium
+    bool  imu_mag_ok = false;
+    // Is the BNO085's magnetometer-referenced report even being ASKED for?
+    // When it is not, its absence is a choice, not a fault, and flagging it as
+    // a missing sensor sends someone hunting a magnetometer that is fine.
+    bool  imu_mag_used = true;      // BNO085 rotation vector, accuracy >= medium
     float imu_mag_heading = 0.0f;
     float model_mps = 0.0f;        // open-loop speed implied by the PWM
+    // False when the motor rails are not MEASURED to be live. Not the same as
+    // the commanded relay state - a coil with no supply behind it, no battery,
+    // or a failed contactor all leave the rails dead while the firmware thinks
+    // it closed them. The
+    // back-EMF model is then reading a rail at ~0 V and a current at ~1 mA and
+    // turning that noise into a speed. Seen on hardware: robot latched in
+    // e-stop, wheels physically still, estimator reporting 0.127 m/s - which
+    // also blocked Wi-Fi OTA, because the updater refuses to flash a robot it
+    // believes is moving.
+    bool  motors_powered = true;
   };
 
   void update(const Inputs &in) {
@@ -128,8 +162,13 @@ public:
       v += k * (in.gps_speed - v);
       speed_source_ = in.imu_ok ? SPEED_IMU_GPS : SPEED_GPS;
     } else {
+      // With the rails dead the model is not a measurement, it is noise. Pull
+      // toward zero instead: the robot is not driving itself. It could still be
+      // rolling - pushed, or on a slope - so this is a reference, not a hard
+      // assignment, and the IMU term above still carries a real push.
+      const float ref = in.motors_powered ? in.model_mps : 0.0f;
       float k = dt / (cfg_.model_tau_s + dt);
-      v += k * (in.model_mps - v);
+      v += k * (ref - v);
       speed_source_ = in.imu_ok ? SPEED_IMU_MODEL : SPEED_MODEL;
     }
     if (v >  cfg_.max_speed_mps) v =  cfg_.max_speed_mps;
@@ -146,7 +185,8 @@ public:
     // robot would have reported 0 m/s whenever acceleration was too small to
     // clear the floor on its own, which is exactly the low-speed creep the
     // waypoint controller cares about.
-    const float reference = in.gps_ok ? in.gps_speed : in.model_mps;
+    const float reference = in.gps_ok ? in.gps_speed
+                                     : (in.motors_powered ? in.model_mps : 0.0f);
     if (fabsf(v) < SPEED_CREEP_FLOOR_MPS && fabsf(reference) < SPEED_CREEP_FLOOR_MPS) {
       v = 0.0f;
     }
@@ -159,9 +199,12 @@ public:
 
     health_ = 0;
     if (!in.imu_ok)                       health_ |= HEALTH_NO_IMU;
-    if (!in.gps_ok)                       health_ |= HEALTH_NO_GPS;
+    // The SENSOR is missing only when there is no position at all. A fix too
+    // rough to take a velocity from is still a fix, and reporting it as a dead
+    // sensor sent someone looking for a hardware fault that did not exist.
+    if (!in.gps_fix_ok)                   health_ |= HEALTH_NO_GPS;
     if (!in.mag_ok)                       health_ |= HEALTH_NO_COMPASS;
-    if (!in.imu_mag_ok)                   health_ |= HEALTH_NO_IMU_MAG;
+    if (in.imu_mag_used && !in.imu_mag_ok) health_ |= HEALTH_NO_IMU_MAG;
 
     if (cfg_.heading_source == 2) {
       // GPS course only
@@ -180,14 +223,18 @@ public:
       aligned_ = in.imu_ok;
     } else {
       // ---------------- fallback chain (modes 1, 3 and AUTO) ----------------
-      // The gyro is always the backbone: it is fast, quiet and never lies about
-      // *change*. What it cannot do is tell you where north is, so an absolute
-      // reference is eased onto it. Sources, best first:
+      // The IMU's OWN FUSED HEADING is the backbone - in.imu_yaw, the BNO085's
+      // rotation vector, not a gyro rate integrated here. The sensor already
+      // does that integration at its own rate and corrects the gyro's zero
+      // drift against gravity; redoing it in this loop would be strictly worse,
+      // because every late or dropped cycle is rotation that silently never
+      // happened. What the sensor cannot do is tell you where north is, so an
+      // absolute reference is eased onto it. Sources, best first:
       //
       //   1. GPS course over ground  - only while actually moving, immune to magnets
       //   2. QMC5883L on the GPS mast - works standing still, away from the motors
       //   3. BNO085 magnetometer      - same idea, but sits next to the motors
-      //   4. nothing                  - keep integrating the gyro, flag as relative
+      //   4. nothing                  - run on the IMU's own yaw, flag as relative
       //
       // Any of them can disappear at any moment; the next one down takes over
       // without the robot stopping.
@@ -195,19 +242,77 @@ public:
       const bool moving    = in.gps_course_ok && in.gps_ok && fabsf(speed_) > cfg_.align_min_mps;
       const bool standing  = fabsf(speed_) < cfg_.mag_still_mps;
 
+      /* Two sensors that both claim to know north, checked against a third
+       * that cannot be lied to.
+       *
+       * The compass and the BNO085's magnetometer are both absolute and both
+       * fooled by the same things - a motor drawing current, a steel bench, a
+       * reinforcing bar in the floor. The IMU's fused yaw is neither: it comes
+       * from the gyroscope, which does not care about magnets at all. It drifts,
+       * slowly, which is exactly why it needs an absolute reference - but over
+       * the seconds that a disturbance lasts it is the honest one.
+       *
+       * So each absolute source is compared with the fused heading before it is
+       * believed. Measured on this robot: the compass moved 9.5 degrees in
+       * 0.3 s while the gyroscope reported about 1 deg/s. One of those was
+       * lying, and it was not the gyroscope. Applied blind, that step went
+       * straight into the heading and the manual hold then steered to it.
+       *
+       * THE GATE HAS TO BE ABLE TO GIVE UP. A pure rejection rule locks a
+       * correct sensor out for ever: if the gyro really has drifted 40 degrees,
+       * every compass reading looks like a disturbance and nothing can ever pull
+       * it back. So a disagreement that persists is eventually accepted - after
+       * `agree_recover_s` the tolerance opens up, on the reasoning that a
+       * disturbance passes and a genuine offset does not.
+       */
+      auto gated = [&](float innov, bool source_ok) -> bool {
+        if (!source_ok) return false;
+        if (!in.imu_ok) return true;         // no referee: nothing to check against
+        // Before the first alignment there is nothing to disagree WITH. The
+        // fused heading is still an arbitrary zero, so every real compass
+        // reading looks like a wild disturbance and the gate would refuse the
+        // very sample that establishes north - the robot would never align at
+        // all. The first one always goes in; pullOffset snaps it.
+        if (!aligned_) return true;
+        const float mag = fabsf(innov);
+        if (mag <= cfg_.agree_tol_deg) { disagree_s_ = 0.0f; return true; }
+        disagree_s_ += dt;
+        return disagree_s_ >= cfg_.agree_recover_s;
+      };
+
       if (moving) {
         pullOffset(angErrDeg(in.gps_course, in.imu_yaw), cfg_.align_tau_s, dt);
         heading_ref_ = REF_GPS;
+        disagree_s_ = 0.0f;
       } else if (allow_mag && standing && in.mag_ok) {
         // first sample snaps, afterwards it eases in so a passing truck cannot
         // yank the heading around
-        pullOffset(angErrDeg(in.mag_heading, in.imu_yaw), cfg_.mag_tau_s, dt);
-        heading_ref_ = REF_MAG;
+        const float innov = angErrDeg(in.mag_heading, wrap360f(in.imu_yaw + align_offset_));
+        heading_innov_deg_ = innov;
+        if (gated(innov, true)) {
+          pullOffset(angErrDeg(in.mag_heading, in.imu_yaw), cfg_.mag_tau_s, dt);
+          heading_ref_ = REF_MAG;
+          mag_rejecting_ = false;
+        } else {
+          // Disturbed, and the IMU is still carrying the heading, so nothing
+          // has to happen except refusing to believe this reading.
+          mag_rejecting_ = true;
+          mag_rejects_++;
+          heading_ref_ = aligned_ ? heading_ref_ : REF_NONE;
+        }
       } else if (allow_mag && standing && in.imu_mag_ok && cfg_.heading_source == 4) {
         // compass gone: fall back to the IMU's own magnetometer, more slowly
         // because it is the noisier of the two
-        pullOffset(angErrDeg(in.imu_mag_heading, in.imu_yaw), cfg_.mag_tau_s * 2.0f, dt);
-        heading_ref_ = REF_IMU_MAG;
+        const float innov = angErrDeg(in.imu_mag_heading, wrap360f(in.imu_yaw + align_offset_));
+        heading_innov_deg_ = innov;
+        if (gated(innov, true)) {
+          pullOffset(angErrDeg(in.imu_mag_heading, in.imu_yaw), cfg_.mag_tau_s * 2.0f, dt);
+          heading_ref_ = REF_IMU_MAG;
+          mag_rejecting_ = false;
+        } else {
+          mag_rejecting_ = true;
+          mag_rejects_++;
+        }
       } else if (!aligned_) {
         heading_ref_ = REF_NONE;
       }
@@ -221,7 +326,17 @@ public:
         heading_deg_ = wrap360f(in.mag_heading);     // gyro and GPS dead, compass only
         heading_ref_ = REF_MAG;
       } else {
+        // Last resort only: the IMU is gone, so its fused yaw is gone with it
+        // and there is nothing left but a rate to integrate. Reached when the
+        // IMU, GPS course and compass have ALL failed at once.
+        //
+        // Saying so is part of the job. heading_ref_ kept whatever it last held
+        // here, so with every absolute source dead the estimator went on
+        // reporting REF_GPS or REF_MAG, HEALTH_NO_ABS_HEADING was never raised,
+        // and everything downstream believed the heading was still referenced
+        // to something. It is not: this is a drifting rate and nothing else.
         heading_deg_ = wrap360f(heading_deg_ + compass_rate_dps * dt);
+        heading_ref_ = REF_NONE;
       }
     }
 
@@ -233,6 +348,14 @@ public:
     x_ += speed_ * cosf(h_enu) * dt;
     y_ += speed_ * sinf(h_enu) * dt;
   }
+
+  /** How far the absolute reference in use disagrees with the fused heading.
+   *  Small means the two independent sources agree, which is the case worth
+   *  trusting more than either alone. Large means one of them is disturbed. */
+  float headingInnovDeg() const { return heading_innov_deg_; }
+  /** True while an absolute reference is being refused for disagreeing. */
+  bool  magRejecting()    const { return mag_rejecting_; }
+  uint32_t magRejects()   const { return mag_rejects_; }
 
   void setOdom(float x, float y) { x_ = x; y_ = y; }
   void resetOdom() { x_ = 0.0f; y_ = 0.0f; }
@@ -308,6 +431,13 @@ private:
   float heading_deg_ = 0.0f;
   float align_offset_ = 0.0f;
   float yaw_rate_ = 0.0f;
+  // Cross-check state. heading_innov_deg_ is how far the absolute reference in
+  // use sits from the fused heading; disagree_s_ is how long it has been out,
+  // which is what separates a passing disturbance from a real offset.
+  float heading_innov_deg_ = 0.0f;
+  float disagree_s_ = 0.0f;
+  bool  mag_rejecting_ = false;
+  uint32_t mag_rejects_ = 0;
   float x_ = 0.0f, y_ = 0.0f;
   bool  aligned_ = false;
   bool  imu_ok_ = false;

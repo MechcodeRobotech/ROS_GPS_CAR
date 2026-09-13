@@ -86,6 +86,7 @@ public:
       stalled_ = false;
       open_circuit_ = false;
       stall_since_ = 0;
+      open_since_ = 0;
       rpm_ += (0.0f - rpm_) * (dt / (cfg_.filter_tau_s + dt));
       return;
     }
@@ -105,7 +106,21 @@ public:
     valid_ = true;
 
     // --- fault detection -------------------------------------------------
-    open_circuit_ = (current < cfg_.open_current_a);
+    // Open circuit needs the same patience as stall, and for a sharper reason.
+    // Duty crosses min_duty at the START of the PWM ramp, while the current is
+    // still climbing from zero - and the INA226s are only read at 5 Hz, so the
+    // current reading can still be the pre-command zero for up to 200 ms after
+    // the duty is up. Judged instantly, that reads as "this motor is drawing
+    // nothing" on a motor that is about to draw plenty, and the dashboard
+    // flashed a false open-circuit on every start.
+    const bool looks_open = (current < cfg_.open_current_a);
+    if (looks_open) {
+      if (open_since_ == 0) open_since_ = millis();
+      open_circuit_ = (millis() - open_since_) > OPEN_CIRCUIT_HOLD_MS;
+    } else {
+      open_since_ = 0;
+      open_circuit_ = false;
+    }
 
     const bool looks_stalled = (current > cfg_.stall_current_a) && (fabsf(rpm_) < 10.0f);
     if (looks_stalled) {
@@ -132,6 +147,10 @@ private:
   bool  stalled_ = false;
   bool  open_circuit_ = false;
   uint32_t stall_since_ = 0;
+  uint32_t open_since_  = 0;
+  // Comfortably longer than the 200 ms INA226 sampling interval, so a
+  // stale current reading cannot be mistaken for a disconnected motor.
+  static const uint32_t OPEN_CIRCUIT_HOLD_MS = 400;
 };
 
 #endif // MOTOR_MODEL_H

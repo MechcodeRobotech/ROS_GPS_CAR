@@ -15,7 +15,13 @@
   'use strict';
 
   var $ = function (id) { return document.getElementById(id); };
+  // Defaults only. The robot sends the configured values in every snapshot and
+  // applyServerConfig() below adopts them - these three used to be hardcoded
+  // here while web.yaml and the Settings page pretended to control them.
   var TRAIL_MAX = 300;
+  var jogRepeatMs = 150;
+  var heartbeatMs = 250;
+  var heartbeatTimer = null;
   var LOG_MAX = 200;
 
   var state = {
@@ -24,6 +30,7 @@
     trail: [],
     waypoints: [],
     fitRequested: true,
+    basemap: 'street',
     picked: null,          // point chosen on the map {x, y, lat, lon, distance, bearing, turn}
     poseTool: { armed: false, drag: null, applied: null },   // RViz-style start pose
     connected: false,
@@ -35,6 +42,8 @@
     simulation: false,     // viewer with the demo robot: buttons drive the simulation
     viewerAnnounced: false,
     jog: { forward: 0, turn: 0, timer: null, speedMps: null, turnDps: null },
+    // Read from the board's parameters, so it follows a wheel change.
+    wheelDiameterM: null,
     cfg: {
       group: 'nav',
       data: null,
@@ -106,7 +115,10 @@
     // With the simulator running the buttons stay usable - that is the point of
     // the demo. Without it (--no-demo) nothing can respond, so they are locked.
     var controls = [$('btnEstop'), $('btnReset'), $('wpAddHere'),
-                    $('btnMagStart'), $('btnMagFinish')];
+                    $('btnMagStart'), $('btnMagFinish'), $('btnMagClear'),
+                    $('btnImuStart'), $('btnImuSave'), $('btnImuClear'), $('btnImuRetry'),
+                    $('btnMagCancel'), $('btnImuCancel'),
+                    $('btnCalibResetOdom')];
     Array.prototype.push.apply(controls, document.querySelectorAll('[data-nav]'));
     Array.prototype.push.apply(controls, document.querySelectorAll('.jog'));
     controls.forEach(function (element) {
@@ -132,6 +144,26 @@
           'To drive the real robot: open http://<robot-ip>:8080 on the robot Wi-Fi.');
       }, 400);
     }
+  }
+
+  
+  var lastAlertTone = null;
+  function playAlertSound() {
+    if (!window.AudioContext && !window.webkitAudioContext) return;
+    try {
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      osc.frequency.setValueAtTime(1100, ctx.currentTime + 0.2);
+      gain.gain.setValueAtTime(0.1, ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.5);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.5);
+    } catch (e) { /* ignored, probably blocked by browser policy */ }
   }
 
   function blockedInViewer() {
@@ -187,21 +219,36 @@
   }
 
   /* ------------------------------------------------------------------ tabs */
-  Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {
-    tab.addEventListener('click', function () {
-      Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (t) {
-        t.classList.remove('active');
-      });
-      Array.prototype.forEach.call(document.querySelectorAll('.tabpage'), function (p) {
-        p.classList.remove('active');
-      });
-      tab.classList.add('active');
-      $('tab-' + tab.dataset.tab).classList.add('active');
-      if (tab.dataset.tab === 'map') { state.fitRequested = true; drawMap(); }
-      if (tab.dataset.tab === 'cfg') loadParams();
-      if (tab.dataset.tab === 'cfg' && !state.cfg.data) loadConfig(state.cfg.group);
-      if (tab.dataset.tab === 'wp') loadWaypoints();
+  /** Switch tabs. Named rather than inline so a button on one page can send you
+   *  to another - "edit these →" on the Calibration tab opens the parameter
+   *  list already filtered, instead of telling you to go and find the field. */
+  function showTab(name) {
+    var button = document.querySelector('.tab[data-tab="' + name + '"]');
+    var page = $('tab-' + name);
+    if (!button || !page) return;
+    Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (t) {
+      t.classList.remove('active');
     });
+    Array.prototype.forEach.call(document.querySelectorAll('.tabpage'), function (p) {
+      p.classList.remove('active');
+    });
+    button.classList.add('active');
+    page.classList.add('active');
+    if (name === 'map') { state.fitRequested = true; drawMap(); }
+    if (name === 'board') loadParams();
+    if (name === 'help') { loadHelp(true); refreshFindRobot(); }
+    if (name === 'cfg' && !state.cfg.data) loadConfig(state.cfg.group);
+    if (name === 'wp') loadWaypoints();
+    // The wheel diameter and the track width shown on the Calibration tab are
+    // parameters, and the board is the only place that knows them.
+    if (name === 'calib' && !(paramsState && paramsState.entries.length)) loadParams();
+    if (name === 'geom') {
+      if (paramsState && paramsState.entries.length) renderGeometry(); else loadParams();
+    }
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {
+    tab.addEventListener('click', function () { showTab(tab.dataset.tab); });
   });
 
   /* ------------------------------------------------------------------- SSE */
@@ -301,14 +348,15 @@
   }
 
   /* ------------------------------------------------ simple / advanced view */
-  function setView(mode) {
-    document.body.dataset.view = mode;
-    $('btnSimple').className = 'chipbtn' + (mode === 'simple' ? ' active' : '');
-    $('btnAdvanced').className = 'chipbtn' + (mode === 'advanced' ? ' active' : '');
-    try { window.localStorage.setItem('gpsLocalizeView', mode); } catch (err) { /* private mode */ }
+  /* One view, everything visible. The Simple/Advanced switch hid 18 elements
+   * and DEFAULTED to Simple - so a control that plainly exists was simply
+   * absent, with nothing on screen to explain why. The .adv classes stay in the
+   * markup as a note about what is detail rather than essential; nothing acts
+   * on them now. */
+  function setView() {
+    document.body.dataset.view = 'advanced';
+    try { window.localStorage.removeItem('gpsLocalizeView'); } catch (err) { /* private mode */ }
   }
-  $('btnSimple').addEventListener('click', function () { setView('simple'); });
-  $('btnAdvanced').addEventListener('click', function () { setView('advanced'); });
 
   $('btnHelp').addEventListener('click', function () {
     var dialog = $('helpDialog');
@@ -344,6 +392,18 @@
     var reasons = t.stop_reasons || safety.firmware_stop_reasons || [];
     var has = function (name) { return reasons.indexOf(name) >= 0; };
 
+    // FIRST, because it is the only fault where pressing the emergency does not
+    // remove power. Every other reason here describes a robot that is safely
+    // stopped; this one describes one that is not.
+    if (has('contactor_stuck')) {
+      return {
+        clearable: false,
+        title: 'อันตราย - รีเลย์ค้าง / DANGER - contactor is stuck closed',
+        detail: 'The contactor was commanded open but the motor rails are still '
+              + 'live. The emergency stop CANNOT remove power in this state. '
+              + 'Disconnect the battery by hand before going near the wheels.'
+      };
+    }
     if (has('hardware_emergency') || has('esp_button')) {
       return {
         clearable: false,
@@ -360,6 +420,15 @@
         title: 'หยุดฉุกเฉินจากหน้าเว็บ / software e-stop is latched',
         detail: 'กดปุ่ม "ปลดหยุดฉุกเฉิน / Clear e-stop" ในหน้านี้ก่อน แล้วจึงสั่งงานได้\n\n'
               + 'Clear it from this page, then start again.'
+      };
+    }
+    if (has('battery_soft')) {
+      return {
+        clearable: false,
+        title: 'แบตเตอรี่อ่อน (ตัดกำลังมอเตอร์ชั่วคราว) / Battery Soft Stop',
+        detail: 'หุ่นยนต์ตัดไฟมอเตอร์อัตโนมัติเนื่องจากแบตเตอรี่เริ่มอ่อน\n\n'
+              + 'The battery dropped below the soft-stop threshold. The robot cannot drive '
+              + 'until the voltage recovers or the battery is swapped.'
       };
     }
     if (has('battery_low')) {
@@ -443,7 +512,11 @@
       title = 'พักภารกิจไว้';
       sub = 'กด “ไปต่อ” เพื่อวิ่งต่อจากจุดที่ค้างไว้';
       primary = { label: 'ไปต่อ / RESUME', action: 'resume', enabled: true };
-      secondary = { label: 'จบภารกิจ / STOP', action: 'stop' };
+      // No STOP here. Ending a mission belongs with the mission, next to the
+      // waypoint list it ends - the same reason START moved there. This card
+      // keeps the actions that resume or recover, which are the ones you want
+      // under your hand without scrolling. The EMERGENCY STOP is a different
+      // thing entirely and is in the toolbar on every page.
     } else if (navState === 'BLOCKED') {
       icon = '⚠'; tone = 'warn';
       title = 'วิ่งต่อไม่ได้ตอนนี้';
@@ -464,14 +537,37 @@
       primary.enabled = count > 0;
     }
 
+    
+    if (tone === 'bad' && lastAlertTone !== 'bad') {
+      playAlertSound();
+    }
+    lastAlertTone = tone;
+    
     $('heroCard').className = 'hero card ' + tone;
+
     $('heroIcon').textContent = icon;
     text('heroTitle', title);
     text('heroSub', sub);
 
+    /* STARTING a mission is the Mission card's job, not this one's.
+     *
+     * There were two buttons called START on one screen and the reader had to
+     * work out whether they differed. They did not. The one that stayed is the
+     * one beside the waypoint list it acts on, which is where someone is
+     * looking when they set a mission up.
+     *
+     * This button keeps every OTHER action it had - resume after a pause, and
+     * unlatching an emergency stop - because those have nowhere else to live
+     * and the second of them is the one you want under your hand. It keeps its
+     * space when it has nothing to offer rather than vanishing, so the card
+     * does not change height and move the controls below it.
+     */
     var button = $('heroPrimary');
+    var startsMission = primary.action === 'start';
+    button.className = startsMission ? 'btn go hero-primary invisible'
+                                     : 'btn go hero-primary';
     button.textContent = primary.label;
-    button.disabled = !primary.enabled;
+    button.disabled = startsMission || !primary.enabled;
     button.dataset.action = primary.action;
     button.title = primary.enabled ? '' :
       (state.waypoints.length ? '' : 'เพิ่มจุดหมายก่อนจึงจะเริ่มได้ / add a waypoint first');
@@ -479,10 +575,17 @@
     var second = $('heroSecondary');
     if (secondary) {
       second.className = 'btn';
+      second.disabled = false;
       second.textContent = secondary.label;
       second.dataset.action = secondary.action;
     } else {
-      second.className = 'btn hidden';
+      // KEEPS ITS SPACE. `hidden` is display:none, so this button vanishing when
+      // the state changed shrank the hero card and pulled the whole page - drive
+      // pad included - upwards. The state changes the instant you press move,
+      // which is the worst possible moment for the controls to jump.
+      // visibility:hidden hides it just as well and holds the layout still.
+      second.className = 'btn invisible';
+      second.disabled = true;
     }
   }
 
@@ -501,9 +604,35 @@
     });
   });
 
+  /** (Re)start the heartbeat timer at the configured period. */
+  function armHeartbeat(ms) {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    heartbeatMs = ms;
+    heartbeatTimer = setInterval(heartbeat, heartbeatMs);
+  }
+
+  /** Adopt the three browser-side settings the robot is configured with.
+   *
+   * The jog repeat is picked up by the next press, because that timer is
+   * created per press. The heartbeat timer is long-lived, so it is re-armed
+   * only when the period actually changes - re-arming it on every frame would
+   * mean it never fired.
+   */
+  function applyServerConfig(server) {
+    if (!server) return;
+    if (server.trail_points > 0) TRAIL_MAX = server.trail_points;
+    if (server.manual_repeat_ms > 0) jogRepeatMs = server.manual_repeat_ms;
+    var hz = server.heartbeat_rate_hz;
+    if (hz > 0) {
+      var ms = Math.round(1000 / hz);
+      if (ms !== heartbeatMs) armHeartbeat(ms);
+    }
+  }
+
   /* -------------------------------------------------------------- snapshot */
   function onSnapshot(snap) {
     state.snap = snap;
+    applyServerConfig(snap.server);
     state.lastFrame = Date.now();
     watchFreshness();
     applyServerMode(snap.server);
@@ -519,13 +648,58 @@
 
     setPill('pillLink', safety.link_ok === false ? 'bad' : (state.connected ? 'ok' : 'warn'),
       safety.link_ok === false ? 'ขาด' : 'ปกติ');
-    setPill('pillEsp', snap.telemetry_age_s !== null && snap.telemetry_age_s < 1.5 ? 'ok' : 'bad',
-      snap.telemetry_age_s === null ? 'ไม่พบ' : snap.telemetry_age_s.toFixed(1) + ' s');
+    // The ESP32 pill answers "is the board there", so it says so in words. An
+    // age in seconds is the evidence for that answer, not the answer itself -
+    // and "325.3 s" needed reading and interpreting before it meant anything,
+    // which is the opposite of what a glance-at-it row is for. The number stays
+    // in the tooltip for when it is genuinely wanted.
+    /* The ESP32 pill shows the AGE of the last frame, because that is the
+     * number that says whether the robot is still there - and while it is
+     * healthy the number is the reassurance: 0.1 s, ticking, means the link is
+     * alive right now. Replacing it with the word "ok" threw that away.
+     *
+     * When the link drops, the same number becomes how long it has been gone,
+     * and that is worth spelling out in a unit anyone can act on - "ขาด 2 นาที"
+     * rather than "137.4 s". */
+    var espAge = snap.telemetry_age_s;
+    var espLive = espAge !== null && espAge < 1.5;
+    var espText;
+    if (espAge === null) {
+      espText = 'ไม่พบ / none';
+    } else if (espLive) {
+      espText = espAge.toFixed(1) + ' s';
+    } else if (espAge < 90) {
+      espText = 'ขาด ' + Math.round(espAge) + ' s';
+    } else {
+      espText = 'ขาด ' + Math.round(espAge / 60) + ' นาที';
+    }
+    setPill('pillEsp', espLive ? 'ok' : 'bad', espText,
+      espAge === null ? 'no telemetry has ever arrived'
+                      : 'last frame ' + espAge.toFixed(1) + ' s ago');
+    // HDOP belongs in the pill, not only in a tooltip: a satellite count with
+    // no dilution figure says how many were seen, not how good the fix is, and
+    // those come apart exactly when it matters.
     var sats = Math.round(t.gps_satellites || 0);
     setPill('pillGps', t.gps_fix_quality > 0 ? (sats >= 6 ? 'ok' : 'warn') : 'bad',
-      sats + ' ดาว · HDOP ' + fmt(t.gps_hdop, 1));
+      sats + ' ดาว · HDOP ' + fmt(t.gps_hdop, 1),
+      sats + ' satellites, HDOP ' + fmt(t.gps_hdop, 1));
+    // The control loop, on the top bar where it was. It is the first thing that
+    // shows the firmware is in trouble - it went from 4 ms to 178 ms today and
+    // nothing else on this bar moved - and it is worth a glance while driving.
+    var loopMs = (t.loop_us || 0) / 1000;
+    setPill('pillLoop', loopMs > 9 ? 'bad' : (loopMs > 6 ? 'warn' : 'ok'),
+      loopMs >= 10 ? loopMs.toFixed(0) + ' ms' : loopMs.toFixed(1) + ' ms',
+      'control loop, one tick. The period is 10 ms, so anything near that is '
+      + 'the firmware running out of time.');
     var volts = t.battery_v || 0;
-    setPill('pillBatt', volts > 10.8 ? 'ok' : (volts > 9.9 ? 'warn' : 'bad'), fmt(volts, 2) + ' V');
+    var _cells = 3, _cutoff = 11.2, _warn = 11.7;
+    if (typeof paramsState !== 'undefined' && paramsState.entries && paramsState.entries.length) {
+      paramsState.entries.forEach(function (p) {
+        if (p.key === 'battery.cutoff_v') _cutoff = p.value;
+        if (p.key === 'battery.warn_v') _warn = p.value;
+      });
+    }
+    setPill('pillBatt', volts > _warn ? 'ok' : (volts > _cutoff ? 'warn' : 'bad'), fmt(volts, 2) + ' V');
 
     // ---- dashboard tiles ----
     text('tSpeed', fmt(t.speed_mps, 2));
@@ -544,16 +718,128 @@
     text('tMpsR', fmt(t.wheel_mps_right, 2));
     text('tPwmL', fmt(t.pwm_left, 0));
     text('tPwmR', fmt(t.pwm_right, 0));
+    text('tRollRate', fmt(t.roll_rate_dps, 1));
+    text('tPitchRate', fmt(t.pitch_rate_dps, 1));
     text('tYawRate', fmt(t.yaw_rate_dps, 1));
-    text('tOdomX', fmt(t.odom_x, 2));
-    text('tOdomY', fmt(t.odom_y, 2));
+    // ONLY what the IMU itself provides.
+    //
+    // This row first showed heading_deg and the ESP32 die temperature, which was
+    // badly wrong: heading_deg is the FUSED heading and was coming from the
+    // compass, and the die temperature is the chip's, not the sensor's. So the
+    // row showed plausible numbers under an "IMU" heading while the IMU was
+    // completely dead - the exact mistake this project keeps having to unlearn.
+    //
+    // yaw_rate_dps is the gyro, and it is the one field here that genuinely
+    // comes from the BNO085. When the IMU is missing, say so instead of printing
+    // a zero that looks like "not turning".
+    var imuDead = (t.missing_sensors || []).indexOf('imu_missing') >= 0;
+    text('tImuRpy', imuDead ? '✕ ไม่พบ / not reporting' : (fmt(t.imu_roll_deg, 1) + '°, ' + fmt(t.imu_pitch_deg, 1) + '°, ' + fmt(t.imu_yaw_deg, 1) + '°'));
+    text('tImuAcc', imuDead ? '—'
+      : ((t.missing_sensors || []).indexOf('imu_magnetometer_missing') < 0
+          ? 'mag ok'
+          // "mag < 2" was a guess dressed as a fact. The flag it reads means
+          // the magnetometer-referenced heading is UNUSABLE, and that has two
+          // completely different causes: the sensor not being calibrated, or
+          // its report not arriving. The Calibration tab was showing a proud
+          // 3/3 while this line insisted the accuracy was below 2. Only one of
+          // them was reading the accuracy.
+          : (t.imu_accuracy >= 2
+              ? 'mag ' + t.imu_accuracy + '/3 แต่รายงานไม่มา / calibrated, '
+                + 'but its report is not arriving'
+              : 'mag ' + (t.imu_accuracy || 0) + '/3 ยังไม่พอ / needs 2 to be used')));
+    // Delivered against asked, per report. The verdict matters more than the
+    // numbers: "the bus is full" and "the magnetometer is broken" look the same
+    // on a dashboard, and telling them apart is the whole reason this row
+    // exists. rv is the 10 Hz one and it is the one that starves first.
+    var rvWant = 10, fastWant = 100, accWant = 50;
+
+    // CPU temperature on its own line in the power card, where someone actually
+    // looks for it - and judged, not just printed. The number alone means
+    // nothing to most people; "hot" or "too hot" does. The ESP32 throttles
+    // around 80 C and its absolute maximum is 125 C.
+    var temp = t.esp32_temp_c;
+    if (temp === null || temp === undefined || isNaN(temp)) {
+      text('tCpuTemp', '—');
+      // Reported as NaN until the reading is seen to change: most WROOM-32
+      // silicon has the internal sensor fused off, and a fixed 53.3 C would
+      // look like a real measurement.
+      text('tCpuTempNote', 'เซ็นเซอร์ไม่รายงาน / this chip has no usable temperature sensor');
+    } else {
+      text('tCpuTemp', fmt(temp, 1));
+      text('tCpuTempNote', temp >= 80 ? '⚠ ร้อนเกิน / too hot, the chip will throttle'
+                         : temp >= 65 ? 'อุ่น / warm'
+                         : 'ปกติ / normal');
+    }
 
     renderSensors(t);
     renderHero(snap);
     checkFirmware(snap);
 
-    text('tBattV', fmt(t.battery_v, 2));
-    text('tBattA', fmt(t.battery_a, 2));
+    var bv = t.battery_v || 0;
+    text('tBattV', fmt(bv, 2));
+    var statEl = $('tBattStat');
+    if (statEl) {
+      if (bv > 0) {
+        var cells = 3;
+        var cutoff_v = 11.2;
+        var warn_v = 11.7;
+        if (typeof paramsState !== 'undefined' && paramsState.entries && paramsState.entries.length) {
+          paramsState.entries.forEach(function (p) {
+            if (p.key === 'battery.cells') cells = p.value;
+            if (p.key === 'battery.cutoff_v') cutoff_v = p.value;
+            if (p.key === 'battery.warn_v') warn_v = p.value;
+          });
+        }
+        
+        var p100 = cells * 4.2;
+        var p75 = cells * 4.0;
+        var p50 = cells * 3.85;
+        var p25 = warn_v;
+        var p0 = cutoff_v;
+
+        var pct = 0;
+        if (bv >= p100) pct = 100;
+        else if (bv >= p75) pct = 75 + ((bv - p75) / (p100 - p75)) * 25;
+        else if (bv >= p50) pct = 50 + ((bv - p50) / (p75 - p50)) * 25;
+        else if (bv >= p25) pct = 25 + ((bv - p25) / (p50 - p25)) * 25;
+        else if (bv >= p0) pct = ((bv - p0) / (p25 - p0)) * 25;
+        else pct = 0;
+        
+        var statusStr = Math.round(pct) + '%';
+        if (bv < p0) {
+          statEl.style.color = '#ff6060';
+          statusStr += ' (หมด! / DEAD)';
+        } else if (bv < warn_v) {
+          statEl.style.color = '#ffb020';
+          statusStr += ' (ต่ำ! / LOW)';
+        } else {
+          statEl.style.color = ''; 
+          statusStr += ' (ปกติ / OK)';
+        }
+        statEl.textContent = statusStr;
+      } else {
+        statEl.style.color = '';
+        statEl.textContent = '—';
+      }
+    }
+    // Total draw on the pack = every INA added together.
+    //
+    // Each INA226 measures the current on the BATTERY side of its own buck, so
+    // all four are drawing from the same pack and they sum. Showing only the
+    // two motor rails - as this did at first - undercounted by the processor
+    // and the fans, which together are around 0.4 A: not a rounding error when
+    // you are working out how long a charge will last. (The voltages are each
+    // measured AFTER their own buck, so those are per-rail and do not sum.)
+    var parts = [t.battery_a, t.fan_a, t.motor_a_a, t.motor_b_a];
+    var packA = 0, haveAll = true;
+    parts.forEach(function (v) {
+      if (typeof v === 'number' && !isNaN(v)) { packA += v; } else { haveAll = false; }
+    });
+    text('tBattA', haveAll ? fmt(packA, 2) : '—');
+    // INA 0x41: the rail the ESP32 and every sensor run from - 3V3 since the
+    // board was moved onto its own buck.
+    text('tProcV', fmt(t.esp32_rail_v, 3));
+    text('tProcA', fmt(t.battery_a, 3));
     text('tMaV', fmt(t.motor_a_v, 2));
     text('tMaA', fmt(t.motor_a_a, 2));
     text('tMbV', fmt(t.motor_b_v, 2));
@@ -585,7 +871,19 @@
     $('btnReset').disabled = !estop;
 
     // ---- map data ----
-    if (fix.lat !== undefined && fix.lon !== undefined && (fix.lat !== 0 || fix.lon !== 0)) {
+    // status < 0 is NavSatStatus.STATUS_NO_FIX. A receiver with no lock still
+    // publishes a latitude and longitude, and those numbers are nonsense - seen
+    // here as -11.23, 86.52, the middle of the Indian Ocean, from a robot in
+    // Chiang Mai. Testing only for non-zero let that straight through.
+    //
+    // It matters far beyond a misplaced dot: the FIRST accepted fix becomes the
+    // map's datum, every local coordinate is measured from it, and a datum taken
+    // from garbage silently puts the whole map - waypoints, trail and satellite
+    // imagery alike - in the wrong hemisphere.
+    var fixUsable = fix.lat !== undefined && fix.lon !== undefined
+                 && (fix.lat !== 0 || fix.lon !== 0)
+                 && (fix.status === undefined || fix.status === null || fix.status >= 0);
+    if (fixUsable) {
       if (!state.datum) state.datum = { lat: fix.lat, lon: fix.lon };
       var p = enu(fix.lat, fix.lon, state.datum);
       var lastPoint = state.trail[state.trail.length - 1];
@@ -630,82 +928,507 @@
       ' · ESP RAM ว่าง ' + fmt(t.free_heap_kb, 0) + ' kB';
   }
 
+  /* ------------------------------------------------------- help / connect */
+  /* The Help panel was pure markup: qrBox, cxMdns, cxLan, cxLocal and cxNote
+   * existed in index.html and nothing in this file ever wrote to them, so the
+   * QR stayed as its "..." placeholder and every address read "—". The server
+   * had been serving a perfectly good QR from /api/qr the whole time. */
+  var helpLoaded = false;
+
+  /* Find-the-robot, polled on its own.
+   *
+   * The web never looked for the board at all - the connection only goes one
+   * way - so when it went quiet the page could say nothing beyond "no
+   * telemetry", and answering "is it even on the network?" meant running avahi
+   * and a ping sweep by hand. Four facts, because they fail independently and
+   * each points somewhere different: linked, on the network, and whether we are
+   * announcing the agent for it to find.
+   *
+   * Polled slowly, and only while the robot is NOT linked - once telemetry is
+   * flowing the question is answered and the lookup is just noise.
+   */
+  function refreshFindRobot() {
+    return api('/api/find_robot').then(function (r) {
+      if (!r || !r.ok) return;
+      text('frLinked', r.linked ? 'ใช่ / yes' : 'ยัง / not yet');
+      text('frFound', r.found_at
+        ? (r.found_at + '  (' + (r.robot_name || '') + ')')
+        : 'ไม่เจอ / not found');
+      text('frBeacon', r.beacon
+        ? ('กำลังประกาศ / yes, as ' + (r.agent_ip || '?') + ':8888')
+        : 'ไม่ได้ประกาศ / NO - the beacon service is not running');
+      text('frHint', r.hint || '');
+    });
+  }
+
+  if ($('frNow')) $('frNow').addEventListener('click', refreshFindRobot);
+
+  // Keep looking while the robot is missing, and stop once it is here.
+  setInterval(function () {
+    var snap = state.snap || {};
+    var age = snap.telemetry_age_s;
+    var linked = (age !== undefined && age !== null && age < 5);
+    var help = $('tab-help');
+    if (!linked || (help && help.classList.contains('active'))) refreshFindRobot();
+  }, 10000);
+
+  function loadHelp(force) {
+    if (helpLoaded && !force) return;
+    helpLoaded = true;
+    api('/api/connect').then(function (r) {
+      var c = (r && r.connect) || {};
+      text('cxMdns', c.mdns || '—');
+      text('cxLan', c.lan || '—');
+      text('cxLocal', c.local || '—');
+      // mDNS is the nicer address but it needs multicast, which guest Wi-Fi,
+      // VLANs and VPNs routinely drop. Say so rather than letting someone
+      // conclude the robot is down when it is the name that failed.
+      text('cxNote', c.mdns_may_be_blocked
+        ? 'ถ้าชื่อ .local ใช้ไม่ได้ ให้พิมพ์เลข IP แทน · if the .local name does '
+          + 'not resolve, type the IP address instead - some networks block mDNS.'
+        : '');
+    });
+    api('/api/qr').then(function (r) {
+      var box = $('qrBox');
+      if (!box) return;
+      if (r && r.ok && r.svg) {
+        box.innerHTML = r.svg;
+        // The QR encodes the IP, not the .local name, on purpose: the person
+        // scanning it is standing here now and cannot debug a name lookup.
+        box.setAttribute('title', r.url || '');
+      } else {
+        box.textContent = 'สร้าง QR ไม่ได้ / could not build a QR code';
+      }
+    });
+  }
+
+  /** "123 rpm · 0.52 m/s", using the wheel diameter the board reports. */
+  function wheelRpmAndMps(rpm) {
+    if (rpm === null || rpm === undefined || isNaN(rpm)) { return '—'; }
+    var d = state.wheelDiameterM;
+    if (!d) { return fmt(rpm, 0) + ' rpm'; }      // diameter not known yet
+    var mps = rpm / 60 * Math.PI * d;
+    return fmt(rpm, 0) + ' rpm · ' + fmt(mps, 2) + ' m/s';
+  }
+
   /* ------------------------------------------------- sensor health chips */
   /* One chip per sensor. The robot keeps driving when one of them dies - the
    * chips show which source the heading and the speed fell back to. */
   function renderSensors(t) {
     var missing = t.missing_sensors || [];
     var has = function (name) { return missing.indexOf(name) < 0; };
-    var chips = [
-      ['IMU', has('imu_missing')],
-      ['GPS', has('gps_missing')],
-      ['เข็มทิศ Compass', t.mag_status === 1, t.mag_status === 2],
-      ['IMU mag', has('imu_magnetometer_missing')]
-    ];
-    var box = $('sensorChips');
-    box.textContent = '';
-    chips.forEach(function (chip) {
-      var span = document.createElement('span');
-      span.className = chip[2] ? 'warn' : (chip[1] ? 'ok' : 'bad');
-      span.textContent = chip[0] + (chip[2] ? ' ⚠ รบกวน' : (chip[1] ? ' ✓' : ' ✕'));
-      box.appendChild(span);
-    });
-    if (missing.indexOf('heading_relative_only') >= 0) {
-      var warnChip = document.createElement('span');
-      warnChip.className = 'warn';
-      warnChip.textContent = 'ทิศยังไม่อ้างอิงจริง / heading relative only';
-      box.appendChild(warnChip);
+    /* ALWAYS THE SAME CHIPS, IN THE SAME ORDER.
+     *
+     * These sit above the drive controls, so anything that changes their NUMBER
+     * changes their height and moves the jog pad down the page - a fault
+     * appearing mid-drive shifted the buttons out from under the user's thumb.
+     * Appending fault chips only when a fault existed did exactly that.
+     *
+     * Making the strip scroll sideways instead stopped the movement but hid the
+     * warnings off the right-hand edge, which is worse - a warning you cannot
+     * see is not a warning. So the set is FIXED: every chip is always present
+     * and only its colour and wording change. Constant count, constant height,
+     * nothing hidden, nothing moves. */
+    var faults = t.motor_fault_names || [];
+    var faulted = function (name) { return faults.indexOf(name) >= 0; };
+
+    /* A chip's LABEL never changes and its STATE is one glyph in a fixed track.
+     *
+     * The wording used to carry the detail - "motor L \u2715 \u0e44\u0e21\u0e48\u0e01\u0e34\u0e19\u0e44\u0e1f / open" - and
+     * that made every chip a different width depending on what was wrong. The
+     * row then re-wrapped, the block changed height, and the drive pad below it
+     * moved. Reserving more rows only traded a moving pad for a wall of chips
+     * two hundred pixels tall, which is what it briefly became.
+     *
+     * So the chip answers one question - is this thing all right - and nothing
+     * else. Every detail it used to carry is still on the page, in the row that
+     * already existed for it: which heading reference is live is in "Heading
+     * from", the compass being disturbed is in the compass row, and what to do
+     * about a motor fault is in the advice line under these chips. Nothing was
+     * hidden to make this fit; it was moved to where it was already explained.
+     */
+    /* Labels are SHORT on purpose. "\u0e21\u0e2d\u0e40\u0e15\u0e2d\u0e23\u0e4c\u0e0b\u0e49\u0e32\u0e22 / Motor L" is honest and it did
+     * not fit: in two columns it rendered as "\u0e21\u0e2d\u0e40\u0e15\u0e2d\u0e23\u0e4c......", which names
+     * nothing. A chip has one job - say whether this thing is all right - and a
+     * label the reader cannot finish reading cannot do that job. The long form
+     * lives in the tooltip, where there is room for it. */
+    function chip(label, state, why) { return [label, state, why]; }
+    function motorChip(label, stalled, open) {
+      return chip(label, (open || stalled) ? 'bad' : 'ok',
+                  open ? '\u0e44\u0e21\u0e48\u0e01\u0e34\u0e19\u0e44\u0e1f\u0e40\u0e25\u0e22 / no current at all - see the advice below'
+                : stalled ? '\u0e01\u0e34\u0e19\u0e44\u0e1f\u0e41\u0e15\u0e48\u0e44\u0e21\u0e48\u0e2b\u0e21\u0e38\u0e19 / drawing current but not turning'
+                : '\u0e1b\u0e01\u0e15\u0e34 / no fault reported');
     }
 
-    // motor faults seen through the INA226 (stall = current but no back-EMF)
-    (t.motor_fault_names || []).forEach(function (fault) {
-      var chip = document.createElement('span');
-      chip.className = 'bad';
-      chip.textContent = {
-        left_stalled: 'ล้อซ้ายติดขัด / left stalled',
-        right_stalled: 'ล้อขวาติดขัด / right stalled',
-        left_open_circuit: 'มอเตอร์ซ้ายไม่กินไฟ / left open',
-        right_open_circuit: 'มอเตอร์ขวาไม่กินไฟ / right open'
-      }[fault] || fault;
-      box.appendChild(chip);
+    // The BNO085's magnetometer is two separate questions and they were being
+    // answered as one: is it CALIBRATED, and is its report ARRIVING. Accuracy
+    // 3/3 with no report reaching us is not a bad magnetometer - it is a bus or
+    // a driver problem - and showing it as a red cross next to a perfectly
+    // calibrated sensor is how hours get spent hunting magnets.
+    var magAcc = t.imu_accuracy;
+    var magUsable = has('imu_magnetometer_missing');
+    var magState = magUsable ? 'ok' : (magAcc >= 2 ? 'warn' : 'bad');
+
+    var chips = [
+      chip('IMU', has('imu_missing') ? 'ok' : 'bad',
+           'BNO085 gyro and rotation vector'),
+      // A cross is now "no position at all", not "the fix is too rough to take a
+      // speed from". Those were the same flag, and a real 7-satellite fix at
+      // HDOP 1.8 was being drawn as a dead sensor while the robot navigated on
+      // it. The firmware answers the two questions separately; the tooltip says
+      // which one this is, and names the satellite count so the panel and the
+      // top bar cannot appear to contradict each other.
+      chip('GPS', has('gps_missing') ? 'ok' : 'bad',
+           has('gps_missing')
+             ? 'satellite fix present (' + (t.gps_satellites || 0) + ' satellites, HDOP '
+               + fmt(t.gps_hdop, 1) + '). A rough fix still counts - how much to '
+               + 'trust it is what HDOP is for'
+             : 'no position at all - fewer than 4 satellites, or no fix. Indoors '
+               + 'this is normal'),
+      chip('\u0e40\u0e02\u0e47\u0e21\u0e17\u0e34\u0e28',
+           t.mag_status === 2 ? 'warn' : (t.mag_status === 1 ? 'ok' : 'bad'),
+           t.mag_status === 2 ? '\u0e2a\u0e19\u0e32\u0e21\u0e41\u0e21\u0e48\u0e40\u0e2b\u0e25\u0e47\u0e01\u0e23\u0e1a\u0e01\u0e27\u0e19 / magnetic disturbance'
+                              : 'QMC5883L in the GPS module'),
+      chip('IMU mag', magState,
+           magUsable ? 'calibrated and reporting'
+             : (magAcc >= 2
+                ? '\u0e1b\u0e23\u0e31\u0e1a\u0e40\u0e17\u0e35\u0e22\u0e1a\u0e41\u0e25\u0e49\u0e27 ' + magAcc + '/3 \u0e41\u0e15\u0e48\u0e23\u0e32\u0e22\u0e07\u0e32\u0e19\u0e44\u0e21\u0e48\u0e21\u0e32 / calibrated '
+                  + magAcc + '/3 but its report is not arriving'
+                : '\u0e22\u0e31\u0e07\u0e1b\u0e23\u0e31\u0e1a\u0e40\u0e17\u0e35\u0e22\u0e1a\u0e44\u0e21\u0e48\u0e1e\u0e2d / accuracy ' + (magAcc || 0) + '/3, needs 2')),
+      chip('\u0e17\u0e34\u0e28\u0e17\u0e32\u0e07',
+           missing.indexOf('heading_relative_only') >= 0 ? 'warn' : 'ok',
+           missing.indexOf('heading_relative_only') >= 0
+             ? '\u0e44\u0e21\u0e48\u0e21\u0e35\u0e17\u0e34\u0e28\u0e08\u0e23\u0e34\u0e07 / no absolute reference - gyro only, it drifts'
+             : '\u0e21\u0e35\u0e17\u0e34\u0e28\u0e08\u0e23\u0e34\u0e07 / locked to an absolute reference'),
+      motorChip('\u0e25\u0e49\u0e2d L', faulted('left_stalled'), faulted('left_open_circuit')),
+      motorChip('\u0e25\u0e49\u0e2d R', faulted('right_stalled'), faulted('right_open_circuit'))
+    ];
+    var GLYPH = { ok: '\u2713', warn: '\u26a0', bad: '\u2715' };
+
+    // Built once and then only updated in place. Rebuilding the row every frame
+    // meant seven elements were destroyed and recreated ten times a second,
+    // which is both wasteful and a chance for the layout to settle differently
+    // each time.
+    var box = $('sensorChips');
+    if (box.childNodes.length !== chips.length) {
+      box.textContent = '';
+      chips.forEach(function () {
+        var span = document.createElement('span');
+        var name = document.createElement('b');
+        var mark = document.createElement('i');
+        span.appendChild(name);
+        span.appendChild(mark);
+        box.appendChild(span);
+      });
+    }
+    chips.forEach(function (c, i) {
+      var span = box.childNodes[i];
+      if (span.className !== c[1]) span.className = c[1];
+      if (span.firstChild.textContent !== c[0]) span.firstChild.textContent = c[0];
+      var g = GLYPH[c[1]];
+      if (span.lastChild.textContent !== g) span.lastChild.textContent = g;
+      if (c[2] && span.title !== c[2]) span.title = c[2];
     });
 
     text('tHeadingRef', t.heading_ref_name || '—');
+    // Agreement between the two absolute sources, and whether one is being
+    // refused. "Refused" is not a fault - it is the cross-check working.
+    var innov = t.heading_innov_deg;
+    if (innov === undefined || innov === null) {
+      text('tHeadingAgree', '—');
+    } else {
+      var gated = t.heading_gated >= 0.5;
+      var mag = Math.abs(innov);
+      text('tHeadingAgree', fmt(innov, 1) + '°  ' + (gated
+        ? '⚠ ไม่เชื่อเข็มทิศตอนนี้ / reference refused, the IMU disagrees - '
+          + 'a disturbance, not a turn'
+        : (mag < 5 ? '✓ ตรงกัน / the two agree'
+                   : 'ต่างกันเล็กน้อย / drifting apart but still believed')));
+    }
     text('tMagHeading', fmt(t.mag_heading_deg, 0));
     text('tMagStatus', t.mag_status_name || '—');
     text('tSpeedSource', t.speed_source_name || '—');
-    text('tMotorRpmL', fmt(t.motor_rpm_left, 0));
-    text('tMotorRpmR', fmt(t.motor_rpm_right, 0));
+    // Show speed beside rpm: rpm is what the back-EMF model computes, but m/s is
+    // what anyone actually reasons about when driving. The wheel diameter comes
+    // from the BOARD's own parameter (robot.wheel_diameter), never a constant
+    // copied into this file - a copy would go stale the day someone fits
+    // different wheels, and would then disagree with the robot silently.
+    text('tMotorRpmL', wheelRpmAndMps(t.motor_rpm_left));
+    text('tMotorRpmR', wheelRpmAndMps(t.motor_rpm_right));
 
-    var calibrating = t.mag_calib_state === 1;
-    $('btnMagStart').disabled = calibrating || state.mode === 'viewer';
-    $('btnMagFinish').disabled = !calibrating || state.mode === 'viewer';
-    if (calibrating) {
-      $('magHint').textContent = 'กำลังเก็บค่า… หมุนหุ่นช้า ๆ ให้ครบ 1 รอบ แล้วกดบันทึกผล';
-    } else if (t.mag_calib_state === 2) {
-      $('magHint').textContent = 'บันทึกลงบอร์ดแล้ว ใช้ได้เลยแม้ปิดเครื่อง';
-    } else if (t.mag_calib_state === 3) {
-      $('magHint').textContent = 'หมุนไม่ครบรอบ ลองใหม่อีกครั้ง';
+    // A fault name is not an instruction. "open circuit" reads like a broken
+    // wire, and on this robot it was a driver latching into protection - which
+    // needs a power-down, not a soldering iron.
+    text('tAccX', fmt(t.imu_acc_x, 2));
+    text('tAccY', fmt(t.imu_acc_y, 2));
+    text('tAccZ', fmt(t.imu_acc_z, 2));
+    var imuDead = (t.missing_sensors || []).indexOf('imu_missing') >= 0;
+    if (imuDead || t.imu_roll_deg === undefined) {
+      text('tGravX', '—'); text('tGravY', '—'); text('tGravZ', '—');
+    } else {
+      var r = t.imu_roll_deg * Math.PI / 180.0;
+      var p = t.imu_pitch_deg * Math.PI / 180.0;
+      var gx = -9.81 * Math.sin(p);
+      var gy = 9.81 * Math.sin(r) * Math.cos(p);
+      var gz = 9.81 * Math.cos(r) * Math.cos(p);
+      text('tGravX', fmt(gx, 2));
+      text('tGravY', fmt(gy, 2));
+      text('tGravZ', fmt(gz, 2));
     }
+
+    text('tOdomX', fmt(t.odom_x, 2));
+    text('tOdomY', fmt(t.odom_y, 2));
+
+    text('tMotorFaultWhy', (t.motor_fault_advice || []).join(' · '));
+
+    // Say which position source is steering, and how far it may have drifted.
+    // Indoors the robot runs on IMU heading, the compass and the motor model;
+    // outdoors it runs on GPS. The switch is automatic, so the ONLY way anyone
+    // knows which is live is if the page says so.
+    var nav = (state.snap || {}).nav || {};
+    var pm = $('posMode');
+    if (pm) {
+      // Never `hidden`: this banner sits on top of the START button, and taking
+      // it out of the flow moves that button up the card the moment the robot
+      // loses or regains GPS. The `off` class hides it without giving its space
+      // back, so nothing below it ever moves.
+      // Write to the text span, never to the banner itself: the banner also
+      // holds the invisible sizer twin that reserves its height, and setting
+      // textContent on the parent would delete it - after which the banner
+      // would resize with its own message again and move START, which is the
+      // whole thing being prevented here.
+      var pmText = $('posModeText') || pm;
+      var src = nav.fix_source;
+      if (src === 'dead_reckoning') {
+        pm.className = 'posmode warn';
+        // Capped at the sizer's own 99.9: a drift estimate wider than the twin
+        // would out-grow the space the twin reserved. Past about ten metres the
+        // exact figure has stopped mattering anyway - it says "do not trust the
+        // map", and it says that just as well at 99.9.
+        var sigma = t.pos_sigma_m ? Math.min(t.pos_sigma_m, 99.9) : 0;
+        pmText.textContent = 'ในอาคาร: ใช้ IMU เข็มทิศ และมอเตอร์ (ไม่ใช้ GPS) — '
+          + 'ตำแหน่งจะคลาดเคลื่อนขึ้นเรื่อย ๆ / INDOOR: navigating on the IMU, '
+          + 'compass and motor model. No GPS - the position drifts, several '
+          + 'metres per minute'
+          + (sigma ? '  (±' + sigma.toFixed(1) + ' m)' : '');
+      } else if (src === 'gps') {
+        pm.className = 'posmode ok';
+        pmText.textContent = 'กลางแจ้ง: ใช้ GPS / OUTDOOR: navigating on GPS'
+          + (t.gps_satellites ? '  (' + Math.round(t.gps_satellites) + ' sats)' : '');
+      } else {
+        pm.className = 'posmode off';
+      }
+    }
+
+    renderCalibration(t);
+  }
+
+  /* ------------------------------------------------------------ calibration */
+  /**
+   * The Calibration tab, driven entirely by telemetry.
+   *
+   * Both calibrations used to be invisible while they ran. The compass gave a
+   * button and no feedback, so the only way to know whether the turn had been
+   * enough was to press Finish and see whether it was refused. The IMU gave
+   * nothing at all from a browser - its accuracy number existed only in the USB
+   * console's `info` output, which meant that from the web a magnetometer that
+   * merely needed waving about and one that was broken looked identical:
+   * imu_magnetometer_missing, indefinitely.
+   */
+  function renderCalibration(t) {
+    // --- compass ---------------------------------------------------------
+    var calibrating = t.mag_calib_state === 1;
+    var progress = Math.max(0, Math.min(1, t.mag_calib_progress || 0));
+    var pct = Math.round(progress * 100);
+    var bar = $('magProgBar');
+    if (bar) bar.style.width = pct + '%';
+    // Below three quarters the board refuses to save, so say so before the
+    // press rather than after it.
+    if (bar) bar.className = progress >= 0.75 ? 'ok' : (calibrating ? 'busy' : '');
+    text('magProgText', calibrating || pct > 0 ? pct + '%' : '—');
+    text('cMagStatus', t.mag_status_name || '—');
+    text('cMagCalState', t.mag_calib_name || '—');
+    text('cMagHeading', fmt(t.mag_heading_deg, 0));
+    // Degrees, not just a bar. The gyro measures the turn independently of the
+    // magnetometer, so this is the number that says whether the robot really
+    // went round - and a number you can act on beats a proportion you cannot.
+    text('cMagTurned', calibrating ? fmt(Math.abs(t.mag_turned_deg || 0), 0) : '—');
+
+    var viewer = state.mode === 'viewer';
+    $('btnMagStart').disabled = calibrating || viewer;
+    $('btnMagFinish').disabled = !calibrating || viewer;
+    $('btnMagClear').disabled = calibrating || viewer;
+    // Only offered while a sweep is actually running - there is nothing to stop
+    // otherwise, and an always-live button invites pressing it for no reason.
+    $('btnMagCancel').disabled = !calibrating || viewer;
+    if (calibrating) {
+      var turned = Math.abs(t.mag_turned_deg || 0);
+      $('magHint').textContent = progress >= 0.75
+        ? 'ครบรอบแล้ว กดบันทึกได้เลย / enough of the circle — press Finish'
+        : ('หมุนต่ออีก ' + Math.max(0, Math.round(360 - turned)) + '° / keep turning, '
+           + Math.max(0, Math.round(360 - turned)) + '° to go');
+    } else if (t.mag_calib_state === 2) {
+      $('magHint').textContent = 'บันทึกลงบอร์ดแล้ว ใช้ได้แม้ปิดเครื่อง / saved on the board';
+    } else if (t.mag_calib_state === 3) {
+      $('magHint').textContent = 'หมุนไม่ครบรอบ บอร์ดไม่รับ ลองใหม่ / '
+        + 'the sweep did not cover enough of the circle, so nothing was saved';
+    } else {
+      $('magHint').textContent = 'หมุนหุ่นช้า ๆ ครบ 1 รอบ แล้วกดบันทึก';
+    }
+
+    // --- IMU -------------------------------------------------------------
+    var acc = t.imu_accuracy;
+    var pips = $('imuPips');
+    if (pips) {
+      Array.prototype.forEach.call(pips.children, function (pip, i) {
+        // A pip is lit when the accuracy has reached it. 2 is the line the
+        // heading chain draws, so 0 and 1 are warnings, not progress.
+        pip.className = (acc >= i) ? (i >= 2 ? 'lit ok' : 'lit warn') : '';
+      });
+    }
+    text('imuAccText', acc === undefined ? '—' : Math.round(acc) + '/3');
+    text('cImuAcc', t.imu_accuracy_name || '—');
+    text('cImuState', t.imu_calib_name || '—');
+    $('btnImuStart').disabled = viewer;
+    $('btnImuSave').disabled = viewer || acc < 2;
+    $('btnImuClear').disabled = viewer;
+    // A refusal says WHY. "Refused" on its own is not a diagnosis: a sensor
+    // that is absent, one that is busy and one that rejected the command
+    // outright all look the same, and they need different actions.
+    if (t.imu_calib_state === 3) {
+      $('imuHint').textContent = 'เซ็นเซอร์ไม่รับคำสั่ง / the sensor refused: '
+        + (t.imu_calib_result_name || '?');
+    } else if (acc >= 2) {
+      $('imuHint').textContent =
+        'ใช้ได้แล้ว กดบันทึกลงเซ็นเซอร์ / good enough — press Save so it survives a reboot';
+    } else if (t.imu_calib_state === 1) {
+      $('imuHint').textContent =
+        'กำลังเรียน… ขยับเป็นเลขแปดช้า ๆ ห่างจากมอเตอร์ / learning — slow figure-of-eights, away from the motors';
+    } else {
+      $('imuHint').textContent =
+        'ยังไม่พอ ต้องได้ 2 ขึ้นไป / not yet: 2 or better is what the heading chain needs';
+    }
+    text('cImuResult', t.imu_calib_result_name || '—');
+
+    // --- wheels, motor model, position -----------------------------------
+    text('cWheelDia', fmt(paramValue('robot.wheel_diameter'), 3));
+    text('cTrack', fmt(paramValue('robot.track'), 3));
+    text('cMpsL', fmt(t.wheel_mps_left, 2));
+    text('cMpsR', fmt(t.wheel_mps_right, 2));
+    text('cMaV', fmt(t.motor_a_v, 2));
+    text('cMaA', fmt(t.motor_a_a, 2));
+    text('cMbV', fmt(t.motor_b_v, 2));
+    text('cMbA', fmt(t.motor_b_a, 2));
+    text('cPwmL', fmt(t.pwm_left, 0));
+    text('cPwmR', fmt(t.pwm_right, 0));
+    text('cModelL', fmt(t.motor_rpm_left, 1));
+    text('cModelR', fmt(t.motor_rpm_right, 1));
+    text('cWheelL', fmt(t.wheel_rpm_left, 1));
+    text('cWheelR', fmt(t.wheel_rpm_right, 1));
+    text('cOdomX', fmt(t.odom_x, 2));
+    text('cOdomY', fmt(t.odom_y, 2));
+    text('cSigma', fmt(t.pos_sigma_m, 2));
+
+    // The dashboard keeps a one-line summary so a bad calibration is visible
+    // from the page people actually watch, not only from the one they visit
+    // twice a year.
+    text('sensorCalibHint', acc >= 2 && t.mag_status === 1
+      ? 'เซ็นเซอร์ทิศพร้อม / heading sensors calibrated'
+      : 'IMU ' + (acc === undefined ? '—' : Math.round(acc)) + '/3 · '
+        + 'เข็มทิศ ' + (t.mag_status_name || '—'));
+  }
+
+  /** One parameter's current value, or undefined before the board has answered.
+   *  Never a hardcoded fallback: a wheel diameter copied into this file would go
+   *  stale the day someone fits different wheels and then disagree with the
+   *  robot in silence. A dash is honest; a wrong number is not. */
+  function paramValue(key) {
+    var list = paramsState && paramsState.entries;
+    if (!list) return undefined;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].key === key) return list[i].value;
+    }
+    return undefined;
+  }
+
+  function calib(endpoint, action, note) {
+    if (blockedInViewer()) return;
+    api(endpoint, { action: action });
+    if (note) toast(note);
   }
 
   $('btnMagStart').addEventListener('click', function () {
-    if (blockedInViewer()) return;
-    api('/api/mag_calib', { start: true });
-    window.alert('เริ่มปรับเข็มทิศ / compass calibration started\n\n' +
-      'หมุนหุ่นยนต์ช้า ๆ ให้ครบอย่างน้อย 1 รอบ (ใช้ปุ่มเลี้ยวได้)\n' +
-      'Turn the robot slowly through at least one full circle, then press Finish.');
+    calib('/api/mag_calib', 'start',
+      'หมุนหุ่นช้า ๆ ครบ 1 รอบ / turn the robot slowly through a full circle');
   });
-
   $('btnMagFinish').addEventListener('click', function () {
-    if (blockedInViewer()) return;
-    api('/api/mag_calib', { start: false });
+    calib('/api/mag_calib', 'finish');
+  });
+  $('btnMagCancel').addEventListener('click', function () {
+    calib('/api/mag_calib', 'cancel', 'หยุดแล้ว ไม่ได้บันทึก / stopped, nothing saved');
+  });
+  $('btnImuCancel').addEventListener('click', function () {
+    calib('/api/imu_calib', 'cancel', 'หยุดแล้ว / stopped');
   });
 
-  function setPill(id, cls, value) {
+  $('btnMagClear').addEventListener('click', function () {
+    if (!window.confirm('ล้างค่าเข็มทิศ กลับไปใช้ค่าดิบ?\n\n'
+        + 'Clear the compass calibration and go back to raw readings?')) return;
+    calib('/api/mag_calib', 'clear', 'ล้างค่าเข็มทิศแล้ว / compass calibration cleared');
+  });
+
+  $('btnImuStart').addEventListener('click', function () {
+    calib('/api/imu_calib', 'start',
+      'ขยับหุ่นเป็นเลขแปดช้า ๆ ห่างจากมอเตอร์ / slow figure-of-eights, away from the motors');
+  });
+  $('btnImuSave').addEventListener('click', function () {
+    calib('/api/imu_calib', 'save', 'บันทึกลงเซ็นเซอร์แล้ว / saved into the sensor');
+  });
+  // Bringing a dead IMU up again without a reflash. The automatic retry stops
+  // after ten attempts, on the reasoning that software cannot reset a sensor
+  // whose reset line is not wired - but a person CAN, by unplugging the power,
+  // and after that the board should try again on request.
+  $('btnImuRetry').addEventListener('click', function () {
+    calib('/api/imu_calib', 'retry',
+      'กำลังลองเริ่ม IMU ใหม่ / trying to start the IMU again');
+  });
+
+  $('btnImuClear').addEventListener('click', function () {
+    if (!window.confirm('ล้างค่า IMU และรีสตาร์ทเซ็นเซอร์?\n\n'
+        + 'Clear the IMU calibration and restart the sensor?')) return;
+    calib('/api/imu_calib', 'clear', 'ล้างค่า IMU แล้ว / IMU calibration cleared');
+  });
+
+  $('btnCalibResetOdom').addEventListener('click', function () {
+    if (blockedInViewer()) return;
+    api('/api/reset_odom', {});
+    toast('ตั้งศูนย์แล้ว / position zeroed');
+  });
+
+  /* Cross-tab links: "edit these" jumps to the right page already filtered,
+     instead of telling people to go and find the field themselves. */
+  Array.prototype.forEach.call(document.querySelectorAll('[data-goto-tab]'), function (b) {
+    b.addEventListener('click', function () { showTab(b.dataset.gotoTab); });
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-goto-params]'), function (b) {
+    b.addEventListener('click', function () {
+      showTab('board');
+      var filter = $('paramsFilter');
+      if (filter) {
+        filter.value = b.dataset.gotoParams;
+        filter.dispatchEvent(new Event('input'));
+      }
+    });
+  });
+
+  function setPill(id, cls, value, detail) {
     var pill = $(id);
     pill.className = 'pill ' + cls;
     pill.lastElementChild.textContent = value;
+    // The detail is the evidence behind the word - the exact age, the HDOP.
+    // Kept on the element rather than in it, so the row stays readable at a
+    // glance and the number is still one hover away.
+    if (detail !== undefined) pill.title = detail;
   }
   function text(id, value) { var el = $(id); if (el) el.textContent = value; }
   function fmt(value, digits) {
@@ -747,7 +1470,7 @@
     sendJog();
     if (forward !== 0 || turn !== 0) {
       // the firmware stops after 500 ms without a command, so keep it fed
-      state.jog.timer = setInterval(sendJog, 150);
+      state.jog.timer = setInterval(sendJog, jogRepeatMs);
     }
   }
 
@@ -773,6 +1496,137 @@
       });
     });
   });
+
+  /* --------------------------------------------------------------- theme ---
+   * Three states: follow the device, or force light or dark.
+   *
+   * Kept in localStorage rather than on the robot, because it belongs to the
+   * screen looking at the robot and not to the robot itself - a phone in
+   * sunlight and a laptop in a dark workshop want opposite answers from the
+   * same machine at the same moment.
+   */
+  function applyTheme(choice) {
+    var root = document.documentElement;
+    if (choice === 'light' || choice === 'dark') root.setAttribute('data-theme', choice);
+    else root.removeAttribute('data-theme');      // auto: the media query decides
+    Array.prototype.forEach.call(document.querySelectorAll('[data-theme-set]'),
+      function (b) {
+        b.className = 'chipbtn' + (b.dataset.themeSet === choice ? ' active' : '');
+      });
+    var note = $('themeNote');
+    if (note) {
+      note.textContent = choice === 'auto'
+        ? 'ตามเครื่อง / following this device'
+        : 'บังคับไว้ / forced, ignoring the device setting';
+    }
+    try { localStorage.setItem('gpsloc.theme', choice); } catch (e) { /* private mode */ }
+  }
+
+  (function setupTheme() {
+    var saved = 'auto';
+    try { saved = localStorage.getItem('gpsloc.theme') || 'auto'; } catch (e) { saved = 'auto'; }
+    applyTheme(saved);
+    Array.prototype.forEach.call(document.querySelectorAll('[data-theme-set]'),
+      function (b) {
+        b.addEventListener('click', function () { applyTheme(b.dataset.themeSet); });
+      });
+  })();
+
+  /* ------------------------------------------------------------ joystick ---
+   * One gesture for both axes. The arrow pad sends forward OR turn, so an arc
+   * had to be driven by alternating two buttons, which gives a zig-zag; the
+   * firmware has always accepted both in the same command.
+   *
+   * Up is forward and right is clockwise, matching cmd_manual's linear.x and
+   * angular.z, so what the operator does and what goes on the wire are the same
+   * shape. Magnitude is proportional to how far the knob is pushed, capped at
+   * the edge of the ring, and the value is scaled by the SAME speed limit the
+   * arrow buttons use - a joystick that ignored the speed setting would be a
+   * second, hidden throttle.
+   */
+  (function setupJoystick() {
+    var pad = $('joyPad');
+    var knob = $('joyKnob');
+    if (!pad || !knob) return;
+
+    var active = false;
+    var pointerId = null;
+    var timer = null;
+    var cur = { forward: 0, turn: 0 };
+
+    function show(forward, turn) {
+      var speed = state.jog.speedMps || 0;
+      var rate = state.jog.turnDps || 0;
+      text('joyFwd', (forward * speed).toFixed(2));
+      text('joyTurn', Math.round(turn * rate));
+    }
+
+    function send() {
+      if (blockedInViewer()) return;
+      api('/api/manual', { forward: cur.forward, turn: cur.turn });
+    }
+
+    function moveTo(event) {
+      var box = pad.getBoundingClientRect();
+      var half = Math.min(box.width, box.height) / 2;
+      // The knob's travel stops short of the rim so it stays inside the pad.
+      var reach = half - 27;
+      var dx = event.clientX - (box.left + box.width / 2);
+      var dy = event.clientY - (box.top + box.height / 2);
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > reach && dist > 0) { dx *= reach / dist; dy *= reach / dist; }
+      knob.style.transform = 'translate(' + dx.toFixed(1) + 'px,' + dy.toFixed(1) + 'px)';
+      // Screen y grows downward; forward is up, hence the negation.
+      cur.forward = Math.max(-1, Math.min(1, -dy / reach));
+      cur.turn = Math.max(-1, Math.min(1, dx / reach));
+      show(cur.forward, cur.turn);
+    }
+
+    function release() {
+      if (!active) return;
+      active = false;
+      pointerId = null;
+      pad.classList.remove('active');
+      knob.style.transform = 'translate(0,0)';
+      cur.forward = 0; cur.turn = 0;
+      show(0, 0);
+      if (timer) { clearInterval(timer); timer = null; }
+      // Stop is unconditional and never merely "send zero": the firmware's own
+      // command watchdog would stop it anyway after 500 ms, but half a second
+      // of unwanted motion is exactly what a release is meant to prevent.
+      api('/api/manual', { action: 'stop' });
+    }
+
+    pad.addEventListener('pointerdown', function (event) {
+      if (blockedInViewer()) return;
+      event.preventDefault();
+      active = true;
+      pointerId = event.pointerId;
+      pad.classList.add('active');
+      pad.setPointerCapture(event.pointerId);
+      moveTo(event);
+      send();
+      // Repeat while held: the firmware stops after 500 ms with no command, so
+      // a joystick held still must keep saying so.
+      if (timer) clearInterval(timer);
+      timer = setInterval(send, 80);
+    });
+
+    pad.addEventListener('pointermove', function (event) {
+      if (!active || event.pointerId !== pointerId) return;
+      event.preventDefault();
+      moveTo(event);
+    });
+
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (name) {
+      pad.addEventListener(name, function (event) {
+        if (event.pointerId !== pointerId) return;
+        release();
+      });
+    });
+    // A pointer lost outside the element, or the tab going away, must stop it.
+    window.addEventListener('blur', release);
+  })();
 
   /* ------------------------------------------- manual speed steppers */
   function renderSpeed() {
@@ -850,34 +1704,171 @@
 
   var KEYS = { w: [1, 0], s: [-1, 0], a: [0, -1], d: [0, 1],
                W: [1, 0], S: [-1, 0], A: [0, -1], D: [0, 1],
-               ArrowUp: [1, 0], ArrowDown: [-1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
-  var keyHeld = null;
+               ArrowUp: [1, 0], ArrowDown: [-1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1],
+               Up: [1, 0], Down: [-1, 0], Left: [0, -1], Right: [0, 1],
+               KeyW: [1, 0], KeyS: [-1, 0], KeyA: [0, -1], KeyD: [0, 1] };
+  /* A SET of held keys, not one.
+   *
+   * This used to remember a single key, so pressing W and then A replaced the
+   * forward command with a turn instead of adding to it, and letting go of
+   * either one stopped the robot outright. Driving a curve from the keyboard
+   * was impossible - which was a limit of this handler, not of the robot: the
+   * firmware has always taken speed and yaw rate in the same command.
+   *
+   * Summed and clamped, so W+A is forward-and-left and W+A+D is just forward.
+   */
+  var keysDown = Object.create(null);
+
+  function applyKeys() {
+    var forward = 0, turn = 0;
+    for (var k in keysDown) {
+      var v = KEYS[k];
+      if (v) { forward += v[0]; turn += v[1]; }
+    }
+    forward = Math.max(-1, Math.min(1, forward));
+    turn = Math.max(-1, Math.min(1, turn));
+    if (forward === 0 && turn === 0) stopJog();
+    else startJog(forward, turn);
+  }
+
   window.addEventListener('keydown', function (event) {
     if (event.target.tagName === 'INPUT' || event.target.tagName === 'SELECT') return;
-    if (event.key === ' ' || event.key === 'Spacebar') {   // space = stop everything now
-      keyHeld = null;
+    if (event.key === ' ' || event.key === 'Spacebar' || event.code === 'Space') {   // space = stop everything now
+      keysDown = Object.create(null);
       stopJog();
       api('/api/nav', { action: 'pause', reason: 'spacebar' });
       toast('หยุดแล้ว (Space) / stopped', false);
       event.preventDefault();
       return;
     }
-    var key = KEYS[event.key];
-    if (!key || keyHeld === event.key) return;
-    keyHeld = event.key;
-    startJog(key[0], key[1]);
+    
+    var k = KEYS[event.code] ? event.code : (KEYS[event.key] ? event.key : null);
+    if (!k || keysDown[k]) return;
+    keysDown[k] = true;
+    applyKeys();
     event.preventDefault();
   });
   window.addEventListener('keyup', function (event) {
-    if (keyHeld === event.key) { keyHeld = null; stopJog(); }
+    var k = keysDown[event.code] ? event.code : (keysDown[event.key] ? event.key : null);
+    if (!k) return;
+    delete keysDown[k];
+    applyKeys();
   });
-  window.addEventListener('blur', function () { if (keyHeld) { keyHeld = null; stopJog(); } });
+  // Losing the window must stop the robot: keyup never arrives for a key that
+  // was held when focus went away, so it would otherwise drive on for ever.
+  window.addEventListener('blur', function () {
+    keysDown = Object.create(null);
+    stopJog();
+  });
 
   /* ------------------------------------------------------------------ map */
   var canvas = $('map');
   var ctx = canvas.getContext('2d');
 
   $('mapFit').addEventListener('click', function () { state.fitRequested = true; drawMap(); });
+  if ($('mapWpToggle')) {
+    $('mapWpToggle').addEventListener('click', function() {
+      var content = $('mapWpContent');
+      var chevron = $('mapWpChevron');
+      if (content.style.display === 'none') {
+        content.style.display = 'block';
+        chevron.textContent = '▼';
+      } else {
+        content.style.display = 'none';
+        chevron.textContent = '◀';
+      }
+    });
+  }
+
+  if ($('mapCentre')) {
+    $('mapCentre').addEventListener('click', function () {
+      // Centre on the robot at the CURRENT zoom. Different from Fit, which
+      // re-frames everything and zooms out: while driving you want to keep the
+      // scale you chose and simply stop hunting for the robot.
+      var snap = state.snap || {};
+      var fix = snap.fix || {}, pose = snap.pose || {};
+      var lat = (fix.lat === undefined || fix.lat === null) ? pose.lat : fix.lat;
+      var lon = (fix.lon === undefined || fix.lon === null) ? pose.lon : fix.lon;
+      if (!state.datum || lat === undefined || lat === null) return;
+      var q = enu(lat, lon, state.datum);
+      view.cx = q.x; view.cy = q.y;
+      state.fitRequested = false;
+      drawMap();
+    });
+  }
+  /* Two free basemaps, neither needing an API key or an account.
+   *
+   * Street is the default rather than satellite: a plain grid tells you nothing
+   * about where the robot is, and roads and buildings are what most people
+   * actually navigate by. Satellite is one press away when you want to see the
+   * ground itself.
+   *
+   * Both require internet on the machine running the BROWSER, not on the robot.
+   * With none, tiles simply never arrive and the grid shows through - the map
+   * keeps working, it just has no picture behind it. */
+  var BASEMAPS = {
+    // maxZoom is what each source actually publishes. Ask past it and the tile
+    // server returns nothing, so the map goes blank at exactly the zoom where
+    // it was becoming useful - which reads as a broken satellite view rather
+    // than a zoom level that does not exist. Below the cap the last real tiles
+    // are drawn larger: blurry, but still a street and still a roof.
+    street: {
+      url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      label: '🗺 แผนที่ถนน / Street',
+      attrib: '© OpenStreetMap contributors',
+      maxZoom: 19
+    },
+    satellite: {
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/' +
+           'World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      label: '🛰 ภาพดาวเทียม / Satellite',
+      attrib: 'ภาพ / imagery © Esri, Maxar, Earthstar Geographics',
+      maxZoom: 19
+    },
+    none: { url: null, label: '▦ ตารางอย่างเดียว / Grid only', attrib: '' }
+  };
+  var BASEMAP_ORDER = ['street', 'satellite', 'none'];
+
+  /* Where to look when the robot has no fix yet.
+   *
+   * Without this the map was a blank grid until the first satellite lock, which
+   * is most of the time indoors and all of the time on a bench. A blank grid
+   * cannot be panned to anywhere useful either, because with no datum there is
+   * no latitude to turn screen metres into - so the imagery never loaded and
+   * the basemap buttons appeared broken.
+   *
+   * Bangkok, because that is where this robot is. It is a VIEW, never a
+   * position: no robot marker is drawn against it, and the banner still says
+   * plainly that there is no fix. The moment a real fix arrives the datum
+   * becomes that fix and this is not used again.
+   */
+  var FALLBACK_DATUM = { lat: 13.7563, lon: 100.5018, fallback: true };
+
+  function applyBasemap() {
+    var def = BASEMAPS[state.basemap] || BASEMAPS.street;
+    var b = $('mapSat');
+    if (b) {
+      b.textContent = def.label;
+      b.className = (state.basemap === 'none') ? 'btn' : 'btn go';
+    }
+    text('mapAttrib', def.attrib || '');
+    try { window.localStorage.setItem('gpsLocalizeBasemap', state.basemap); } catch (e) { /* private */ }
+  }
+  if ($('mapSat')) {
+    $('mapSat').addEventListener('click', function () {
+      // Cycle rather than toggle: three states do not fit one on/off button,
+      // and the label always names what you are about to look at.
+      var i = BASEMAP_ORDER.indexOf(state.basemap);
+      state.basemap = BASEMAP_ORDER[(i + 1) % BASEMAP_ORDER.length];
+      applyBasemap();
+      drawMap();
+    });
+    try {
+      var saved = window.localStorage.getItem('gpsLocalizeBasemap');
+      if (saved && BASEMAPS[saved]) state.basemap = saved;
+    } catch (e) { /* private mode */ }
+    applyBasemap();
+  }
   $('mapClear').addEventListener('click', function () { state.trail = []; drawMap(); });
 
   var view = { scale: 4, cx: 0, cy: 0 };
@@ -958,23 +1949,6 @@
     return value || fallback;
   }
 
-
-  /* Compass rose, top-right of the map.
-   *
-   * The robot marker already points where the robot is heading, but on a blank
-   * field that tells you nothing about WHICH WAY IS NORTH, and nothing about
-   * where the heading is coming from. This draws both:
-   *
-   *   outer ring + N/E/S/W   which way north is
-   *   solid needle           the fused heading, what the robot steers by
-   *   hollow needle          the raw QMC5883 compass, only when it is fitted
-   *                          and healthy, so you can see it disagree
-   *   caption                the numeric heading and its source
-   *
-   * When the two needles separate, the magnetometer is being pulled by
-   * something - which is exactly the moment you want to see it, not a number
-   * buried on another tab.
-   */
 
   /* ------------------------------ topics -------------------------------
    * The whole ROS graph, in the browser.
@@ -1086,80 +2060,6 @@
     refresh();
   }
 
-  function drawCompass(ctx, canvas, snap) {
-    var t = (snap && snap.telemetry) || {};
-    var heading = t.heading_deg;
-    if (heading === undefined || heading === null) return;
-
-    var r = 40;
-    var cx = canvas.width - r - 22;
-    var cy = r + 22;
-
-    ctx.save();
-    ctx.globalAlpha = 0.92;
-
-    // dial
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.fillStyle = cssVar('--card', '#14181f');
-    ctx.fill();
-    ctx.strokeStyle = cssVar('--line', '#2a323d');
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-
-    // cardinal letters
-    ctx.font = '10px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    var marks = [['N', 0], ['E', 90], ['S', 180], ['W', 270]];
-    for (var i = 0; i < marks.length; i++) {
-      var a = marks[i][1] * Math.PI / 180;
-      var lx = cx + Math.sin(a) * (r - 9);
-      var ly = cy - Math.cos(a) * (r - 9);
-      ctx.fillStyle = marks[i][0] === 'N' ? cssVar('--err', '#e0524a')
-                                         : cssVar('--mut', '#8b95a3');
-      ctx.fillText(marks[i][0], lx, ly);
-    }
-
-    // raw magnetometer, only when a healthy compass is actually fitted
-    if (t.mag_status === 1 && t.mag_heading_deg !== undefined &&
-        t.mag_heading_deg !== null) {
-      needle(ctx, cx, cy, r - 16, t.mag_heading_deg,
-             cssVar('--warn', '#d79b3c'), false);
-    }
-    // fused heading: what the robot actually steers by
-    needle(ctx, cx, cy, r - 12, heading, cssVar('--acc', '#4c8dff'), true);
-
-    ctx.beginPath();
-    ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
-    ctx.fillStyle = cssVar('--txt', '#e6e9ef');
-    ctx.fill();
-
-    // numeric heading and where it comes from
-    ctx.font = '11px system-ui, sans-serif';
-    ctx.fillStyle = cssVar('--txt', '#e6e9ef');
-    ctx.fillText(Math.round(((heading % 360) + 360) % 360) + '\u00B0', cx, cy + r + 12);
-    // Position uncertainty, if the EKF has anything to say. A map dot that
-    // looks equally confident while coasting blind is a lie to the driver.
-    if (t.pos_sigma_m !== undefined && t.pos_sigma_m !== null && t.pos_anchored) {
-      ctx.font = '9px system-ui, sans-serif';
-      ctx.fillStyle = t.pos_sigma_m > 3 ? cssVar('--warn', '#d79b3c')
-                                        : cssVar('--mut', '#8b95a3');
-      ctx.fillText('\u00B1' + t.pos_sigma_m.toFixed(1) + ' m', cx, cy + r + 48);
-    }
-    if (t.heading_ref_name) {
-      ctx.font = '9px system-ui, sans-serif';
-      ctx.fillStyle = cssVar('--mut', '#8b95a3');
-      ctx.fillText(t.heading_ref_name, cx, cy + r + 24);
-    }
-    if (t.mag_status === 2) {
-      ctx.font = '9px system-ui, sans-serif';
-      ctx.fillStyle = cssVar('--warn', '#d79b3c');
-      ctx.fillText('\u0E41\u0E21\u0E48\u0E40\u0E2B\u0E25\u0E47\u0E01\u0E23\u0E1A\u0E01\u0E27\u0E19', cx, cy + r + 36);
-    }
-    ctx.restore();
-  }
-
   /** One needle at a compass bearing. Filled = the heading in use. */
   function needle(ctx, cx, cy, len, deg, colour, filled) {
     var a = (((deg % 360) + 360) % 360) * Math.PI / 180;
@@ -1193,6 +2093,216 @@
     }
   }
 
+  /* ------------------------------------------------- satellite imagery layer */
+  /* Esri World Imagery: free, no API key, no account. The tiles are Web
+   * Mercator, while this map is a flat local-metre (ENU) grid centred on the
+   * datum - so each tile is projected through latLon() rather than blitted, and
+   * over the tens of metres a robot works in the two agree closely enough that
+   * the error is far smaller than a GPS fix.
+   *
+   * Needs internet on the machine running the browser. When there is none the
+   * tiles simply never load and the plain grid shows through, which is the
+   * right failure: the map still works, it just has no picture behind it.
+   *
+   * Esri's terms require the attribution drawn in drawMap(). */
+  var tileCache = {};      // "layer/z/x/y" -> Image
+
+
+  function lonToTileX(lon, z) { return (lon + 180) / 360 * Math.pow(2, z); }
+  function latToTileY(lat, z) {
+    var r = lat * Math.PI / 180;
+    return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * Math.pow(2, z);
+  }
+  function tileXToLon(x, z) { return x / Math.pow(2, z) * 360 - 180; }
+  function tileYToLat(y, z) {
+    var n = Math.PI - 2 * Math.PI * y / Math.pow(2, z);
+    return 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+  }
+
+  function tile(layer, z, x, y) {
+    var key = layer + '/' + z + '/' + x + '/' + y;
+    if (tileCache[key]) return tileCache[key];
+    var def = BASEMAPS[layer];
+    if (!def || !def.url) return { ready: false };
+    var img = new Image();
+    // No crossOrigin: the tiles are only ever drawn, never read back with
+    // getImageData, so requesting CORS buys nothing and would make the load
+    // fail outright against any host that did not grant it.
+    img.onload = function () { img.ready = true; drawMap(); };
+    img.onerror = function () { img.failed = true; };
+    img.src = def.url.replace('{z}', z).replace('{x}', x).replace('{y}', y);
+    tileCache[key] = img;
+    return img;
+  }
+
+  /** Zoom whose tiles are closest to the current pixels-per-metre. */
+  function tileZoomFor(datum) {
+    // Web Mercator ground resolution at this latitude, metres per pixel.
+    // Stop at what the providers publish. Asking for zoom 21 from a source that
+    // ends at 19 returns nothing at all, and the map goes blank exactly when it
+    // is zoomed in far enough to be useful - which reads as "the satellite view
+    // is broken" rather than "that zoom does not exist".
+    var top = (BASEMAPS[state.basemap] && BASEMAPS[state.basemap].maxZoom) || 19;
+    for (var z = top; z >= 1; z--) {
+      var mpp = 156543.03392 * Math.cos(datum.lat * Math.PI / 180) / Math.pow(2, z);
+      if (mpp * view.scale >= 0.75) return z;   // one tile pixel >= ~1 screen pixel
+    }
+    return 1;
+  }
+
+  /* A compass rose, always in the same corner of the map.
+   *
+   * The robot triangle already points where the robot points, but on a wide
+   * view it is a few pixels across and over aerial imagery it disappears - so
+   * "which way is it facing" became a question the map could not answer. This
+   * shows north and the robot's heading side by side, at a fixed size that does
+   * not shrink with zoom, and states the number as well as drawing it. */
+  function drawCompassRose(tel) {
+    var headingDeg = tel.heading_deg;
+    var ref = tel.heading_ref_name;
+    var r = 34, cx = canvas.width - r - 20, cy = r + 20;
+
+    ctx.save();
+    // Its own dark disc, so it is legible over pale street tiles and dark
+    // aerial imagery alike. Everything on top of it is white or a bright
+    // accent, never a theme colour - theme colours are chosen to sit on the
+    // page background, and over imagery half of them vanish.
+    ctx.beginPath();
+    ctx.arc(cx, cy, r + 7, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,.62)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.45)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Cardinals. The map is north-up, so these never move.
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    var marks = [['N', 0], ['E', 90], ['S', 180], ['W', 270]];
+    for (var i = 0; i < marks.length; i++) {
+      var a = marks[i][1] * Math.PI / 180;
+      mapLabel(marks[i][0],
+               cx + Math.sin(a) * (r - 6), cy - Math.cos(a) * (r - 6),
+               marks[i][0] === 'N' ? '#ff6b6b' : 'rgba(255,255,255,.85)',
+               'bold 11px system-ui, sans-serif', 'center');
+    }
+
+    // The RAW magnetometer, hollow, only when a healthy compass is fitted.
+    // When the two needles separate the magnetometer is being pulled by
+    // something, and that is the moment you want to see it - not as a number
+    // on another tab.
+    if (tel.mag_status === 1 && tel.mag_heading_deg !== undefined &&
+        tel.mag_heading_deg !== null) {
+      needle(ctx, cx, cy, r - 12, tel.mag_heading_deg, '#ffb020', false);
+    }
+    // The fused heading, filled: what the robot actually steers by.
+    if (headingDeg !== null && headingDeg !== undefined && !isNaN(headingDeg)) {
+      needle(ctx, cx, cy, r - 7, headingDeg, '#4da3ff', true);
+    }
+    ctx.beginPath();
+    ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+
+    // Caption below the disc: the number, then where it came from. Naming the
+    // SOURCE matters - a heading from the gyro alone drifts, and it should not
+    // look as trustworthy as one from the compass or the GPS course.
+    var ty = cy + r + 20;
+    if (headingDeg !== null && headingDeg !== undefined && !isNaN(headingDeg)) {
+      mapLabel(Math.round(((headingDeg % 360) + 360) % 360) + '\u00B0', cx, ty,
+               '#ffffff', 'bold 14px system-ui, sans-serif', 'center');
+      ty += 14;
+    }
+    if (ref) {
+      mapLabel(ref, cx, ty, 'rgba(255,255,255,.85)',
+               '10px system-ui, sans-serif', 'center');
+      ty += 13;
+    }
+    if (tel.mag_status === 2) {
+      mapLabel('\u0E41\u0E21\u0E48\u0E40\u0E2B\u0E25\u0E47\u0E01\u0E23\u0E1A\u0E01\u0E27\u0E19 / disturbed',
+               cx, ty, '#ffb020', 'bold 10px system-ui, sans-serif', 'center');
+      ty += 13;
+    }
+    // Position uncertainty. A map dot that looks equally confident while
+    // coasting blind is a lie to the driver.
+    if (tel.pos_sigma_m !== undefined && tel.pos_sigma_m !== null && tel.pos_anchored) {
+      mapLabel('\u00B1' + tel.pos_sigma_m.toFixed(1) + ' m', cx, ty,
+               tel.pos_sigma_m > 3 ? '#ffb020' : 'rgba(255,255,255,.8)',
+               '10px system-ui, sans-serif', 'center');
+    }
+
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.restore();
+  }
+
+  /* Text that stays readable on ANY background.
+   *
+   * The map draws over three completely different grounds - a dark grid, pale
+   * street tiles and dark aerial imagery - and a single fill colour cannot work
+   * on all of them. Every label on the map is stroked with a dark casing first
+   * and filled after, which is what paper maps have always done.
+   */
+  function mapLabel(text, x, y, colour, font, align) {
+    ctx.save();
+    ctx.font = font || 'bold 12px system-ui, sans-serif';
+    ctx.textAlign = align || 'left';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 3.5;
+    ctx.strokeStyle = 'rgba(0,0,0,.75)';
+    ctx.strokeText(text, x, y);
+    ctx.fillStyle = colour || '#ffffff';
+    ctx.fillText(text, x, y);
+    ctx.restore();
+  }
+
+  /** A rounded plate to sit controls and readouts on, over any imagery. */
+  function mapPlate(x, y, w, h, r) {
+    r = r === undefined ? 6 : r;
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(0,0,0,.6)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.25)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  function drawBasemap(datum) {
+    var layer = state.basemap || 'street';
+    if (layer === 'none' || !BASEMAPS[layer] || !datum) return;
+    var z = tileZoomFor(datum);
+    // Corners of the visible area, in local metres, then in tile coordinates.
+    var w = canvas.width / view.scale, h = canvas.height / view.scale;
+    var nw = latLon(view.cx - w / 2, view.cy + h / 2, datum);
+    var se = latLon(view.cx + w / 2, view.cy - h / 2, datum);
+    var x0 = Math.floor(lonToTileX(nw.lon, z)), x1 = Math.floor(lonToTileX(se.lon, z));
+    var y0 = Math.floor(latToTileY(nw.lat, z)), y1 = Math.floor(latToTileY(se.lat, z));
+    var span = Math.pow(2, z);
+    // A runaway loop here would hang the page, so cap what one frame may draw.
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) > 64) return;
+
+    for (var tx = x0; tx <= x1; tx++) {
+      for (var ty = y0; ty <= y1; ty++) {
+        if (tx < 0 || ty < 0 || tx >= span || ty >= span) continue;
+        var img = tile(layer, z, tx, ty);
+        if (!img.ready) continue;
+        // Project the tile's own corners, so it lands where it belongs on the
+        // ENU grid rather than being assumed square in screen space.
+        var tl = toScreen(enu(tileYToLat(ty, z), tileXToLon(tx, z), datum));
+        var br = toScreen(enu(tileYToLat(ty + 1, z), tileXToLon(tx + 1, z), datum));
+        var dw = br.x - tl.x, dh = br.y - tl.y;
+        if (dw <= 0 || dh <= 0) continue;
+        try { ctx.drawImage(img, tl.x, tl.y, dw, dh); } catch (e) { /* not decoded yet */ }
+      }
+    }
+  }
+
   function drawMap() {
     var line = token('--line', '#2b3240');
     var muted = token('--mut', '#9aa6b8');
@@ -1209,6 +2319,11 @@
     var points = [];
     var wpPoints = [];
 
+    // The datum the PICTURE is drawn against. A real fix when there is one,
+    // Bangkok otherwise, so the map is something to look at rather than a blank
+    // grid - see FALLBACK_DATUM. Positions are still only drawn from a real fix.
+    var datum = state.datum || FALLBACK_DATUM;
+
     if (state.datum) {
       state.waypoints.forEach(function (wp) {
         var p = enu(wp.lat, wp.lon, state.datum);
@@ -1221,25 +2336,73 @@
 
     if (state.fitRequested) { fitView(points); state.fitRequested = false; }
 
-    // empty state: no datum yet means the map cannot mean anything
+    // The banner stays even though there is now a picture behind it. Imagery is
+    // not a fix, and a map that looks populated while the robot has no idea
+    // where it is would be the most misleading thing on the page.
     $('mapEmpty').className = state.datum ? 'empty hidden' : 'empty';
+    if (!state.datum) {
+      // Name the actual reason. "No satellites" and "the robot is offline" need
+      // completely different responses, and an empty map alone cannot tell them
+      // apart - which is exactly how a working robot gets reported as dead.
+      var sats = (snap.telemetry || {}).gps_satellites;
+      var linked = (snap.telemetry_age_s !== undefined && snap.telemetry_age_s !== null
+                    && snap.telemetry_age_s < 5);
+      text('mapEmptyWhy', !linked
+        ? '— ยังไม่ได้รับข้อมูลจากหุ่น / no telemetry from the robot yet. '
+        : ('— หุ่นเชื่อมต่ออยู่ แต่ GPS ยังจับดาวเทียมไม่ได้ (' + (Math.round(sats || 0))
+           + ' ดวง) / robot IS connected, GPS has ' + (Math.round(sats || 0))
+           + ' satellites and no fix. '));
+      text('mapEmptyWhere', 'กำลังแสดงกรุงเทพฯ ไว้ก่อน — ยังไม่ใช่ตำแหน่งหุ่น / '
+           + 'showing Bangkok until there is a fix - this is NOT the robot\u2019s position');
+    }
+
+    // Position readout: the raw numbers, so a fix can be checked against a phone
+    // or typed into a map, without reading them off the canvas.
+    var sats = (snap.telemetry || {}).gps_satellites;
+    text('mapLatLon', (fix.lat !== undefined && fix.lat !== null)
+      ? (fix.lat.toFixed(6) + ', ' + fix.lon.toFixed(6)) : '—');
+    text('mapAlt', (fix.alt !== undefined && fix.alt !== null)
+      ? (fix.alt.toFixed(1) + ' m') : '—');
+    text('mapSats', (sats === undefined || sats === null) ? '—' : String(Math.round(sats)));
+
+    // Imagery first, so everything else is drawn on top of the picture.
+    drawBasemap(datum);
 
     // grid, 5 m spacing (or coarser when zoomed out)
-    var step = 5;
-    while (step * view.scale < 40) step *= 2;
-    ctx.strokeStyle = line;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    var half = Math.ceil(Math.max(canvas.width, canvas.height) / view.scale / 2) + step;
-    for (var g = -half; g <= half; g += step) {
-      var a = toScreen({ x: view.cx + g, y: view.cy - half });
-      var b = toScreen({ x: view.cx + g, y: view.cy + half });
-      ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
-      var c = toScreen({ x: view.cx - half, y: view.cy + g });
-      var d = toScreen({ x: view.cx + half, y: view.cy + g });
-      ctx.moveTo(c.x, c.y); ctx.lineTo(d.x, d.y);
+    /* Grid and scale-bar step, on a 1-2-5 ladder starting at ten centimetres.
+     *
+     * It used to start at 5 m and double: 5, 10, 20, 40, 80, 160, 320. Zoomed
+     * in, the finest thing it could draw was 5 m and in practice it sat at 20,
+     * so a compact space - a courtyard, a dormitory car park - had no usable
+     * scale at all; everything worth measuring was smaller than one grid
+     * square. Doubling also produced 40, 80 and 160, which nobody thinks in.
+     *
+     * 1-2-5 gives 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100 ... - the steps a
+     * tape measure has, and it reaches the small end where the testing is. */
+    var LADDER = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500,
+                  1000, 2000, 5000, 10000];
+    var step = LADDER[LADDER.length - 1];
+    for (var li = 0; li < LADDER.length; li++) {
+      if (LADDER[li] * view.scale >= 40) { step = LADDER[li]; break; }
     }
-    ctx.stroke();
+    // Build the grid path once, then paint it twice.
+    if ((state.basemap || 'street') === 'none') {
+      ctx.save();
+      var half = Math.ceil(Math.max(canvas.width, canvas.height) / view.scale / 2) + step;
+      ctx.beginPath();
+      for (var g = -half; g <= half; g += step) {
+        var a = toScreen({ x: view.cx + g, y: view.cy - half });
+        var b = toScreen({ x: view.cx + g, y: view.cy + half });
+        ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        var c = toScreen({ x: view.cx - half, y: view.cy + g });
+        var d = toScreen({ x: view.cx + half, y: view.cy + g });
+        ctx.moveTo(c.x, c.y); ctx.lineTo(d.x, d.y);
+      }
+      ctx.strokeStyle = line;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.restore();
+    }
 
     // trail
     if (state.trail.length > 1) {
@@ -1253,6 +2416,40 @@
       ctx.stroke();
     }
 
+    // path between waypoints
+    if (wpPoints.length > 1) {
+      ctx.save();
+      ctx.strokeStyle = muted;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+
+      for (var i = 0; i < wpPoints.length - 1; i++) {
+        var s1 = toScreen(wpPoints[i]);
+        var s2 = toScreen(wpPoints[i+1]);
+        
+        ctx.beginPath();
+        ctx.moveTo(s1.x, s1.y);
+        ctx.lineTo(s2.x, s2.y);
+        ctx.stroke();
+
+        var d = Math.sqrt((wpPoints[i+1].x - wpPoints[i].x) * (wpPoints[i+1].x - wpPoints[i].x) + (wpPoints[i+1].y - wpPoints[i].y) * (wpPoints[i+1].y - wpPoints[i].y));
+        mapLabel(d.toFixed(1) + ' m', (s1.x + s2.x) / 2, (s1.y + s2.y) / 2, '#9aa6b8', '11px system-ui, sans-serif', 'center');
+      }
+
+      var loopCheck = $('wpLoopToggle');
+      if (loopCheck && loopCheck.checked && wpPoints.length > 2) {
+        var first = toScreen(wpPoints[0]);
+        var last = toScreen(wpPoints[wpPoints.length - 1]);
+        ctx.beginPath();
+        ctx.moveTo(last.x, last.y);
+        ctx.lineTo(first.x, first.y);
+        ctx.stroke();
+        var dLoop = Math.sqrt((wpPoints[0].x - wpPoints[wpPoints.length - 1].x) * (wpPoints[0].x - wpPoints[wpPoints.length - 1].x) + (wpPoints[0].y - wpPoints[wpPoints.length - 1].y) * (wpPoints[0].y - wpPoints[wpPoints.length - 1].y));
+        mapLabel(dLoop.toFixed(1) + ' m', (first.x + last.x) / 2, (first.y + last.y) / 2, '#9aa6b8', '11px system-ui, sans-serif', 'center');
+      }
+      ctx.restore();
+    }
+
     // waypoints
     wpPoints.forEach(function (p, i) {
       var s = toScreen(p);
@@ -1261,9 +2458,30 @@
       ctx.beginPath();
       ctx.arc(s.x, s.y, isTarget ? 9 : 6, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = muted;
-      ctx.font = '12px system-ui, sans-serif';
-      ctx.fillText((i + 1) + '. ' + (p.name || ''), s.x + 10, s.y - 8);
+
+      // Draw heading arrow if dragging this WP, or if it has a saved heading
+      var heading = null;
+      if (state.wpDrag && state.wpDrag.index === i) {
+        var dx = state.wpDrag.to.x - enu(state.wpDrag.from.lat, state.wpDrag.from.lon, state.datum).x;
+        var dy = state.wpDrag.to.y - enu(state.wpDrag.from.lat, state.wpDrag.from.lon, state.datum).y;
+        if (Math.hypot(dx, dy) > 0.3) heading = (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;
+      } else if (state.waypoints[i] && state.waypoints[i].heading_deg !== undefined && state.waypoints[i].heading_deg !== null) {
+        heading = state.waypoints[i].heading_deg;
+      }
+      
+      if (heading !== null) {
+        var rad = heading * Math.PI / 180;
+        ctx.beginPath();
+        ctx.moveTo(s.x, s.y);
+        ctx.lineTo(s.x + Math.sin(rad) * 20, s.y - Math.cos(rad) * 20);
+        ctx.strokeStyle = ctx.fillStyle;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      // Cased, so a waypoint name is readable over aerial imagery too.
+      mapLabel((i + 1) + '. ' + (p.name || ''), s.x + 11, s.y - 7, '#ffffff',
+               'bold 12px system-ui, sans-serif', 'left');
     });
 
     // robot: GPS position when there is one, otherwise the dead-reckoned
@@ -1284,8 +2502,14 @@
       ctx.translate(robot.x, robot.y);
       ctx.rotate(heading);                 // compass degrees: 0 = up = north
       ctx.beginPath();
-      ctx.moveTo(0, -14); ctx.lineTo(9, 10); ctx.lineTo(0, 5); ctx.lineTo(-9, 10);
+      ctx.moveTo(0, -16); ctx.lineTo(10, 11); ctx.lineTo(0, 6); ctx.lineTo(-10, 11);
       ctx.closePath();
+      // Dark outline first, so the marker reads against grass, tarmac or a pale
+      // roof alike. A green triangle on aerial imagery of a green field is
+      // invisible, and this is the one thing on the map you must never lose.
+      ctx.strokeStyle = 'rgba(0,0,0,.85)';
+      ctx.lineWidth = 4;
+      ctx.stroke();
       if (reckoned) {                      // hollow orange = estimated, not measured
         ctx.strokeStyle = warnColor;
         ctx.lineWidth = 2;
@@ -1293,6 +2517,9 @@
       } else {
         ctx.fillStyle = okColor;
         ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
       }
       ctx.restore();
       if (reckoned) {
@@ -1301,17 +2528,64 @@
         ctx.fillText('ประมาณจากล้อ/IMU (ไม่มี GPS)', robot.x + 14, robot.y + 4);
       }
 
-      if (nav.state === 'RUNNING' && wpPoints[nav.index]) {
-        var target = toScreen(wpPoints[nav.index]);
+      // Line to the next waypoint, drawn whether or not a mission is running.
+      //
+      // It used to appear only while RUNNING, which is backwards: the moment you
+      // most want to see where the robot is heading is BEFORE you press start,
+      // to check you picked the right point. Solid while driving there, faint
+      // while merely planned, and labelled with the distance so the map answers
+      // "how far?" without measuring it by eye.
+      var targetObj = null;
+      var targetScreen = null;
+      var running = (nav.state === 'RUNNING' || nav.state === 'DISCOVER' || nav.state === 'BLOCKED');
+      var isTempTarget = false;
+
+      if (running && nav.target && nav.target.lat !== undefined) {
+        targetObj = enu(nav.target.lat, nav.target.lon, state.datum);
+        targetScreen = toScreen(targetObj);
+        isTempTarget = (nav.index === undefined || nav.index < 0);
+      } else if (!running && state.waypoints.length > 0) {
+        targetObj = wpPoints[0];
+        targetScreen = toScreen(targetObj);
+      }
+
+      if (targetScreen) {
+        var runningDash = (nav.state === 'RUNNING');
+        ctx.save();
         ctx.strokeStyle = warnColor;
-        ctx.setLineDash([6, 6]);
+        ctx.lineWidth = runningDash ? 2 : 1.5;
+        if (!runningDash) ctx.globalAlpha = 0.55;
+        ctx.setLineDash(runningDash ? [6, 6] : [3, 7]);
         ctx.beginPath();
         ctx.moveTo(robot.x, robot.y);
-        ctx.lineTo(target.x, target.y);
+        ctx.lineTo(targetScreen.x, targetScreen.y);
         ctx.stroke();
         ctx.setLineDash([]);
+        
+        // If it's a temp target, draw a dot so it's visible on the map
+        if (isTempTarget) {
+            ctx.fillStyle = warnColor;
+            ctx.beginPath();
+            ctx.arc(targetScreen.x, targetScreen.y, 9, 0, Math.PI * 2);
+            ctx.fill();
+            mapLabel('จุดที่กด / Clicked', targetScreen.x + 11, targetScreen.y - 7, '#ffffff',
+                     'bold 12px system-ui, sans-serif', 'left');
+        }
+
+        var rp = enu(fixForDraw.lat, fixForDraw.lon, state.datum);
+        var d = Math.sqrt((targetObj.x - rp.x) * (targetObj.x - rp.x) + (targetObj.y - rp.y) * (targetObj.y - rp.y));
+        ctx.globalAlpha = 1;
+        mapLabel(d.toFixed(1) + ' m' + (runningDash ? '' : ' (ยังไม่เริ่ม / not started)'),
+                 (robot.x + targetScreen.x) / 2 + 8, (robot.y + targetScreen.y) / 2 - 6,
+                 '#ffd479', 'bold 12px system-ui, sans-serif', 'left');
+        ctx.restore();
       }
     }
+
+    // Compass rose LAST, so it sits over everything - imagery, grid and trail -
+    // and is never hidden by whatever the map happens to be showing.
+    var tel = snap.telemetry || {};
+    drawCompassRose(tel);
 
     // pose arrow being dragged (RViz style: base where it is, arrow where it looks)
     if (state.poseTool.drag && state.datum) {
@@ -1336,6 +2610,22 @@
       ctx.stroke();
     }
 
+    // new waypoint arrow being dragged
+    if (typeof newWpDrag !== 'undefined' && newWpDrag && state.datum) {
+      var from = toScreen(enu(newWpDrag.from.lat, newWpDrag.from.lon, state.datum));
+      var to = toScreen(newWpDrag.to);
+      ctx.strokeStyle = '#35c46a';
+      ctx.fillStyle = '#35c46a';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(from.x, from.y, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     // point picked with the mouse / finger
     if (state.picked && state.datum) {
       var pick = toScreen(state.picked);
@@ -1350,18 +2640,33 @@
       ctx.stroke();
     }
 
-    // scale bar
-    ctx.fillStyle = muted;
-    ctx.font = '12px system-ui, sans-serif';
-    ctx.fillText(step + ' m', 14, canvas.height - 14);
-    ctx.strokeStyle = muted;
+    // Scale bar, on its own plate with end ticks.
+    //
+    // It used to be a thin --mut line and --mut text straight onto the map,
+    // which over imagery was invisible - so the one control that tells you how
+    // big anything is could not be read in satellite view. The plate makes it
+    // work on any ground, and the ticks make the length readable rather than
+    // just suggested.
+    var barLen = Math.max(30, step * view.scale);
+    var bx = 14, by = canvas.height - 30, bh = 24;
+    mapPlate(bx - 6, by - 4, barLen + 70, bh, 6);
+    var y0 = by + 14;
+    ctx.save();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(60, canvas.height - 18);
-    ctx.lineTo(60 + step * view.scale, canvas.height - 18);
+    ctx.moveTo(bx, y0); ctx.lineTo(bx + barLen, y0);
+    ctx.moveTo(bx, y0 - 5); ctx.lineTo(bx, y0 + 5);
+    ctx.moveTo(bx + barLen, y0 - 5); ctx.lineTo(bx + barLen, y0 + 5);
     ctx.stroke();
-  
-    // drawn last so the rose sits on top of the map content
-    drawCompass(ctx, canvas, snap);
+    ctx.restore();
+    // Kilometres once the step passes a thousand metres, and no trailing zeros
+    // on the fractional steps - "0.5 m" rather than "0.5000000000000001 m",
+    // which is what a float ladder prints if it is handed straight to a string.
+    var stepText = step >= 1000 ? (step / 1000) + ' km'
+                 : (Math.round(step * 100) / 100) + ' m';
+    mapLabel(stepText, bx + barLen + 8, y0 + 4, '#ffffff',
+             'bold 12px system-ui, sans-serif', 'left');
   }
 
   /* ------------------------------- start pose tool (RViz 2D Pose Estimate) */
@@ -1452,7 +2757,7 @@
    * a value the board has not reported reads "—" rather than showing the
    * default as though it were live, and a STOPPED parameter is disabled while
    * the robot is moving with the reason attached rather than failing on save. */
-  var paramsState = { moving: false, entries: [] };
+  var paramsState = { moving: false, entries: [], group: null };
 
   function paramRow(p) {
     var row = document.createElement('div');
@@ -1471,6 +2776,12 @@
     input.id = 'param_' + p.index;
     input.value = (p.value === null || p.value === undefined) ? '' : p.value;
     input.placeholder = (p.value === null || p.value === undefined) ? '—' : '';
+    // What the BOARD said, kept beside what the field now shows, so "write all"
+    // can send only what someone actually changed rather than all eighty-five.
+    input.dataset.key = p.key;
+    if (p.value !== null && p.value !== undefined) {
+      input.dataset.boardValue = p.value;
+    }
 
     var blocked = (p.when === 'stopped' && paramsState.moving);
     input.disabled = blocked;
@@ -1510,10 +2821,150 @@
     return row;
   }
 
+  /* Grouped and filterable, because 23 values in one flat scroll is a list you
+   * hunt through rather than one you use. The group tabs mirror the Settings
+   * page so both feel like the same control, and the filter searches the help
+   * text as well as the key - people look for "diode" or "battery", not for
+   * "motor.a.diode_vf". */
+  function renderParamGroups() {
+    var box = $('paramsForm');
+    var tabs = $('paramGroups');
+    var f = $('paramsFilter');
+    var filter = ((f && f.value) || '').trim().toLowerCase();
+    if (!box) return;
+
+    var matches = paramsState.entries.filter(function (p) {
+      if (!filter) return true;
+      return (p.key + ' ' + (p.help || '') + ' ' + (p.group || ''))
+        .toLowerCase().indexOf(filter) >= 0;
+    });
+
+    var groups = {};
+    matches.forEach(function (p) { (groups[p.group] = groups[p.group] || []).push(p); });
+    var names = Object.keys(groups).sort();
+
+    if (tabs) { tabs.textContent = ''; }
+    box.textContent = '';
+
+    // A filter that matches nothing must say so, not leave a blank page.
+    if (!names.length) {
+      var none = document.createElement('p');
+      none.className = 'hint';
+      none.textContent = 'ไม่พบ / nothing matches "' + filter + '"';
+      box.appendChild(none);
+      return;
+    }
+
+    if (names.indexOf(paramsState.group) < 0) { paramsState.group = names[0]; }
+    if (tabs) {
+      names.forEach(function (name) {
+        var b = document.createElement('button');
+        b.textContent = name + ' (' + groups[name].length + ')';
+        b.className = (name === paramsState.group) ? 'active' : '';
+        b.addEventListener('click', function () {
+          paramsState.group = name;
+          renderParamGroups();
+        });
+        tabs.appendChild(b);
+      });
+    }
+    (groups[paramsState.group] || []).forEach(function (p) {
+      box.appendChild(paramRow(p));
+    });
+  }
+
+  /* ------------------------------------------------------- geometry tab ---
+   * The same parameters as the settings page, laid out by the THING they
+   * describe rather than as one alphabetical list.
+   *
+   * Flat, they were unusable: 42 rows where every mount looks like every other
+   * mount, and "geometry.caster.fl.qy" tells you nothing about which part it
+   * belongs to until you have parsed the whole name. Grouped, each card is one
+   * physical object you can point at on the robot, with its position and its
+   * rotation together - which is how you measure it, and therefore how you
+   * should enter it.
+   */
+  var GEOM_MOUNTS = [
+    ['wheel.l',   'ล้อขับซ้าย (หลัง) / Left drive wheel, REAR',   'ใช้จริงในการคำนวณ / used by the maths'],
+    ['wheel.r',   'ล้อขับขวา (หลัง) / Right drive wheel, REAR',   'ใช้จริงในการคำนวณ / used by the maths'],
+    ['caster.fl', 'ล้อหมุนหน้าซ้าย / Front-LEFT caster',          'บันทึกไว้เฉย ๆ / recorded only'],
+    ['caster.fr', 'ล้อหมุนหน้าขวา / Front-RIGHT caster',          'บันทึกไว้เฉย ๆ / recorded only'],
+    ['gps',      'เสาอากาศ GPS / GPS antenna',  'ตำแหน่งใช้จริง ทิศทางไม่ใช้ / position used, rotation not'],
+    ['imu',      'ไอเอ็มยู / IMU',              'ใช้จริงในการคำนวณ / used by the maths']
+  ];
+
+  function geomParam(key) {
+    var list = paramsState && paramsState.entries;
+    if (!list) return null;
+    for (var i = 0; i < list.length; i++) if (list[i].key === key) return list[i];
+    return null;
+  }
+
+  function renderGeometry() {
+    var box = $('geomCards');
+    if (!box) return;
+    if (!(paramsState && paramsState.entries.length)) {
+      box.textContent = '';
+      text('geomMsg', 'ยังไม่ได้รับค่าจากบอร์ด / no values from the board yet');
+      return;
+    }
+    text('geomMsg', '');
+    box.textContent = '';
+
+    GEOM_MOUNTS.forEach(function (m) {
+      var prefix = 'geometry.' + m[0] + '.';
+      var card = document.createElement('div');
+      card.className = 'card';
+
+      var h = document.createElement('h3');
+      h.textContent = m[1];
+      var small = document.createElement('small');
+      small.textContent = m[2];
+      h.appendChild(small);
+      card.appendChild(h);
+
+      var pos = document.createElement('div');
+      pos.className = 'cfg-form';
+      ['x', 'y', 'z'].forEach(function (ax) {
+        var p = geomParam(prefix + ax);
+        if (p) pos.appendChild(paramRow(p));
+      });
+      card.appendChild(pos);
+
+      // Which rotation form this mount is using. Showing both at once would
+      // invite entering both and expecting them to agree; only one is read.
+      var mode = geomParam(prefix + 'rot_mode');
+      var useQuat = mode && Math.round(mode.value) === 1;
+      var rot = document.createElement('div');
+      rot.className = 'cfg-form';
+      if (mode) rot.appendChild(paramRow(mode));
+      (useQuat ? ['qw', 'qx', 'qy', 'qz'] : ['roll', 'pitch', 'yaw']).forEach(function (k) {
+        var p = geomParam(prefix + k);
+        if (p) rot.appendChild(paramRow(p));
+      });
+      var note = document.createElement('p');
+      note.className = 'hint';
+      note.textContent = useQuat
+        ? 'โหมดควอเทอร์เนียน — ค่ามุม roll/pitch/yaw ถูกละไว้ / quaternion mode: the '
+          + 'roll, pitch and yaw fields are ignored, not blended in'
+        : 'โหมดมุม — ค่าควอเทอร์เนียนถูกละไว้ / angle mode: the quaternion fields are '
+          + 'ignored, not blended in';
+      rot.appendChild(note);
+      card.appendChild(rot);
+
+      box.appendChild(card);
+    });
+  }
+
+  if ($('geomReload')) $('geomReload').addEventListener('click', loadParams);
+
   function loadParams() {
     var box = $('paramsForm');
     if (!box) return;
     api('/api/params').then(function (r) {
+      (((r && r.params) || [])).forEach(function (p) {
+        if (p.key === 'robot.wheel_diameter') { state.wheelDiameterM = p.value; }
+      });
       if (!r || !r.ok) { box.textContent = 'อ่านค่าไม่ได้ / cannot read parameters'; return; }
       paramsState.moving = !!r.moving;
       paramsState.entries = r.params || [];
@@ -1528,21 +2979,63 @@
         box.appendChild(warn);
       }
 
-      var groups = {};
-      paramsState.entries.forEach(function (p) {
-        (groups[p.group] = groups[p.group] || []).push(p);
-      });
-      Object.keys(groups).forEach(function (name) {
-        var head = document.createElement('h4');
-        head.textContent = name;
-        box.appendChild(head);
-        groups[name].forEach(function (p) { box.appendChild(paramRow(p)); });
-      });
+      renderParamGroups();
+      renderGeometry();
     });
   }
 
+  if ($('paramsFilter')) {
+    $('paramsFilter').addEventListener('input', renderParamGroups);
+  }
   if ($('paramsReload')) {
     $('paramsReload').addEventListener('click', loadParams);
+  }
+
+  /* Write every field that differs from what the board holds, in one press.
+   *
+   * Setting values one at a time is fine for changing one number and miserable
+   * for the case this exists for: bringing a robot's whole configuration back
+   * after a reset, or copying a set of geometry measurements in. Only the
+   * CHANGED fields are sent - writing all eighty-five every time would put
+   * pointless wear on the board's flash and would step on values somebody else
+   * had just set.
+   *
+   * Sent one after another rather than all at once, because each write is
+   * bounds-checked on the board and can be refused on its own, and a refusal
+   * has to name the parameter it refused. */
+  if ($('paramsWriteAll')) {
+    $('paramsWriteAll').addEventListener('click', function () {
+      var inputs = $('paramsForm').querySelectorAll('input[data-key]');
+      var pending = [];
+      Array.prototype.forEach.call(inputs, function (input) {
+        var value = parseFloat(input.value);
+        if (isNaN(value)) return;
+        // dataset.boardValue is what the board said when the form was built.
+        var onBoard = parseFloat(input.dataset.boardValue);
+        if (!isNaN(onBoard) && Math.abs(onBoard - value) < 1e-9) return;
+        if (input.disabled) return;            // stopped-only, robot is moving
+        pending.push({ key: input.dataset.key, value: value });
+      });
+      if (!pending.length) {
+        $('paramsMsg').textContent = 'ไม่มีอะไรเปลี่ยน / nothing has been changed';
+        return;
+      }
+      var done = 0, failed = [];
+      $('paramsMsg').textContent = 'กำลังเขียน / writing ' + pending.length + '…';
+      (function next() {
+        if (!pending.length) {
+          $('paramsMsg').textContent = done + ' เขียนแล้ว / written' +
+            (failed.length ? '  ·  ไม่สำเร็จ / refused: ' + failed.join(', ') : '  ✓');
+          setTimeout(loadParams, 800);
+          return;
+        }
+        var item = pending.shift();
+        api('/api/params', item).then(function (r) {
+          if (r && r.ok) done++; else failed.push(item.key);
+          next();
+        });
+      })();
+    });
   }
   if ($('paramsReset')) {
     $('paramsReset').addEventListener('click', function () {
@@ -1622,7 +3115,29 @@
    *
    * Zooming about the CURSOR rather than the centre is what makes it feel like
    * a map - the point under your finger stays under your finger. */
-  var MIN_SCALE = 0.15, MAX_SCALE = 400;
+  /* How far in and out the map will go, in pixels per metre.
+   *
+   * The old floor of 0.15 gave about six kilometres across a laptop canvas,
+   * which sounds like plenty until you want to see where the robot is relative
+   * to somewhere it is not. The old ceiling was generous in theory and useless
+   * in practice, because the grid could not label anything finer than 20 m -
+   * see the step ladder in drawMap. Testing in a courtyard or a dormitory car
+   * park means reading metres, not tens of metres.
+   *
+   * 0.02 px/m is roughly 45 km across; 600 px/m is about a metre and a half.
+   * Both ends are far past what is useful, which is the point: the limit should
+   * be a backstop, not something anybody meets while working. */
+  /* 0.0008 px/m is about 1000 km across a laptop canvas; 900 px/m is about one
+   * metre. Both were asked for directly: the wide end to see where the robot is
+   * relative to somewhere it is not, and the close end to test in a courtyard
+   * where everything worth measuring is smaller than a car.
+   *
+   * The imagery keeps up at both ends. tileZoomFor picks the tile zoom that
+   * matches the pixels per metre and stops at what the providers actually
+   * publish, so beyond that the last real tiles are simply drawn larger -
+   * blurry, but still a street and still a roof, which is what the close end is
+   * for. */
+  var MIN_SCALE = 0.0008, MAX_SCALE = 900;
   var pan = null;
   var pointers = {};
   var pinchStart = null;
@@ -1657,6 +3172,12 @@
     zoomAbout(at.x, at.y, event.deltaY < 0 ? 1.15 : 1 / 1.15);
   }, { passive: false });
 
+  var wpDragWasClick = false;
+  var newWpTimer = null;
+  var newWpDrag = null;
+  var rightClickWp = -1;
+  var pointerDownLoc = null;
+
   canvas.addEventListener('pointerdown', function (event) {
     pointers[event.pointerId] = eventToCanvas(event);
     if (Object.keys(pointers).length === 2) {
@@ -1665,14 +3186,74 @@
         dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y),
         scale: view.scale
       };
-      pan = null;                      // a second finger ends any pan
+      pan = null;
+      state.wpDrag = null;
+      newWpDrag = null;
+      if (newWpTimer) { clearTimeout(newWpTimer); newWpTimer = null; }
       return;
     }
-    if (state.poseTool.armed) return;  // the pose tool owns this gesture
-    pan = { at: eventToCanvas(event), cx: view.cx, cy: view.cy };
-    canvas.style.cursor = 'grabbing';
-    canvas.setPointerCapture(event.pointerId);
+    if (state.poseTool.armed) return;
+
+    var at = eventToCanvas(event);
+    state.wpDrag = null;
+    newWpDrag = null;
+    rightClickWp = -1;
+    pointerDownLoc = at;
+    if (newWpTimer) { clearTimeout(newWpTimer); newWpTimer = null; }
+
+    // Check if clicked on a waypoint
+    var hitWp = -1;
+    if (state.waypoints && state.datum) {
+      for (var i = 0; i < state.waypoints.length; i++) {
+        var wp = state.waypoints[i];
+        var p = enu(wp.lat, wp.lon, state.datum);
+        var s = toScreen(p);
+        if (Math.hypot(s.x - at.x, s.y - at.y) < 20) {
+          hitWp = i;
+          break;
+        }
+      }
+    }
+
+    if (event.button === 2) {
+      if (hitWp >= 0) {
+        rightClickWp = hitWp;
+        canvas.setPointerCapture(event.pointerId);
+      } else {
+        pan = { at: at, cx: view.cx, cy: view.cy };
+        canvas.style.cursor = 'grabbing';
+        canvas.setPointerCapture(event.pointerId);
+      }
+      return;
+    }
+
+    if (event.button === 0) {
+      if (hitWp >= 0) {
+        state.wpDrag = { index: hitWp, from: { lat: state.waypoints[hitWp].lat, lon: state.waypoints[hitWp].lon }, to: pointerToWorld(event) };
+        canvas.style.cursor = 'crosshair';
+        canvas.setPointerCapture(event.pointerId);
+        event.preventDefault();
+      } else {
+        // Start panning immediately so mobile 1-finger drag works.
+        pan = { at: at, cx: view.cx, cy: view.cy };
+        canvas.style.cursor = 'grabbing';
+        canvas.setPointerCapture(event.pointerId);
+        var worldAt = pointerToWorld(event);
+        newWpTimer = setTimeout(function() {
+          newWpTimer = null;
+          pan = null;
+          newWpDrag = { from: worldAt, to: worldAt };
+          canvas.style.cursor = 'crosshair';
+          drawMap();
+          if (navigator.vibrate) navigator.vibrate(50);
+        }, 400);
+      }
+      return;
+    }
   });
+
+  // Prevent browser context menu on right click so we can pan
+  canvas.addEventListener('contextmenu', function(e) { e.preventDefault(); });
 
   canvas.addEventListener('pointermove', function (event) {
     if (!(event.pointerId in pointers)) return;
@@ -1689,8 +3270,42 @@
       return;
     }
 
-    if (!pan) return;
     var now = eventToCanvas(event);
+    if (newWpTimer) {
+      if (Math.hypot(now.x - pointerDownLoc.x, now.y - pointerDownLoc.y) > 10) {
+        clearTimeout(newWpTimer);
+        newWpTimer = null;
+      }
+    }
+
+    if (newWpDrag) {
+      var world = pointerToWorld(event);
+      if (world) {
+        newWpDrag.to = world;
+        var dx = world.x - enu(newWpDrag.from.lat, newWpDrag.from.lon, state.datum).x;
+        var dy = world.y - enu(newWpDrag.from.lat, newWpDrag.from.lon, state.datum).y;
+        var heading = (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;
+        $('mapHud').textContent = 'เพิ่มจุดใหม่ / New WP\n' + heading.toFixed(0) + '°';
+        drawMap();
+      }
+      return;
+    }
+
+    if (state.wpDrag) {
+      var worldDrag = pointerToWorld(event);
+      if (worldDrag) {
+        state.wpDrag.to = worldDrag;
+        var dxw = worldDrag.x - enu(state.wpDrag.from.lat, state.wpDrag.from.lon, state.datum).x;
+        var dyw = worldDrag.y - enu(state.wpDrag.from.lat, state.wpDrag.from.lon, state.datum).y;
+        var hw = (Math.atan2(dxw, dyw) * 180 / Math.PI + 360) % 360;
+        var name = state.waypoints[state.wpDrag.index].name || ('WP' + (state.wpDrag.index + 1));
+        $('mapHud').textContent = 'ตั้งทิศทาง ' + name + ' / set heading\n' + hw.toFixed(0) + '°';
+        drawMap();
+      }
+      return;
+    }
+
+    if (!pan) return;
     view.cx = pan.cx - (now.x - pan.at.x) / view.scale;
     view.cy = pan.cy + (now.y - pan.at.y) / view.scale;
     state.fitRequested = false;
@@ -1698,10 +3313,78 @@
   });
 
   function endPan(event) {
+    if (newWpTimer) { clearTimeout(newWpTimer); newWpTimer = null; }
     delete pointers[event.pointerId];
     if (Object.keys(pointers).length < 2) pinchStart = null;
     if (Object.keys(pointers).length === 0) {
       pan = null;
+      
+      if (rightClickWp >= 0) {
+        var dp = Math.hypot(eventToCanvas(event).x - pointerDownLoc.x, eventToCanvas(event).y - pointerDownLoc.y);
+        if (dp < 10) {
+          state.picked = { lat: state.waypoints[rightClickWp].lat, lon: state.waypoints[rightClickWp].lon };
+          drawMap();
+          openMapMenu(event, state.picked, rightClickWp);
+        }
+        rightClickWp = -1;
+        try { canvas.releasePointerCapture(event.pointerId); } catch(e){}
+        if (!state.poseTool.armed) canvas.style.cursor = 'grab';
+        return;
+      }
+
+      if (newWpDrag) {
+        wpDragWasClick = true;
+        var dn = newWpDrag.to.x - enu(newWpDrag.from.lat, newWpDrag.from.lon, state.datum).x;
+        var dy2 = newWpDrag.to.y - enu(newWpDrag.from.lat, newWpDrag.from.lon, state.datum).y;
+        if (Math.hypot(dn, dy2) > 0.3) {
+          var hd = (Math.atan2(dn, dy2) * 180 / Math.PI + 360) % 360;
+          if (confirm('สร้างจุดหมายใหม่ที่นี่ หันหน้า ' + hd.toFixed(0) + '° หรือไม่?\nCreate new waypoint here heading ' + hd.toFixed(0) + '°?')) {
+            var points = state.waypoints.slice();
+            points.push({
+              name: 'WP' + (points.length + 1),
+              lat: Number(newWpDrag.from.lat.toFixed(7)),
+              lon: Number(newWpDrag.from.lon.toFixed(7)),
+              heading_deg: hd
+            });
+            api('/api/waypoints', { waypoints: points }).then(function (res) {
+              if (res.ok) {
+                state.waypoints = res.waypoints || points;
+                markWaypointsSaved('เพิ่มจุดใหม่แล้ว / added');
+                renderWaypoints();
+                drawMap();
+              }
+            });
+          }
+        }
+        newWpDrag = null;
+        if (!state.poseTool.armed) canvas.style.cursor = 'grab';
+        drawMap();
+        try { canvas.releasePointerCapture(event.pointerId); } catch(e){}
+        return;
+      }
+
+      if (state.wpDrag) {
+        var dx = state.wpDrag.to.x - enu(state.wpDrag.from.lat, state.wpDrag.from.lon, state.datum).x;
+        var dy = state.wpDrag.to.y - enu(state.wpDrag.from.lat, state.wpDrag.from.lon, state.datum).y;
+        var dist = Math.hypot(dx, dy);
+        if (dist > 0.3) {
+          var heading = (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;
+          state.waypoints[state.wpDrag.index].heading_deg = heading;
+          markWaypointsDirty();
+          renderWaypoints();
+          api('/api/waypoints', { waypoints: state.waypoints }).then(function (res) {
+            if (res.ok) { markWaypointsSaved(); renderWaypoints(); toast('บันทึกทิศทางแล้ว / heading saved', false); }
+          });
+          wpDragWasClick = false;
+        } else {
+          wpDragWasClick = true;
+          state.picked = { lat: state.waypoints[state.wpDrag.index].lat, lon: state.waypoints[state.wpDrag.index].lon };
+          drawMap();
+          openMapMenu(event, state.picked, state.wpDrag.index);
+        }
+        try { canvas.releasePointerCapture(event.pointerId); } catch(e){}
+        state.wpDrag = null;
+      }
       if (!state.poseTool.armed) canvas.style.cursor = 'grab';
     }
   }
@@ -1744,6 +3427,10 @@
   });
 
   canvas.addEventListener('click', function (event) {
+    if (wpDragWasClick) {
+      wpDragWasClick = false;
+      return;
+    }
     if (state.poseTool.armed || state.poseTool.drag) return;   // pose tool owns the gesture
     var world = pointerToWorld(event);
     if (!world) {
@@ -1755,7 +3442,7 @@
     openMapMenu(event, world);
   });
 
-  function openMapMenu(event, world) {
+  function openMapMenu(event, world, wpIndex) {
     var menu = $('mapMenu');
     var wrap = canvas.parentElement.getBoundingClientRect();
     var x = event.clientX - wrap.left;
@@ -1769,8 +3456,22 @@
     menu.style.left = Math.max(6, x) + 'px';
     menu.style.top = Math.max(6, y) + 'px';
 
-    $('mapMenuPos').textContent =
-      world.lat.toFixed(7) + ', ' + world.lon.toFixed(7) + describePoint(world, '\n');
+    if (wpIndex !== undefined) {
+      $('mapMenuPos').textContent = state.waypoints[wpIndex].name || ('WP' + (wpIndex + 1));
+      $('mapMenuGoto').classList.remove('hidden');
+      $('mapMenuAdd').classList.add('hidden');
+      $('mapMenuCopy').classList.remove('hidden');
+      if ($('mapMenuDelete')) $('mapMenuDelete').classList.remove('hidden');
+      menu.dataset.wpIndex = wpIndex;
+    } else {
+      $('mapMenuPos').textContent =
+        world.lat.toFixed(7) + ', ' + world.lon.toFixed(7) + describePoint(world, '\n');
+      $('mapMenuGoto').classList.remove('hidden');
+      $('mapMenuAdd').classList.remove('hidden');
+      $('mapMenuCopy').classList.remove('hidden');
+      if ($('mapMenuDelete')) $('mapMenuDelete').classList.add('hidden');
+      delete menu.dataset.wpIndex;
+    }
   }
 
   function closeMapMenu() {
@@ -1815,17 +3516,24 @@
   Array.prototype.forEach.call(document.querySelectorAll('[data-map]'), function (button) {
     button.addEventListener('click', function () {
       var world = state.picked;
-      if (!world) { closeMapMenu(); return; }
+      var menu = $('mapMenu');
+      var wpIndex = menu.dataset.wpIndex !== undefined ? parseInt(menu.dataset.wpIndex, 10) : -1;
+      
+      if (!world && wpIndex < 0) { closeMapMenu(); return; }
 
       if (button.dataset.map === 'goto') {
         if (blockedInViewer()) return;
         if (blockedByEmergency()) return;
-        api('/api/nav', { action: 'goto_point', lat: world.lat, lon: world.lon })
-          .then(function (response) {
-            toast(response && response.ok
-              ? ''
-              : 'สั่งไปจุดนี้ไม่ได้: ' + ((response && response.error) || ''), !(response && response.ok));
-          });
+        if (wpIndex >= 0) {
+          api('/api/nav', { action: 'goto', index: wpIndex });
+        } else {
+          api('/api/nav', { action: 'goto_point', lat: world.lat, lon: world.lon })
+            .then(function (response) {
+              toast(response && response.ok
+                ? ''
+                : 'สั่งไปจุดนี้ไม่ได้: ' + ((response && response.error) || ''), !(response && response.ok));
+            });
+        }
       } else if (button.dataset.map === 'add') {
         var points = state.waypoints.slice();
         points.push({
@@ -1834,20 +3542,40 @@
           lon: Number(world.lon.toFixed(7))
         });
         api('/api/waypoints', { waypoints: points }).then(function (response) {
-          if (response && response.ok) {
-            state.waypoints = response.waypoints || state.waypoints;
-            markWaypointsSaved('');
+          if (response.ok) {
+            state.waypoints = response.waypoints || points;
+            markWaypointsSaved('เพิ่มเข้ารายการแล้ว / added');
             renderWaypoints();
-            drawMap();
-            toast('เพิ่มจุดหมายแล้ว ' + state.waypoints.length + ' จุด / waypoint added', false);
           } else {
-            toast('เพิ่มไม่ได้: ' + ((response && response.error) || ''), true);
+            toast('เพิ่มไม่ได้: ' + response.error, true);
           }
         });
+      } else if (button.dataset.map === 'delete') {
+        if (wpIndex >= 0) {
+          var removed = state.waypoints[wpIndex];
+          state.waypoints.splice(wpIndex, 1);
+          markWaypointsDirty();
+          renderWaypoints();
+          api('/api/waypoints', { waypoints: state.waypoints }).then(function (res) {
+            if (res.ok) markWaypointsSaved();
+          });
+          offerUndo('ลบ "' + (removed.name || '') + '" แล้ว / deleted', function () {
+            state.waypoints.splice(wpIndex, 0, removed);
+            markWaypointsDirty();
+            renderWaypoints();
+            api('/api/waypoints', { waypoints: state.waypoints }).then(function (res) {
+              if (res.ok) markWaypointsSaved();
+            });
+            drawMap();
+          });
+        }
       } else if (button.dataset.map === 'copy') {
-        copyCoordinates(world.lat.toFixed(7) + ', ' + world.lon.toFixed(7));
+        var wp = (wpIndex >= 0) ? state.waypoints[wpIndex] : world;
+        copyCoordinates(wp.lat.toFixed(7) + ', ' + wp.lon.toFixed(7));
       }
       closeMapMenu();
+      state.picked = null;
+      drawMap();
     });
   });
 
@@ -1903,6 +3631,14 @@
           '" value="' + wp.lat + '"></td>' +
         '<td><input data-k="lon" type="number" step="0.0000001" aria-label="longitude ' + n +
           '" value="' + wp.lon + '"></td>' +
+        // Optional facing. Left blank the robot stops in whatever direction it
+        // arrived, which is what most waypoints want; filled in, it turns on the
+        // spot to that compass bearing after arriving, before the next leg.
+        '<td><input data-k="heading_deg" type="number" step="1" min="0" max="359" ' +
+          'placeholder="—" title="ทิศที่ต้องการหันเมื่อถึงจุดนี้ (0-359 องศา) เว้นว่าง = ไม่กำหนด' +
+          ' / compass heading to face on arrival, blank = any" aria-label="heading ' + n +
+          '" value="' + (wp.heading_deg === undefined || wp.heading_deg === null
+                         ? '' : wp.heading_deg) + '"></td>' +
         '<td class="wpdist">—</td>' +
         '<td>' +
           '<button class="iconbtn" data-act="go">ไป</button>' +
@@ -1913,7 +3649,17 @@
       row.querySelectorAll('input').forEach(function (input) {
         input.addEventListener('change', function () {
           var key = input.dataset.k;
-          state.waypoints[index][key] = key === 'name' ? input.value : Number(input.value);
+          if (key === 'name') {
+            state.waypoints[index].name = input.value;
+          } else if (key === 'heading_deg') {
+            // Blank is a real answer here - it means "any direction" - so it
+            // must delete the field rather than become Number('') === 0, which
+            // would silently order the robot to face north.
+            if (input.value.trim() === '') delete state.waypoints[index].heading_deg;
+            else state.waypoints[index].heading_deg = ((Number(input.value) % 360) + 360) % 360;
+          } else {
+            state.waypoints[index][key] = Number(input.value);
+          }
           markWaypointsDirty();
         });
       });
@@ -1942,6 +3688,41 @@
       });
       body.appendChild(row);
     });
+    
+    var mapCard = $('mapWpCard');
+    if (mapCard) {
+      if (isEmpty) {
+        mapCard.style.display = 'none';
+      } else {
+        mapCard.style.display = 'block';
+        var mapBody = $('mapWpTable').querySelector('tbody');
+        mapBody.textContent = '';
+        state.waypoints.forEach(function (wp, index) {
+          var row = document.createElement('tr');
+          var n = index + 1;
+          var headStr = (wp.heading_deg === undefined || wp.heading_deg === null) ? '—' : wp.heading_deg + '°';
+          row.innerHTML =
+            '<td>' + n + '</td>' +
+            '<td>' + escapeHtml(wp.name || ('WP' + n)) + '</td>' +
+            '<td><small>' + fmt(wp.lat, 6) + '<br>' + fmt(wp.lon, 6) + '</small></td>' +
+            '<td>' + headStr + '</td>' +
+            '<td><button class="iconbtn" title="ไปดูบนแผนที่ / Zoom on map">🔍</button></td>';
+          row.querySelector('button').addEventListener('click', function() {
+            if (!state.datum) return;
+            var q = enu(wp.lat, wp.lon, state.datum);
+            view.cx = q.x; view.cy = q.y;
+            view.scale = Math.max(view.scale, 8);
+            state.fitRequested = false;
+            drawMap();
+            // Scroll up to the map so the user sees the result
+            var mapWrap = document.querySelector('.mapwrap');
+            if (mapWrap) mapWrap.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          });
+          mapBody.appendChild(row);
+        });
+      }
+    }
+    
     updateWaypointDistances();
   }
 
@@ -1986,6 +3767,18 @@
     });
   });
 
+    if ($('wpLoopToggle')) {
+    api('/api/config?group=nav').then(function (res) {
+      if (res.ok && res.data) $('wpLoopToggle').checked = !!res.data.loop_waypoints;
+    });
+    $('wpLoopToggle').addEventListener('change', function () {
+      api('/api/config', { group: 'nav', data: { loop_waypoints: this.checked } }).then(function (res) {
+        if (!res.ok) alert('Failed to save setting: ' + res.error);
+        else toast('ตั้งโหมดวนซ้ำแล้ว');
+      });
+    });
+  }
+
   $('wpSave').addEventListener('click', function () {
     api('/api/waypoints', { waypoints: state.waypoints }).then(function (response) {
       if (response.ok) {
@@ -2003,7 +3796,10 @@
     'nav.cruise_speed_mps': ['ความเร็วเดินทาง', 'Cruise speed', 'ความเร็วปกติระหว่างวิ่งไปจุดหมาย (m/s)'],
     'nav.approach_speed_mps': ['ความเร็วตอนใกล้ถึง', 'Approach speed', 'ช้าลงเมื่อใกล้จุดหมาย (m/s)'],
     'nav.approach_distance_m': ['ระยะเริ่มชะลอ', 'Approach distance', 'เริ่มชะลอเมื่อเหลือระยะเท่านี้ (m)'],
-    'nav.arrive_radius_m': ['รัศมีถือว่าถึง', 'Arrive radius', 'เข้าใกล้เท่านี้ = ถึงจุดหมายแล้ว (m)'],
+    'nav.arrive_radius_m': ['รัศมีถือว่าถึง', 'Arrive radius', 'เข้าใกล้เท่านี้ = ถึงจุดหมายแล้ว (m) - ต่ำกว่า 2 m ไม่ได้ GPS ไม่แม่นพอ'],
+    'nav.arrive_hold_s': ['ต้องอยู่ในรัศมีนาน', 'Arrive hold', 'ต้องอยู่ในรัศมีนานเท่านี้จึงนับว่าถึง (s)'],
+    'nav.arrive_sigma_k': ['ตัวคูณความไม่แน่นอน', 'Arrive sigma factor', 'รัศมีขยายตามความไม่แน่นอนของตำแหน่ง'],
+    'nav.align_timeout_s': ['เวลาหมุนหาทิศสูงสุด', 'Align timeout', 'หมุนหาทิศของจุดหมายนานสุด (s) เกินนี้ไปต่อเลย'],
     'nav.heading_tolerance_deg': ['ความคลาดเคลื่อนทิศ', 'Heading tolerance', 'ถ้าเบี่ยงเกินนี้จะหมุนตัวก่อนวิ่ง (°)'],
     'nav.command_rate_hz': ['ความถี่ส่งคำสั่ง', 'Command rate', 'ครั้งต่อวินาที'],
     'nav.loop_waypoints': ['วนซ้ำ', 'Loop waypoints', 'ถึงจุดสุดท้ายแล้วเริ่มใหม่'],
@@ -2012,7 +3808,6 @@
     'nav.min_satellites': ['ดาวเทียมขั้นต่ำ', 'Min satellites', 'น้อยกว่านี้จะไม่ยอมวิ่ง'],
     'nav.max_hdop': ['HDOP สูงสุด', 'Max HDOP', 'ค่ายิ่งน้อยยิ่งแม่น (แนะนำ 3)'],
     'nav.fix_timeout_s': ['GPS ขาดได้นานสุด', 'Fix timeout', 'วินาที'],
-    'nav.reverse_allowed': ['ถอยหลังได้', 'Reverse allowed', 'ปกติปิดไว้'],
 
     'motor.accel_ramp_s': ['เวลาเร่งจนสุด', 'Accel ramp', 'วินาที จากหยุดถึงแรงเต็ม ยิ่งมากยิ่งออกตัวนุ่ม'],
     'motor.decel_ramp_s': ['เวลาชะลอจนหยุด', 'Decel ramp', 'วินาที'],
@@ -2053,6 +3848,9 @@
     'robot.max_speed_mps': ['ความเร็วสูงสุด', 'Max speed', 'm/s'],
     'robot.gps_antenna_offset_m': ['ระยะเสา GPS', 'GPS antenna offset', 'เมตร หน้าเพลาล้อ'],
 
+    'gps.min_sats_speed': ['ดาวเทียมขั้นต่ำ (ความเร็ว)', 'Min sats for speed', 'ต่ำกว่านี้ไม่เชื่อความเร็วจาก GPS ใช้ IMU + มอเตอร์แทน'],
+    'gps.max_hdop_speed': ['HDOP แย่สุด (ความเร็ว)', 'Max HDOP for speed', 'แย่กว่านี้ไม่เชื่อความเร็วจาก GPS'],
+    'gps.min_sats_fix': ['ดาวเทียมขั้นต่ำ (มีตำแหน่ง)', 'Min sats for a fix', 'ต่ำกว่านี้ถือว่า GPS ใช้ไม่ได้เลย (4 = fix 3 มิติ)'],
     'web.port': ['พอร์ตเว็บ', 'Web port', 'ต้องรีสตาร์ทโปรแกรมหลังแก้'],
     'web.telemetry_rate_hz': ['ความถี่อัปเดตหน้าจอ', 'Telemetry rate', 'ครั้งต่อวินาที'],
     'web.manual_speed_mps': ['ความเร็วขับเอง', 'Manual speed', 'm/s'],
@@ -2097,6 +3895,12 @@
   function renderConfig(data) {
     var form = $('cfgForm');
     form.textContent = '';
+    // The theme is a setting of this browser, not of the robot, so it appears
+    // with the rest of the "เว็บ / Web" group and nowhere else.
+    // The .hidden CLASS, not the hidden attribute: .row sets display:flex, which
+    // beats the browser's [hidden] rule, so the attribute silently did nothing.
+    var themeRow = $('themeRow');
+    if (themeRow) themeRow.classList.toggle('hidden', state.cfg.group !== 'web');
     walk(data, '', form);
     var locked = state.snap && state.snap.server && state.snap.server.allow_config_edit === false;
     $('cfgSave').disabled = !!locked;
@@ -2211,16 +4015,52 @@
   api('/api/logs').then(function (response) {
     if (response.ok) response.logs.forEach(addLog);
   });
-  var savedView = 'simple';
-  try { savedView = window.localStorage.getItem('gpsLocalizeView') || 'simple'; } catch (err) { /* ignore */ }
-  setView(savedView);
+  setView();
   loadWaypoints();
   buildGroupTabs();
   setupTopics();
   setConnection('connecting');
   connect();
-  setInterval(heartbeat, 250);
+  // Fetch the wheel diameter once at start-up, so wheel speed can be shown in
+  // m/s straight away. loadParams() also picks it up, but only when someone
+  // opens the settings tab - and a speed reading should not depend on that.
+  api('/api/params').then(function (r) {
+    (((r && r.params) || [])).forEach(function (pp) {
+      if (pp.key === 'robot.wheel_diameter') { state.wheelDiameterM = pp.value; }
+    });
+  });
+  armHeartbeat(heartbeatMs);
   setInterval(watchFreshness, 1000);   // degrade to stale/offline on its own
   heartbeat();
+
+  /* The error banner is fixed and sits BELOW the toolbar, so it needs the
+   * toolbar's height. The CSS asks for --toolbar-height with a 240px fallback,
+   * and nothing was setting it - so on a laptop, where the toolbar is about
+   * 64px, the banner floated a quarter of the way down the page over unrelated
+   * content, and on a phone it landed somewhere else again. It has to be
+   * measured rather than assumed: the toolbar wraps differently at every width
+   * and grows a row when the pills wrap.
+   *
+   * The banner was moved below the toolbar in the first place because at a
+   * higher z-index it covered the EMERGENCY STOP and swallowed the taps meant
+   * for it. That is the one control that must never be unreachable, so the
+   * measurement is not cosmetic. */
+  function measureToolbar() {
+    var bar = document.querySelector('.topbar');
+    if (!bar) return;
+    var h = Math.round(bar.getBoundingClientRect().height);
+    if (h > 0) document.documentElement.style.setProperty('--toolbar-height', h + 'px');
+  }
+  measureToolbar();
+  window.addEventListener('resize', measureToolbar);
+  window.addEventListener('orientationchange', measureToolbar);
+  // The toolbar also changes height without the window changing size - the
+  // state subtitle and the pills are rewritten on every telemetry frame - so
+  // watch the element itself where the browser supports it.
+  if (typeof ResizeObserver === 'function') {
+    var bar = document.querySelector('.topbar');
+    if (bar) new ResizeObserver(measureToolbar).observe(bar);
+  }
+
   window.addEventListener('beforeunload', function () { stopJog(); });
 })();

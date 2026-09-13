@@ -39,6 +39,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import (QoSDurabilityPolicy, QoSHistoryPolicy,
                        QoSProfile, QoSReliabilityPolicy)
+from gps_localize.qos import stream_qos
 from sensor_msgs.msg import BatteryState
 
 from gps_localize import telemetry as tel
@@ -56,7 +57,7 @@ CELLS = 3
 # telemetry field, a changed unit. It is only ever used to say "the board is
 # behind"; nothing is refused on the strength of it, because an older board
 # still connects, still drives and still reports.
-HOST_EXPECTS_FIRMWARE = 104
+HOST_EXPECTS_FIRMWARE = 162
 FULL_V = 12.6
 EMPTY_V = 10.7          # BATT_CUTOFF_V: the robot stops here, so call it empty
 
@@ -83,7 +84,7 @@ class TelemetrySplit(Node):
                        durability=QoSDurabilityPolicy.TRANSIENT_LOCAL))
         self._last_version = None
 
-        self.create_subscription(Telemetry, NS + '/telemetry', self.on_telemetry, 5)
+        self.create_subscription(Telemetry, NS + '/telemetry', self.on_telemetry, stream_qos())
 
         self.frames = 0
         self.get_logger().info(

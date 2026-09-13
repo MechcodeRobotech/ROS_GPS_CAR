@@ -16,12 +16,14 @@ Nothing in here can start the robot again by itself: leaving an emergency stop
 needs an explicit RESET from the web UI (safety.auto_clear_estop: false).
 """
 
+import os
 import json
 
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
+from gps_localize.qos import stream_qos
 from gps_localize_msgs.msg import Telemetry
 from std_msgs.msg import Bool, Int32, String
 
@@ -58,7 +60,19 @@ class SafetyWatchdog(Node):
         self.last_telemetry = 0.0
         self.last_web_beat = 0.0
         self.web_seen = False
-        self.estop_latched = False
+        # A software e-stop must survive a restart of this node.
+        #
+        # It used to start False and publish that, so restarting the stack -
+        # which netwatch does by itself whenever the PC changes network -
+        # released a latch a person had deliberately set, with the robot
+        # possibly unattended. A latch that a crash can clear is not a latch.
+        self.estop_file = os.path.join(
+            os.path.expanduser(self.get_parameter('runtime_config_dir').value
+                               or '~/.gps_localize'), 'estop_latched')
+        self.estop_latched = os.path.exists(self.estop_file)
+        if self.estop_latched:
+            self.get_logger().warn('software e-stop was latched before this restart '
+                                   '- it stays latched until it is reset')
         self.link_ok = True
         self.esp_ok = False
         self.firmware_flags = 0
@@ -72,7 +86,7 @@ class SafetyWatchdog(Node):
         self.pub_nav_cmd = self.create_publisher(String, NS + '/nav/cmd', 5)
         self.pub_cmd_move = self.create_publisher(Twist, NS + '/cmd_move', 5)
 
-        self.create_subscription(Telemetry, NS + '/telemetry', self.on_telemetry, 5)
+        self.create_subscription(Telemetry, NS + '/telemetry', self.on_telemetry, stream_qos())
         self.create_subscription(Int32, NS + '/web/heartbeat', self.on_web_beat, 5)
         self.create_subscription(Bool, NS + '/estop_request', self.on_estop_request, 5)
         self.create_subscription(String, NS + '/config/updated', self.on_config_updated, 5)
@@ -131,7 +145,26 @@ class SafetyWatchdog(Node):
             if self.estop_latched:
                 self.get_logger().info('e-stop reset requested')
             self.estop_latched = False
+        self._persist_estop()
         self.publish_estop()
+
+    def _persist_estop(self):
+        """Keep the latch across a restart of this node.
+
+        Written as the presence or absence of a file rather than its contents,
+        so a half-written file cannot be read as "not latched" - the unsafe
+        direction. A failure to write is logged and never raised: it must not
+        take the watchdog down.
+        """
+        try:
+            if self.estop_latched:
+                os.makedirs(os.path.dirname(self.estop_file), exist_ok=True)
+                with open(self.estop_file, 'w') as handle:
+                    handle.write('latched\n')
+            elif os.path.exists(self.estop_file):
+                os.remove(self.estop_file)
+        except OSError as exc:
+            self.get_logger().warn('could not persist the e-stop latch: %r' % exc)
 
     # ---------------------------------------------------------------- loop
     def tick(self):

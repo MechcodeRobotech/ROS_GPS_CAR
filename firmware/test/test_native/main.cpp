@@ -18,6 +18,10 @@ int run_pose_ekf_tests(void);
 int run_lever_arm_tests(void);
 int run_param_tests(void);
 int run_wifi_store_tests(void);
+int run_console_tests(void);
+int run_compass_tests(void);
+int run_mount_rotation_tests(void);
+int run_imu_rate_tests(void);
 
 int main(int, char **) {
     UNITY_BEGIN();
@@ -31,5 +35,9 @@ int main(int, char **) {
     run_lever_arm_tests();
     run_param_tests();
     run_wifi_store_tests();
+    run_console_tests();
+    run_compass_tests();
+    run_mount_rotation_tests();
+    run_imu_rate_tests();
     return UNITY_END();
 }

@@ -9,3 +9,7 @@ int mock_pin_written[64] = {0};
 int mock_ledc_duty[8]    = {0};
 
 MockSerial Serial;
+
+// The single TwoWire instance the drivers expect. See mock/Wire.h.
+#include "Wire.h"
+TwoWire Wire;

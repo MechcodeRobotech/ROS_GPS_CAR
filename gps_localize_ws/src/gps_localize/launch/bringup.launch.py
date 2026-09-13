@@ -15,7 +15,7 @@ import os
 import shutil
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, SetEnvironmentVariable
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, SetEnvironmentVariable, TimerAction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
@@ -114,8 +114,19 @@ def generate_launch_description():
              parameters=params, output='screen', respawn=True, respawn_delay=2.0),
     ]
 
+    open_browser = TimerAction(
+        period=2.0,
+        actions=[
+            ExecuteProcess(
+                cmd=['python3', '-c', 'import webbrowser; webbrowser.open("http://localhost:8080")'],
+                output='screen'
+            )
+        ]
+    )
+
     return LaunchDescription(
         args
+        + [open_browser]
         + [SetEnvironmentVariable('ROS_DOMAIN_ID', domain_id), agent_udp, agent_serial]
         + nodes
     )

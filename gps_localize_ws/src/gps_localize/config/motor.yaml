@@ -19,7 +19,10 @@ motor:
   # The sensor reads the rail BEFORE the diode, so this drop has to come off.
   # Each motor has its own diode - they can be different parts.
   #   Schottky (SS34, 1N5822) ~0.35-0.50 V   standard (1N4007) ~0.8-1.0 V
-  diode_a_vf_v: 0.45        # motor A forward drop at working current
+  # MEASURED on this robot with a meter across each diode, not a datasheet
+  # figure. The host pushes these to the board on every reconnect, so a stale
+  # value here silently overwrites a good one on the board.
+  diode_a_vf_v: 0.181       # motor A forward drop at working current
   diode_a_r_ohm: 0.03       # motor A slope resistance (0 = flat drop)
-  diode_b_vf_v: 0.45        # motor B
+  diode_b_vf_v: 0.168       # motor B
   diode_b_r_ohm: 0.03

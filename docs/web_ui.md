@@ -52,9 +52,11 @@ http://<ไอพีของเครื่องหุ่นยนต์>:8080
 | สิ่งที่เห็น | ความหมาย |
 |---|---|
 | **เชื่อมต่อ** | สถานะการเชื่อมต่อระหว่างเบราว์เซอร์กับหุ่นยนต์ ถ้าเป็นสีแดง = หลุด หุ่นจะหยุดเองภายใน 1 วินาที |
-| **ESP32** | อายุข้อมูลล่าสุดจากบอร์ด ถ้าเกิน 1.5 วินาที = บอร์ดไม่ส่งข้อมูล |
+| **ESP32** | อายุข้อมูลล่าสุดจากบอร์ด ถ้าเกิน 1.5 วินาที = บอร์ดไม่ส่งข้อมูล และจะบอกว่าขาดไปนานเท่าไร |
+| **loop** | เวลาที่ลูปควบคุมใช้ต่อรอบ คาบคือ 10 ms · เขียว < 6 ms · เหลือง < 9 ms · แดงคือใกล้หมดเวลา<br><small>The first thing that shows the firmware is in trouble: it went from 4 ms to 178 ms in one session while every other number on this bar stayed put.</small> |
 | **GPS** | จำนวนดาวเทียมและค่า HDOP (ยิ่งน้อยยิ่งแม่น) |
-| **แบตเตอรี่** | แรงดันแบตจริงจาก INA226 · เขียว > 11.4 V · เหลือง > 11.0 V · แดง < 10.7 V (ตัดมอเตอร์) |
+| **แบตเตอรี่** | แรงดันแบตจริงจาก INA226 · เขียว > 11.7 V · เหลือง > 11.4 V · แดง < 11.199 V บน 3S (ตัดมอเตอร์) |
+| **สัญญาณ** | ความแรงสัญญาณ Wi-Fi **ที่ตัวหุ่น** (ไม่ใช่ที่เครื่องที่เปิดเว็บอยู่) · เขียว ≥ −70 dBm · เหลือง ≥ −80 · แดงต่ำกว่านั้น · “ไม่ต่อ” = บอร์ดยังไม่เกาะ AP เลย<br><small>The number that separates "the firmware has stopped" from "it drove out of range". A phone can sit beside the router while the robot is at the far end of the garden, so the browser's own signal says nothing about the link that matters.</small> |
 | 🔴 **หยุดฉุกเฉิน** | สั่งหยุดทันที ล็อกไว้จนกว่าจะกด “ปลดล็อก” |
 | **ปลดล็อก** | ปลดการหยุดฉุกเฉิน (กดได้เมื่อมีการล็อกอยู่เท่านั้น) |
 
@@ -84,7 +86,8 @@ http://<ไอพีของเครื่องหุ่นยนต์>:8080
 * **ล้อ** — รอบและความเร็วล้อซ้าย/ขวา คำนวณจาก IMU และจากแรงดัน/กระแสมอเตอร์ (ไม่มี encoder ที่ล้อ)
 * **ไฟฟ้า** — แรงดัน/กระแส จากเซ็นเซอร์ INA226 ทั้ง 4 ตัว (แบต · มอเตอร์ A · มอเตอร์ B · พัดลม)
 * **หน่วยความจำว่าง** — RAM ที่เหลือบน ESP32 ค่านี้ควร “นิ่ง” ถ้าค่อย ๆ ลดลงเรื่อย ๆ แปลว่ามีปัญหา ให้แจ้งผู้ดูแล
-* **ภารกิจ** — สถานะ (IDLE / RUNNING / PAUSED / BLOCKED / FINISHED) จุดหมายปัจจุบัน ระยะ และเวลาที่เหลือ
+* **ภารกิจ** — สถานะ (IDLE / RUNNING / PAUSED / BLOCKED / ALIGN / FINISHED) จุดหมายปัจจุบัน ระยะ และเวลาที่เหลือ
+  · **ALIGN** = ถึงจุดแล้ว กำลังหมุนอยู่กับที่ให้หันตามทิศที่ตั้งไว้ของจุดนั้น
 * **ขับเอง** — กดปุ่มลูกศรค้างไว้เพื่อขับ ปล่อยแล้วหยุดทันที
   (แป้นพิมพ์: W A S D หรือปุ่มลูกศร · **Space = หยุดทุกอย่างทันที**)
 * **ความเร็ว** — มีตัวเดียว หน่วยเป็น m/s จริง ๆ กดปุ่ม **ช้า 0.10 · ปกติ 0.18 · เร็ว 0.30**
@@ -118,6 +121,20 @@ http://<ไอพีของเครื่องหุ่นยนต์>:8080
 * ✛ แดง = จุดที่เพิ่งเลือกไว้
 * เส้นจาง = เส้นทางที่ผ่านมา (เก็บล่าสุด 300 จุด)
 * **พอดีจอ** = ซูมให้เห็นทุกจุด · **ล้างเส้นทาง** = ลบรอยทางเดิม
+* **จอยสติ๊ก / Joystick** ในหน้าหลัก — ลากเพื่อเดินหน้าและเลี้ยวพร้อมกัน ปล่อยแล้วหยุด
+  <small>The arrow pad sends forward OR turn, one at a time, so an arc had to be
+  driven by alternating two buttons - a zig-zag rather than a curve. The
+  firmware always accepted both in the same command; the joystick is the control
+  catching up. Keyboard too: W and A held together is forward-and-left, where it
+  used to replace one with the other.</small>
+* ซูมได้ตั้งแต่ประมาณ **1000 กม.** จนถึง **1 เมตร** · เส้นตารางใช้ขั้น 1-2-5 เริ่มที่ 0.1 ม.
+  จึงวัดในลานแคบ ๆ หรือหน้าหอพักได้จริง
+  <small>The grid used to start at 5 m and double, so the finest step it could
+  draw was 5 m and in practice it sat at 20 — useless anywhere everything worth
+  measuring is smaller than a car. Tile requests stop at zoom 19, which is what
+  OpenStreetMap and Esri actually publish; past that the last real tiles are
+  drawn larger rather than the map going blank, which is what used to happen and
+  read as a broken satellite view.</small>
 
 ### เลื่อนดูพิกัด และเลือกจุดบนแผนที่
 
@@ -176,6 +193,15 @@ http://<ไอพีของเครื่องหุ่นยนต์>:8080
 หรือพิมพ์เอง: คัดลอกพิกัดจาก Google Maps (เช่น `13.736717, 100.523186`)
 มาใส่ช่อง Latitude และ Longitude
 
+**ช่อง ทิศ / Face** — ใส่องศาเข็มทิศ 0–359 ถ้าต้องการให้หุ่น **หันไปทางนั้นเมื่อถึงจุด**
+เว้นว่างไว้ = หันทางไหนก็ได้ (ปกติใช้แบบนี้)
+
+หุ่นจะ **ถึงจุดก่อน แล้วค่อยหมุนอยู่กับที่** ไม่ใช่หมุนระหว่างวิ่งเข้าหาจุด
+เพราะหุ่นคันนี้เลี้ยวด้วยการวิ่ง ถ้าพยายามเข้าจุดพร้อมหันให้ถูกทิศ เส้นทางจะโค้ง
+แล้วไปจอดผิดที่ ถ้าหมุนไม่สำเร็จภายใน `align_timeout_s` ระบบจะไปจุดถัดไปต่อ
+พร้อมเขียนบันทึกไว้ — เพราะหุ่น **ถึงจุดแล้ว** การหยุดทั้งภารกิจเพราะหันผิดไปไม่กี่องศา
+แย่กว่า
+
 | ปุ่ม | ทำอะไร |
 |---|---|
 | ไป | สั่งให้จุดนี้เป็นเป้าหมายทันที |
@@ -203,10 +229,41 @@ http://<ไอพีของเครื่องหุ่นยนต์>:8080
 | ความปลอดภัย | ความถี่สัญญาณหัวใจ เวลาที่ยอมให้เน็ตหลุด | `safety.yaml` |
 | เว็บ | พอร์ต ความถี่อัปเดตหน้าจอ ความเร็วตอนขับเอง | `web.yaml` |
 
+**`reverse_allowed` has been removed.** It sat in `nav.yaml` and on this page and was read by no code at all, so toggling it changed nothing. `heartbeat_rate_hz`, `manual_repeat_ms` and `trail_points` had the same problem and were wired up instead: the browser now takes all three from the robot rather than from hardcoded numbers.
+
 **ถ้าแก้จนหุ่นวิ่งแปลก** กดปุ่ม **คืนค่าโรงงาน / FACTORY RESET** ของกลุ่มนั้น
 ค่าจะกลับไปเป็นค่าที่ติดมากับเครื่อง
 
 ล็อกไม่ให้ใครแก้: ตั้ง `web.allow_config_edit: false` แล้วหน้าตั้งค่าจะกดบันทึกไม่ได้
+
+---
+
+## ปรับเทียบ / Calibration
+
+ปรับเทียบทุกอย่างรวมอยู่หน้านี้หน้าเดียว ไม่ต้องใช้สาย ไม่ต้องพิมพ์คำสั่ง
+All of the calibration in one place — no cable, no terminal.
+Full instructions: [calibration.md](calibration.md).
+
+| ขั้น | ทำอะไร | เสร็จเมื่อ |
+|---|---|---|
+| 1 · เข็มทิศ / Compass | กดเริ่ม หมุนหุ่นช้า ๆ ครบ 1 รอบ กดบันทึก | แถบสีเขียว (สวาดครบ 3/4 วง) |
+| 2 · ไอเอ็มยู / IMU | กดเริ่ม ขยับเป็นเลขแปดช้า ๆ ห่างจากมอเตอร์ กดบันทึก | ไฟ 4 ดวงถึงดวงที่ 2 (accuracy ≥ 2) |
+| 3 · ล้อ / Wheels | วัดด้วยตลับเมตร แล้วกรอกในหน้าค่าในบอร์ด | — |
+| 4 · มอเตอร์ / Motor model | อ่านค่าไฟสด ๆ แล้วปรับ `motor.ke` และ `motor.resistance` | รอบจากไฟฟ้าตรงกับที่วัดได้ |
+| 5 · ตั้งศูนย์ / Zero | ให้จุดที่ยืนอยู่เป็น 0,0 | ทันที |
+
+ขั้น 1 กับ 2 พอสำหรับการขับปกติแล้ว ขั้นอื่นทำเมื่ออยากให้แม่นขึ้น ·
+Steps 1 and 2 are enough to drive; the rest is accuracy and can wait.
+
+**แถบความคืบหน้าขยับเฉพาะตอนหุ่นหมุนจริง** — นับจำนวนตัวอย่างไม่ได้บอกอะไร
+เพราะจอดนิ่ง ๆ ก็เก็บตัวอย่างได้เป็นพัน ·
+The progress bar only moves while the robot really turns. Sample count would
+not do: standing still piles up thousands of samples and calibrates nothing.
+
+**เข็มทิศตายหลังปรับเทียบ ให้กด ล้างค่า / Clear.** ค่าที่ผิดแย่กว่าไม่ปรับเลย
+เพราะระบบตรวจสนามแม่เหล็กจะเริ่มทำงานแล้วปฏิเสธทุกค่าที่อ่านได้ ·
+A stored calibration switches on the magnetic-disturbance check, so a bad one
+rejects every reading and the compass goes silently dead. Clear is the way out.
 
 ---
 

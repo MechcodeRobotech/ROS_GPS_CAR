@@ -47,6 +47,25 @@ static const size_t WIFI_NETWORK_COUNT =
 //     avahi-resolve-host-name -4 esp32-gps-localize.local
 static const char* WIFI_HOSTNAME = "esp32-gps-localize";
 
+// Radio transmit power. Lowered from the default 20 dBm because the radio is
+// the best suspect for the BNO085 resetting itself: the standalone IMU tool,
+// which has no Wi-Fi at all, runs for minutes on the same board and bus with
+// zero resets, while every Wi-Fi firmware resets the sensor repeatedly. An
+// ESP32 transmit burst at full power is a few hundred milliamps, and on USB
+// alone - no battery holding the rail up - that is a plausible brown-out of a
+// sensor sharing 3V3.
+//
+// 13 dBm is roughly a fifth of the transmit current for about half the range,
+// which is affordable here: the robot works within a house or a car park and
+// the link is monitored continuously. If the radio turns out to be the cause,
+// the proper fix is a battery or bulk capacitance on the sensor supply, and
+// this goes back up.
+// Default transmit power in dBm. The live value is the parameter
+// net.tx_power_dbm, which starts from this and can be changed from the web
+// without a reflash - range and supply current pull in opposite directions and
+// which one matters depends on where the robot is working that day.
+#define WIFI_TX_POWER_DBM  13.0f
+
 //---- micro-ROS agent (udp4) ----
 // The agent address can be found by NAME instead of a fixed IP, so a router
 // handing out a different address after a reboot does not break the robot.
@@ -82,10 +101,31 @@ static const char* WIFI_HOSTNAME = "esp32-gps-localize";
 // machine had already moved to .16, which would have left the board dialling an
 // address nobody answers if mDNS ever missed. Re-check it with `hostname -I`,
 // or give the PC a reserved lease so it stops moving.
+// The agent announces itself, so the board does not have to guess.
+//
+// Every other way of finding the agent breaks the moment the network changes:
+// a hand-set address goes stale, mDNS cannot cross a subnet, and the gateway
+// guess is only right when the PC happens to be the gateway. So the host
+// broadcasts a small "the agent is at <ip>:<port>" datagram on this port a few
+// times a second, and a board that is NOT currently linked adopts it. Change
+// Wi-Fi, move the PC, hand out new DHCP leases - the board hears the new
+// address within a couple of seconds and reconnects with nothing to configure.
+//
+// A broadcast is only trusted while the board has no session, has to carry the
+// magic below, and has to come from the board's own subnet - and the agent
+// still has to accept the session afterwards, so a bogus beacon costs a failed
+// connection attempt and nothing more.
+#define AGENT_BEACON_PORT 8889
+#define AGENT_BEACON_MAGIC "GPSLOC-AGENT"
+
 #define USE_AGENT_HOSTNAME 1
 static const char*     AGENT_HOSTNAME = "mannaja";      // hostname of the Ubuntu PC
 static const IPAddress AGENT_IP(192, 168, 100, 16);     // fallback, DHCP - verify
 static const uint16_t  AGENT_PORT = 8888;
+// Where the board fetches firmware from when told to pull an update. The
+// host's web server, which is on the same machine as the agent - so the
+// board already knows the address and it is already proven reachable.
+#define PULL_UPDATE_PORT       8080
 #define AGENT_RESOLVE_TIMEOUT_MS 3000
 
 //---- static IP (optional) ----

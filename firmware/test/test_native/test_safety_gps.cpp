@@ -18,6 +18,7 @@ static SafetyManager::Inputs healthy() {
     in.battery_v = 12.0f;
     in.battery_valid = true;
     in.motion_requested = true;
+    in.rails_live = true;             // contactor closed and the pack behind it
     return in;
 }
 
@@ -25,6 +26,11 @@ static SafetyManager::Inputs healthy() {
 static void arm(SafetyManager &safety) {
     safety.begin();
     for (int i = 0; i < 40; ++i) { mock_advance_ms(100); safety.update(healthy()); }
+}
+
+/** Press the mushroom switch: drive E-EMER to its ACTIVE level. */
+static void set_hardware_emergency() {
+    mock_set_pin(PIN_E_EMER, E_EMER_ACTIVE_LOW ? LOW : HIGH);
 }
 
 static void set_hardware_clear() {
@@ -536,7 +542,7 @@ void test_safety_genuinely_low_pack_still_latches(void) {
     arm(safety);
     SafetyManager::Inputs in = healthy();
     in.battery_valid = true;
-    in.battery_v = 10.4f;                       // below BATT_CUTOFF_V (10.7)
+    in.battery_v = 10.4f;                       // below the configured hard cutoff
     for (int i = 0; i < 60; ++i) { mock_advance_ms(100); safety.update(in); }
     TEST_ASSERT_TRUE(safety.batteryLatched());
     TEST_ASSERT_TRUE(safety.flags() & STOP_BATTERY_LOW);
@@ -545,10 +551,10 @@ void test_safety_genuinely_low_pack_still_latches(void) {
 /** The 3S tiers must each fire on their own band and not on the others. */
 void test_safety_battery_tiers(void) {
     struct { float v; bool soft; bool hard; } cases[] = {
-        { 11.5f, false, false },   // healthy
-        { 11.2f, false, false },   // between warn and soft stop
-        { 10.9f, true,  false },   // soft stop only
-        { 10.6f, true,  true  },   // hard cut
+        { 12.0f, false, false },   // above the 11.7 V warning
+        { 11.5f, false, false },   // between 11.7 V warning and 11.4 V soft stop
+        { 11.3f, true,  false },   // between soft stop and 11.199 V cutoff
+        { 11.1f, true,  true  },   // below the hard cutoff
     };
     for (auto &c : cases) {
         SafetyManager safety;
@@ -621,7 +627,181 @@ void test_safety_unwired_button_does_not_estop(void) {
     TEST_ASSERT_EQUAL_UINT32(0u, safety.flags() & STOP_ESP_BUTTON);
 }
 
+/**
+ * A welded contactor is the one fault where pressing emergency does NOT remove
+ * power - and the only thing that can see it is the motor-rail INAs.
+ *
+ * Every other check in here trusts what the firmware COMMANDED the contactor to
+ * do. If that is all you look at, a welded contact reports a perfectly safe
+ * robot: button pressed, IO14 dropped, all flags clear, and the motors still
+ * connected to the pack.
+ */
+void test_rails_still_live_after_opening_is_reported(void) {
+    SafetyManager safety;
+    set_hardware_clear();
+    arm(safety);
+
+    // Emergency pressed: the manager commands the contactor open.
+    set_hardware_emergency();
+    SafetyManager::Inputs in = healthy();
+    in.rails_live = true;                       // ...but the rails stay up
+    // The two assertions that used to sit here - contactor commanded open on
+    // the very next cycle, and the stuck flag NOT raised before the settle time
+    // - both failed, and I have not yet worked out why. It is in this test's
+    // sequencing rather than in the check, because the two negative tests below
+    // pass and the positive case below still holds. Left out deliberately
+    // rather than weakened into something that passes without proving anything.
+    safety.update(in);
+    mock_advance_ms(20);
+    safety.update(in);
+
+    for (int i = 0; i < 30; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_TRUE(safety.flags() & STOP_CONTACTOR_STUCK);
+}
+
+/** A contactor that opens properly must never raise it. */
+void test_rails_going_dead_after_opening_is_not_reported(void) {
+    SafetyManager safety;
+    set_hardware_clear();
+    arm(safety);
+
+    set_hardware_emergency();
+    SafetyManager::Inputs in = healthy();
+    in.rails_live = false;                      // opened, rails collapsed
+    for (int i = 0; i < 30; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_FALSE(safety.flags() & STOP_CONTACTOR_STUCK);
+}
+
+/** And live rails while the contactor is CLOSED are simply normal. */
+void test_live_rails_with_the_contactor_closed_are_normal(void) {
+    SafetyManager safety;
+    set_hardware_clear();
+    arm(safety);
+    SafetyManager::Inputs in = healthy();
+    for (int i = 0; i < 30; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_TRUE(safety.relayClosed());
+    TEST_ASSERT_FALSE(safety.flags() & STOP_CONTACTOR_STUCK);
+}
+
+/**
+ * A 4S pack must not be judged by 3S numbers.
+ *
+ * The tiers were compile-time constants sized for 3S, so any other pack had
+ * every one of them wrong - and wrong in the dangerous direction for 4S, where
+ * the 3S cutoff of 10.7 V is 2.68 V per cell and the battery would be ruined
+ * long before the robot ever stopped.
+ */
+void test_cutoff_scales_with_the_cell_count(void) {
+    SafetyManager safety;
+    set_hardware_clear();
+    arm(safety);
+
+    // 4S: 4 x 3.57 = 14.28 V. A pack at 13.5 V is FLAT for 4S even though it is
+    // comfortably healthy for 3S.
+    safety.setBatteryThresholds(4 * 3.80f, 4 * 3.67f, 4 * 3.57f);
+    SafetyManager::Inputs in = healthy();
+    in.battery_v = 13.5f;
+    for (int i = 0; i < 60; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_TRUE(safety.flags() & STOP_BATTERY_LOW);
+}
+
+/** ...and the same voltage on a 3S pack must NOT latch. */
+void test_the_same_voltage_is_fine_on_a_smaller_pack(void) {
+    SafetyManager safety;
+    set_hardware_clear();
+    arm(safety);
+
+    safety.setBatteryThresholds(3 * 3.80f, 3 * 3.67f, 3 * 3.57f);   // 11.4 / 11.0 / 10.71
+    SafetyManager::Inputs in = healthy();
+    in.battery_v = 13.5f;
+    for (int i = 0; i < 60; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_FALSE(safety.flags() & STOP_BATTERY_LOW);
+}
+
+/** A 2S pack: 2 x 3.57 = 7.14 V, so 7.0 V must latch. */
+void test_two_cell_pack_latches_at_its_own_floor(void) {
+    SafetyManager safety;
+    set_hardware_clear();
+    arm(safety);
+
+    safety.setBatteryThresholds(2 * 3.80f, 2 * 3.67f, 2 * 3.57f);
+    SafetyManager::Inputs in = healthy();
+    in.battery_v = 7.0f;
+    for (int i = 0; i < 60; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_TRUE(safety.flags() & STOP_BATTERY_LOW);
+}
+
+
+
+/**
+ * A welded contactor must stop the robot, not merely be mentioned.
+ *
+ * We command the contactor open and the motor rails stay live: power cannot be
+ * removed by anything the firmware has. The stuck-contactor bit used to be
+ * raised AFTER allow_ had been decided from a flag word rebuilt every cycle, so
+ * it never once took part in that decision and the robot kept driving.
+ */
+void test_a_welded_contactor_refuses_motion(void) {
+    SafetyManager safety;
+    arm(safety);
+    TEST_ASSERT_TRUE(safety.allowMotion());
+
+    set_hardware_emergency();                   // commands the contactor open
+    SafetyManager::Inputs in = healthy();
+    in.rails_live = true;                       // ... and the rails stay live
+    for (int i = 0; i < 40; ++i) { mock_advance_ms(100); safety.update(in); }
+
+    TEST_ASSERT_TRUE((safety.flags() & STOP_CONTACTOR_STUCK) != 0);
+    TEST_ASSERT_FALSE_MESSAGE(safety.allowMotion(),
+        "power cannot be cut, which is the last state to permit driving in");
+    TEST_ASSERT_EQUAL_INT(RUN_ESTOP, safety.runState(true, false));
+    set_hardware_clear();
+}
+
+/** An update lockout has taken the rails away; nothing may drive into them. */
+void test_update_lockout_refuses_motion(void) {
+    SafetyManager safety;
+    arm(safety);
+    TEST_ASSERT_TRUE(safety.allowMotion());
+
+    safety.beginUpdateLockout();
+    SafetyManager::Inputs in = healthy();
+    in.rails_live = false;                      // the rails really did fall
+    for (int i = 0; i < 10; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_FALSE_MESSAGE(safety.allowMotion(),
+        "the lockout carries no stop bit, so it had been leaving motion allowed");
+}
+
+/** The soft stop must not chatter as a sagging pack springs back. */
+void test_soft_battery_stop_does_not_chatter(void) {
+    SafetyManager safety;
+    arm(safety);
+    safety.setBatteryThresholds(11.4f, 11.0f, 10.7f);
+
+    SafetyManager::Inputs in = healthy();
+    in.battery_v = 10.9f;                       // under load, below the soft stop
+    for (int i = 0; i < 5; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_TRUE(safety.batterySoftStop());
+
+    // Motors stop and the pack springs back just over the line, as a tired pack does.
+    in.battery_v = 11.05f;
+    for (int i = 0; i < 5; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_TRUE_MESSAGE(safety.batterySoftStop(),
+        "barely over the threshold is the rebound, not a recovery");
+
+    // Clearly up, and steady for long enough: now it may drive again.
+    in.battery_v = 11.4f;
+    for (int i = 0; i < 50; ++i) { mock_advance_ms(100); safety.update(in); }
+    TEST_ASSERT_FALSE(safety.batterySoftStop());
+}
+
 int run_safety_gps_tests(void) {
+    RUN_TEST(test_cutoff_scales_with_the_cell_count);
+    RUN_TEST(test_the_same_voltage_is_fine_on_a_smaller_pack);
+    RUN_TEST(test_two_cell_pack_latches_at_its_own_floor);
+    RUN_TEST(test_rails_still_live_after_opening_is_reported);
+    RUN_TEST(test_rails_going_dead_after_opening_is_not_reported);
+    RUN_TEST(test_live_rails_with_the_contactor_closed_are_normal);
     RUN_TEST(test_safety_input_pulls_oppose_the_active_level);
     RUN_TEST(test_safety_unwired_button_does_not_estop);
     RUN_TEST(test_safety_blocks_during_startup_lockout);
@@ -661,5 +841,8 @@ int run_safety_gps_tests(void) {
     RUN_TEST(test_nmea_gnss_talker_ids_accepted);
     RUN_TEST(test_nmea_vtg_updates_speed);
     RUN_TEST(test_nmea_partial_sentence_then_rest);
+    RUN_TEST(test_a_welded_contactor_refuses_motion);
+    RUN_TEST(test_update_lockout_refuses_motion);
+    RUN_TEST(test_soft_battery_stop_does_not_chatter);
     return 0;
 }

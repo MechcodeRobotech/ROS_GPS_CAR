@@ -1,7 +1,8 @@
 #!/bin/bash
 # Generate the derived branches from main.
 #
-#   tools/publish_branches.sh [--dry-run] [branch ...]
+#   tools/publish_branches.sh [--dry-run | --local] [branch ...]
+#   tools/publish_branches.sh --render-docker DIR
 #
 # main is the only branch anyone edits. workspace, firmware and docker are
 # produced from it mechanically, so the subsets can never drift out of step:
@@ -20,11 +21,13 @@ cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 WORKTREES="$ROOT/.git/branch-worktrees"
 DRY_RUN=0
+LOCAL_ONLY=0
 
 ARGS=()
 for a in "$@"; do
     case "$a" in
         --dry-run) DRY_RUN=1 ;;
+        --local) LOCAL_ONLY=1 ;;
         *) ARGS+=("$a") ;;
     esac
 done
@@ -35,9 +38,9 @@ BRANCHES=(${BRANCHES[@]})
 # What each branch carries. Paths are relative to the repository root.
 subset_for() {
     case "$1" in
-        workspace) echo "gps_localize_ws webapp tools setup docs .gitignore README.md" ;;
-        firmware)  echo "firmware tools setup docs .gitignore README.md" ;;
-        docker)    echo "gps_localize_ws webapp firmware tools setup docs .gitignore README.md" ;;
+        workspace) echo "gps_localize_ws webapp tools setup docs .gitignore README.md AGENTS.md CLAUDE.md GEMINI.md HANDOFF.md" ;;
+        firmware)  echo "firmware tools setup docs .gitignore README.md AGENTS.md CLAUDE.md GEMINI.md HANDOFF.md" ;;
+        docker)    echo "gps_localize_ws webapp firmware tools setup docs .gitignore README.md AGENTS.md CLAUDE.md GEMINI.md HANDOFF.md" ;;
         *) return 1 ;;
     esac
 }
@@ -207,6 +210,7 @@ services:
       # PlatformIO's toolchain cache is ~1.5 GB; keeping it in a volume means
       # it survives a rebuild instead of being downloaded again.
       - gps_localize_pio:/root/.platformio
+      - gps_localize_build:/root/.pio_workspaces
 
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/"]
@@ -218,59 +222,54 @@ services:
 volumes:
   gps_localize_data:
   gps_localize_pio:
+  gps_localize_build:
 COMPOSE
 
     cat > "$wt/docker-compose.serial.yml" <<'SERIALCOMPOSE'
-# Add the ESP32's serial port. Only needed for flashing over USB or for the
-# serial micro-ROS transport - the robot normally connects over Wi-Fi.
-#
-#   docker compose -f docker-compose.yml -f docker-compose.serial.yml up -d
-#
-# The port must exist before you start, or Docker refuses to create the
-# container. Check with:  ls /dev/ttyUSB* /dev/ttyACM*
-# It is not in the base file for exactly that reason.
+# USB device access for flashing. Add serial-transport.yml for runtime serial.
+# Linux, or Docker Engine running inside the WSL distribution owning the USB.
 services:
   gps_localize:
     devices:
-      - /dev/ttyUSB0:/dev/ttyUSB0
+      - "${SERIAL_DEVICE:-/dev/ttyUSB0}:/dev/ttyUSB0"
 SERIALCOMPOSE
 
+    cat > "$wt/docker-compose.serial-transport.yml" <<'TRANSPORTCOMPOSE'
+# Use together with docker-compose.serial.yml after flashing env:serial.
+services:
+  gps_localize:
+    command: ["ros2", "launch", "gps_localize", "bringup.launch.py", "transport:=serial", "serial_device:=/dev/ttyUSB0"]
+TRANSPORTCOMPOSE
+
     cat > "$wt/docker-compose.windows.yml" <<'WINCOMPOSE'
-# Override for Docker Desktop on Windows and macOS.
-#
-#   docker compose -f docker-compose.yml -f docker-compose.windows.yml up -d
-#
-# WHY THIS EXISTS
-# network_mode: host is a Linux-only feature. On Docker Desktop the container
-# runs inside a VM, so "host" is that VM and not your PC - the ESP32 on your
-# Wi-Fi could never reach the agent.
-#
-# Publishing ports works instead, because every ROS 2 node AND the micro-ROS
-# agent run inside this one container. DDS discovery never has to cross the
-# boundary; only two things do:
-#     ESP32   -> agent    UDP 8888
-#     browser -> web UI   TCP 8080
-#
-# So this is a real robot setup on Windows, not a demo.
-#
-# WHAT IS DIFFERENT
-#  - ros2 from the Windows host cannot see the topics. There is no ROS on the
-#    host anyway; use  docker compose exec gps_localize ros2 topic list
-#  - USB is not passed through. Flash over Wi-Fi (OTA), flash from Windows
-#    with PlatformIO directly, or attach the port to WSL with usbipd-win.
-#  - point the firmware's agent address at your PC's LAN address, not at the
-#    container. Docker Desktop forwards the published port to it.
+# Docker Desktop Wi-Fi, or published browser ports for WSL Docker Engine USB.
+# All ROS nodes and the agent remain inside one container.
+# No Desktop host-networking feature is required.
 services:
   gps_localize:
     network_mode: "bridge"
+    ipc: "private"
     ports:
-      - "8080:8080/tcp"
-      - "8888:8888/udp"
-    # No devices to clear: the base file no longer declares any, because a
-    # missing device stops the container being created at all. Do not add the
-    # serial override on Windows - Docker Desktop cannot pass a COM port
-    # through. Flash over Wi-Fi, or from Windows with PlatformIO directly.
+      - "${WEB_PORT:-8080}:8080/tcp"
+      - "${AGENT_PORT:-8888}:8888/udp"
 WINCOMPOSE
+
+    cat > "$wt/.dockerignore" <<'DOCKERIGNORE'
+.git
+_work
+_patches
+_relay
+**/.pio
+**/.pio_workspaces
+**/build
+**/install
+**/log
+**/__pycache__
+**/*.pyc
+firmware/config/network_secrets.h
+webapp/exe
+model
+DOCKERIGNORE
 
     cat > "$wt/install.sh" <<'INSTALL'
 #!/bin/bash
@@ -307,83 +306,58 @@ echo
 echo "web UI: http://$(hostname -I | awk '{print $1}'):8080"
 INSTALL
     cat > "$wt/README.md" <<'DOCKERREADME'
-# GPS_Localize - Docker
+# GPS_Localize — Docker robot server
 
-Runs the whole robot stack without installing ROS 2 on the machine: the
-micro-ROS agent, the navigation nodes and the web UI, plus PlatformIO so the
-ESP32 firmware can be built and flashed from the same container.
+Run the micro-ROS agent, ROS 2 Humble navigation/safety nodes, web interface,
+and firmware build tools without installing ROS on the host.
 
-## Linux
+Start with the [complete Docker installation and operations guide](docs/docker.md).
+It covers Linux, Docker Desktop on Windows over Wi-Fi, and Windows USB through
+WSL2 and a Docker Engine installed inside that same Ubuntu distribution.
+The [documentation index](docs/README.md) links hardware, calibration, safety,
+commands, troubleshooting, and verification results.
 
-```bash
-docker compose up -d
-```
-
-Uses host networking, so ROS 2 discovery, the agent on UDP 8888 and USB
-flashing all behave exactly as they do in a native install.
-
-## Windows and macOS
+Clone this branch with Git first (repository access is required):
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.windows.yml up -d
+git clone --branch docker https://github.com/MechcodeRobotech/ROS_GPS_CAR.git GPS_Localize
+cd GPS_Localize
 ```
 
-## Reaching it by name
-
-The container serves the UI, but the two services that make the robot reachable
-by NAME run on the host, not in here:
-
-    gps_localize_mdns.service       publishes gps-robot-web.local
-    gps_localize_netwatch.service   restarts the stack when the address changes
-
-With `network_mode: host` on Linux you can install those on the host and they
-cover the container too:
-
-    sudo apt install avahi-daemon avahi-utils
-    sudo ./setup/install.sh --native      # or install just those two units
-
-Without them the UI is still served, just only at the host's IP address - which
-changes whenever the machine moves network. The Help tab in the UI shows
-whichever addresses are actually available.
-
-`network_mode: host` does not exist on Docker Desktop - the container sits in
-a VM, so "host" is that VM rather than your PC. The override publishes the two
-ports that actually need to cross the boundary instead:
-
-| what | port |
-|---|---|
-| ESP32 to the agent | UDP 8888 |
-| browser to the web UI | TCP 8080 |
-
-Every ROS 2 node and the agent run inside this one container, so DDS discovery
-never crosses the boundary and does not need multicast to work. **This is a
-real setup on Windows, not a demo** - the robot connects, telemetry flows and
-the UI drives it.
-
-Two things do differ:
-
-- `ros2` on the Windows host sees nothing, because there is no ROS there. Use
-  `docker compose exec gps_localize ros2 topic list`.
-- USB is not passed through to the container. Flash over Wi-Fi (OTA), flash
-  from Windows with PlatformIO directly, or attach the port to WSL first with
-  [usbipd-win](https://github.com/dorssel/usbipd-win).
-
-Set the firmware's agent address to your PC's LAN address; Docker Desktop
-forwards the published port to the container.
-
-## Firmware from inside the container
+Linux:
 
 ```bash
-docker compose exec gps_localize pio run -e wifi -d /firmware
-docker compose exec gps_localize pio run -e wifi -d /firmware -t upload   # Linux only
+docker compose up -d --build
 ```
 
-The PlatformIO toolchain cache lives in a named volume, so it survives a
-rebuild instead of downloading ~1.5 GB again.
+Docker Desktop on Windows (Linux containers, Wi-Fi transport):
 
-## Web UI
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.windows.yml up -d --build
+```
 
-http://localhost:8080 , or the machine's LAN address from a phone.
+Open http://localhost:8080. On Windows, run `setup/setup_windows.ps1` as
+Administrator to configure the documented private-network firewall rules.
+Point the ESP32 at the PC LAN address, with UDP port 8888 reachable.
+
+USB requires a device visible to the Docker daemon. A Windows COM port is not
+a Linux device. Follow [Windows USB setup](docs/docker.md#windows-usb-through-wsl2)
+before using the serial overrides. USB flashing and USB runtime transport are
+separate choices: `wifi` firmware still communicates by Wi-Fi after a USB flash;
+`serial` firmware communicates through the cable at 115200 baud.
+
+Inspect ROS using the entrypoint explicitly because `docker exec` bypasses it:
+
+```bash
+docker compose exec gps_localize /usr/local/bin/docker-entrypoint.sh ros2 node list
+```
+
+The default Compose file exposes no USB device, so the server can start without
+a board. An HTTP healthcheck confirms the web service only; verify the firmware
+node and fresh telemetry before calling the robot connected. Runtime settings
+and PlatformIO caches persist in named volumes. Stop with `docker compose down`;
+do not add `-v` unless you intend to erase saved settings and caches.
+
 DOCKERREADME
 
     chmod +x "$wt/install.sh" "$wt/docker-entrypoint.sh"
@@ -416,6 +390,7 @@ publish_one() {
             rsync -a --delete \
                 --exclude='.pio/' --exclude='build/' --exclude='install/' \
                 --exclude='log/' --exclude='__pycache__/' --exclude='*.pyc' \
+                --exclude='network_secrets.h' \
                 "$ROOT/$path/" "$wt/$path/"
         else
             cp -a "$ROOT/$path" "$wt/$path"
@@ -433,13 +408,25 @@ publish_one() {
         git -C "$wt" reset -q
     else
         git -C "$wt" commit -q -m "Sync $branch from main ($(git rev-parse --short HEAD))"
-        git -C "$wt" push -q -u origin "$branch"
-        echo "    pushed $(git -C "$wt" rev-parse --short HEAD)"
+        if [ "$LOCAL_ONLY" = 0 ]; then
+            git -C "$wt" push -q -u origin "$branch"
+            echo "    pushed $(git -C "$wt" rev-parse --short HEAD)"
+        else
+            echo "    committed locally $(git -C "$wt" rev-parse --short HEAD)"
+        fi
     fi
 
     git worktree remove --force "$wt"
 }
 
+# Render build inputs without changing branches or requiring a commit first.
+# This breaks the former circular dependency between image freshness and QC.
+if [ "${ARGS[0]:-}" = "--render-docker" ]; then
+    [ "${#ARGS[@]}" = 2 ] || { echo "usage: $0 --render-docker DIR" >&2; exit 2; }
+    mkdir -p "${ARGS[1]}"
+    write_docker_extras "${ARGS[1]}"
+    exit 0
+fi
 require_clean_main
 mkdir -p "$WORKTREES"
 for b in "${BRANCHES[@]}"; do publish_one "$b"; done

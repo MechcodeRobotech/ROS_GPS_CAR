@@ -148,7 +148,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/config':
             return self._json({'ok': True, 'data': {'nav': {
                 'cruise_speed_mps': 0.25, 'approach_speed_mps': 0.12,
-                'arrive_radius_m': 1.0, 'loop_waypoints': False,
+                'arrive_radius_m': 2.5, 'arrive_hold_s': 1.5,
+                'arrive_sigma_k': 1.5, 'loop_waypoints': False,
                 'require_fix': True, 'min_satellites': 6, 'max_hdop': 3.0}}})
 
         # static files
