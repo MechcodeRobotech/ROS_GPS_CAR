@@ -2498,6 +2498,17 @@ void loop() {
     case WAITING_AGENT:
       EXECUTE_EVERY_N_MS(1000, {
         conn_state = (RMW_RET_OK == rmw_uros_ping_agent(500, 5)) ? AGENT_AVAILABLE : WAITING_AGENT;
+        static uint32_t waiting_agent_sec = 0;
+        if (conn_state == WAITING_AGENT) {
+          if (++waiting_agent_sec >= 60) {
+            Serial.println("[agent] 60 seconds without agent ping reply - restarting ESP32 to clear stale IP/session");
+            Serial.flush();
+            delay(50);
+            ESP.restart();
+          }
+        } else {
+          waiting_agent_sec = 0;
+        }
 #if defined(MICROROS_TRANSPORT_WIFI)
         // after a few failed pings, look the agent up by name again: the PC may
         // have come back on a different IP address
