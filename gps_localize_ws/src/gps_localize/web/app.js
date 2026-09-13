@@ -846,7 +846,15 @@
     text('tMbA', fmt(t.motor_b_a, 2));
     text('tFanV', fmt(t.fan_v, 2));
     text('tFanA', fmt(t.fan_a, 2));
-    text('tHeap', fmt(t.free_heap_kb, 0));
+    var freeHeap = t.free_heap_kb || 0;
+
+    var totalHeap = 320; // ESP32 NodeMCU-32S usable heap
+
+    var usedHeap = totalHeap - freeHeap;
+
+    var pct = Math.round((usedHeap / totalHeap) * 100) || 0;
+
+    text('tHeap', fmt(freeHeap, 0) + ' / ' + totalHeap + ' kB (ใช้ไป / used ' + pct + '%)');
     text('tLoop', fmt(t.loop_us, 0));
 
     // ---- mission ----
@@ -3769,12 +3777,29 @@
 
     if ($('wpLoopToggle')) {
     api('/api/config?group=nav').then(function (res) {
-      if (res.ok && res.data) $('wpLoopToggle').checked = !!res.data.loop_waypoints;
+      if (res.ok && res.data && res.data.nav) $('wpLoopToggle').checked = !!res.data.nav.loop_waypoints;
     });
     $('wpLoopToggle').addEventListener('change', function () {
-      api('/api/config', { group: 'nav', data: { loop_waypoints: this.checked } }).then(function (res) {
-        if (!res.ok) alert('Failed to save setting: ' + res.error);
-        else toast('ตั้งโหมดวนซ้ำแล้ว');
+      var isChecked = this.checked;
+      api('/api/config?group=nav').then(function (res) {
+        if (!res.ok) return alert('Failed to read config: ' + res.error);
+        var fullConfig = res.data || {};
+        if (!fullConfig.nav) fullConfig.nav = {};
+        fullConfig.nav.loop_waypoints = isChecked;
+        api('/api/config', { group: 'nav', data: fullConfig }).then(function (saveRes) {
+          if (!saveRes.ok) alert('Failed to save setting: ' + saveRes.error);
+          else {
+            toast('ตั้งโหมดวนซ้ำแล้ว');
+            if (state.cfg.group === 'nav') {
+              state.cfg.data = fullConfig;
+              var form = $('cfgForm');
+              if (form) {
+                var cb = form.querySelector('input[name="loop_waypoints"]');
+                if (cb) cb.checked = isChecked;
+              }
+            }
+          }
+        });
       });
     });
   }
@@ -3889,6 +3914,9 @@
       if (!response.ok) { $('cfgMsg').textContent = response.error; return; }
       state.cfg.data = response.data;
       renderConfig(response.data);
+      if (group === 'nav' && $('wpLoopToggle') && response.data && response.data.nav) {
+        $('wpLoopToggle').checked = !!response.data.nav.loop_waypoints;
+      }
     });
   }
 
@@ -3982,7 +4010,13 @@
       $('cfgMsg').textContent = response.ok
         ? 'บันทึกแล้ว มีผลทันที / saved and applied'
         : ('ผิดพลาด: ' + response.error);
-      if (response.ok) { state.cfg.data = response.data; renderConfig(response.data); }
+      if (response.ok) { 
+        state.cfg.data = response.data; 
+        renderConfig(response.data);
+        if (state.cfg.group === 'nav' && $('wpLoopToggle') && response.data && response.data.nav) {
+          $('wpLoopToggle').checked = !!response.data.nav.loop_waypoints;
+        }
+      }
     });
   });
 
@@ -3992,7 +4026,13 @@
     if (!window.confirm('คืนค่าโรงงานของกลุ่ม "' + state.cfg.group + '" ใช่ไหม?')) return;
     api('/api/config/reset', { group: state.cfg.group }).then(function (response) {
       $('cfgMsg').textContent = response.ok ? 'คืนค่าโรงงานแล้ว' : ('ผิดพลาด: ' + response.error);
-      if (response.ok) { state.cfg.data = response.data; renderConfig(response.data); }
+      if (response.ok) { 
+        state.cfg.data = response.data; 
+        renderConfig(response.data);
+        if (state.cfg.group === 'nav' && $('wpLoopToggle') && response.data && response.data.nav) {
+          $('wpLoopToggle').checked = !!response.data.nav.loop_waypoints;
+        }
+      }
     });
   });
 
