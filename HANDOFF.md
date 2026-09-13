@@ -135,19 +135,27 @@ Completed locally:
   found no recognized private keys/tokens in Git candidates. Existing audit
   reports remain historical/open findings; this is not an all-bugs-fixed claim.
 
-Next steps: finish Git snapshot and regenerate/verify main, workspace, firmware,
-and docker delivery; record publication result here. Windows hardware acceptance
+Git delivery completed: source snapshot `952257d` and generated branches
+`workspace` (`21f6fee`), `firmware` (`02882b1`), and `docker` (`0c0db52`) were
+atomically pushed to the existing origin, MechcodeRobotech/ROS_GPS_CAR. The
+following documentation-only status commit records completion; use `git log -1`
+and `git ls-remote origin` for the latest branch tips. All generated Docker
+files were compared byte-for-byte with the tested build context; all derived
+branches contain the handoff/docs and exclude network_secrets.h.
+
+T211 software/documentation/Git work is complete. T212 Windows hardware acceptance
 remains blocked on access to a Windows PC/USB adapter: follow
 `docs/windows_handoff.md`, record actual versions and telemetry/reconnect results.
 Do not mark those tests passed from Linux. The historical robot queue remains.
 
 Gemini fallback is available: `RELAY_ORDER=agy tools/agent_relay.sh --dry-run`
-confirmed `/home/mannaja/.gemini/bin/agy` ready. No fallback worker has been
+confirmed `/home/mannaja/.gemini/bin/agy` ready. The isolated smoke container has been stopped; its test volumes remain local.
+No fallback worker has been
 started; interactive Codex is not automatically watched by the relay. If Codex
 hits its limit, run a single fallback with a focused task prompt:
 
 ```bash
-tools/agent_relay.sh --prompt "Read HANDOFF.md and CLAUDE.md. Continue only the current Docker/Windows release task T211. Preserve the existing staging and evidence. Finish remaining local verification and Git preparation. Do not command motion, upload firmware, install host packages, or publish without authorization. Record Windows hardware blockers and exact next steps; update HANDOFF.md before stopping. Do not add RELAY_DONE for the historical robot queue." --once agy
+tools/agent_relay.sh --prompt "Read HANDOFF.md and CLAUDE.md. Review completed T211 and continue Windows acceptance T212 only if Windows hardware is available. Preserve the existing staging and evidence. Finish remaining local verification and Git preparation. Do not command motion, upload firmware, install host packages, or publish without authorization. Record Windows hardware blockers and exact next steps; update HANDOFF.md before stopping. Do not add RELAY_DONE for the historical robot queue." --once agy
 ```
 
 ## Queue
@@ -186,11 +194,9 @@ tools/agent_relay.sh --prompt "Read HANDOFF.md and CLAUDE.md. Continue only the 
 
 - Configure the u-blox receiver over UBX: dynamic model "pedestrian" plus SBAS,
   each write ACK-verified. The receiver currently gets no configuration at all.
-- Rebuild the stale `gps_localize:latest` Docker image - the only standing QC
-  failure. It needs a branch push.
-- Commit the ~90 uncommitted files. Recent sessions edited the real folders
-  directly rather than through `_work/` and `_patches/` as CLAUDE.md asks - know
-  that before assuming a rollback exists.
+- Docker rebuild is completed by T211; see the current-priority release record.
+- The previously uncommitted project work is preserved in Git by T211. Older
+  edits predate the release snapshot and may not have individual patch rollbacks.
 
 Done recently, details in `plan.html`: T186 (`/odom` silent - custom-transport
 MTU was 512), T203 (Wi-Fi signal kept - costs the loop nothing measurable), T205

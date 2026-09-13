@@ -2920,12 +2920,22 @@
   {
    "id": "T211",
    "phase": "D",
-   "needs": "PC; Windows USB hardware for final acceptance",
-   "state": "IN PROGRESS",
+   "needs": "PC",
+   "state": "DONE",
    "title": "Docker release, Windows USB, and installation documentation",
    "files": "tools/publish_branches.sh, tools/qc.py, README.md, docs/, setup/README.md, HANDOFF.md",
    "test": "Docker image build, isolated HTTP/ROS/telemetry and pseudo-terminal serial checks, four QC gates; Windows acceptance separately",
-   "result": "Docker built; isolated HTTP, ROS graph, telemetry, persistence and serial pseudo-terminal passed. Four gates pass (QC, 11 static checks, 261 host tests, Wi-Fi build). Serial firmware builds. Documentation and Git snapshot prepared; physical Windows Desktop/USB acceptance requires destination hardware."
+   "result": "Published current project and deployment docs to main/workspace/firmware/docker. Docker image build, isolated HTTP/ROS/telemetry/persistence, serial pseudo-terminal, QC, 11 static checks, 261 native tests, Wi-Fi and serial builds pass. Windows physical acceptance tracked separately in T212. See HANDOFF.md and docs/docker_verification.md."
+  },
+  {
+   "id": "T212",
+   "phase": "D",
+   "needs": "Windows PC, USB adapter/ESP32; attending operator for motion",
+   "state": "HW-BLOCKED",
+   "title": "Verify Docker Desktop Wi-Fi and WSL2 Docker USB on destination Windows PC",
+   "files": "docs/windows_handoff.md, docs/docker_verification.md, HANDOFF.md",
+   "test": "Follow Windows acceptance checklist: actual device attach, flash serial with motor power disconnected, fresh telemetry, unplug/replug recovery, WSL restart, persistent settings",
+   "result": "No Windows machine is accessible from this Linux session. Software route and Linux checks completed in T211; physical Windows tests must not be marked passed from pseudo-terminal or Linux container tests. Gemini continuation instructions are recorded in HANDOFF.md."
   }
  ]
 }
