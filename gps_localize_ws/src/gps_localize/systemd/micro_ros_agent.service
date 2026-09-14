@@ -1,0 +1,58 @@
+; The micro-ROS agent, on its own, so the board always has something to talk to.
+;
+;   sudo cp micro_ros_agent.service /etc/systemd/system/
+;   sudo systemctl daemon-reload
+;   sudo systemctl enable --now micro_ros_agent
+;   systemctl status micro_ros_agent
+;   journalctl -u micro_ros_agent -f                        # watch the log
+;
+; __USER__ and __PROJECT__ are PLACEHOLDERS, substituted by setup/install.sh at
+; install time. A unit with one machine's user and home path baked in is wrong
+; everywhere else, and this file is committed to git.
+;
+; WHY THIS IS A SEPARATE UNIT
+;
+; The agent used to be a child of the bringup launch, which meant it shared that
+; launch's fate: a node failing to build, a bad config, or simply stopping the
+; stack to work on it also took the agent down. The board then had nothing
+; listening on its port, and the symptom was the board's, not the host's - it
+; retried silently while the person was looking at the host, where everything
+; appeared normal because they had stopped it on purpose.
+;
+; The agent is the one part that should be running whenever the machine is, so
+; it gets its own unit and its own restart policy. bringup.launch.py is started
+; with start_agent:=false so exactly one agent binds the port; two would fight
+; over it and the second would exit.
+;
+; THE PORT IS FIXED AT 8888 AND MUST STAY THERE
+;
+; The board is configured to connect to <host IP>:8888, and on the Windows host
+; VirtualBox forwards UDP 8888 into this VM (rule "microros-agent"). The host IP
+; changes with the network; the port never does. Changing it here breaks the
+; board and the forwarding rule at the same time, and the only symptom is a
+; board that never appears in the ROS graph.
+
+[Unit]
+Description=micro-ROS agent (UDP4 on port 8888) for the GPS_Localize board
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__PROJECT__
+# Must match the board and every host node, or the graph comes up empty with no
+# error whatsoever - the failure mode this project has hit more than once.
+Environment=ROS_DOMAIN_ID=10
+# The agent is built by micro_ros_setup into its own workspace, so that
+# workspace has to be sourced before ros2 can find the package. Sourcing it is
+# conditional because a machine that installed the agent from apt has no
+# uros_ws, and hard-failing there would be wrong.
+ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && [ -f $HOME/uros_ws/install/local_setup.bash ] && source $HOME/uros_ws/install/local_setup.bash; exec ros2 run micro_ros_agent micro_ros_agent udp4 --port 8888'
+Restart=always
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

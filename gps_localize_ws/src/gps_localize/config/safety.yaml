@@ -1,0 +1,17 @@
+# Safety watchdog. Read docs/safety.md before changing anything here.
+safety:
+  heartbeat_rate_hz: 10.0        # /gps_localize/heartbeat sent to the ESP32
+  esp_telemetry_timeout_s: 1.0   # no telemetry from the ESP32 = robot considered offline
+
+  # Web (browser) heartbeat. This is the "cut the robot when the network dies"
+  # feature: while the browser is quiet longer than the timeout the watchdog
+  # stops feeding the ESP32 heartbeat, and the firmware brakes on its own.
+  require_web_heartbeat: true
+  web_heartbeat_timeout_s: 1.5
+  web_heartbeat_grace_s: 5.0     # allowed gap right after a browser reconnects
+
+  # After an emergency stop the operator must press RESET on the web UI.
+  auto_clear_estop: false
+  # Publish a zero command as soon as anything goes wrong (belt and braces -
+  # the firmware already stops by itself).
+  publish_stop_command: true

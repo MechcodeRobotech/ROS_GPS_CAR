@@ -1,0 +1,48 @@
+; Announce where the micro-ROS agent is, so the robot never has to be told.
+;
+;   sudo cp gps_localize_beacon.service /etc/systemd/system/
+;   sudo systemctl daemon-reload
+;   sudo systemctl enable --now gps_localize_beacon
+;   journalctl -u gps_localize_beacon -f
+;
+; __USER__ and __PROJECT__ are PLACEHOLDERS, substituted by setup/install.sh at
+; install time. A unit with one machine's user and home path baked in is wrong
+; everywhere else, and this file is committed to git.
+;
+; WHY THIS IS A SEPARATE UNIT, AND NOT PART OF THE STACK
+;
+; Same reasoning as micro_ros_agent.service, and for the same reason it was
+; learned: this has to be running whenever the machine is. A board that has
+; lost the agent is looking for an announcement, and if the announcement is a
+; child of bringup.launch.py then stopping the stack to work on it also stops
+; the one thing that would let the robot find its way back afterwards.
+;
+; It deliberately has no ROS dependency at all - plain sockets, standard
+; library only - so it keeps announcing while the workspace is being rebuilt,
+; which is exactly when the rest of the stack is down.
+;
+; THE PORT IS 8889, NEXT TO THE AGENT'S 8888
+;
+; The board listens on 8889 and the agent on 8888. Both are compiled into the
+; firmware (AGENT_BEACON_PORT and AGENT_PORT in firmware/config/network.h), so
+; changing either here without reflashing the board silently breaks discovery -
+; and the symptom is a robot that simply never appears, which is the hardest
+; kind of failure to attribute.
+
+[Unit]
+Description=GPS_Localize agent beacon (announces the agent on UDP 8889)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__PROJECT__
+ExecStart=/usr/bin/python3 __PROJECT__/gps_localize_ws/src/gps_localize/gps_localize/agent_beacon.py
+Restart=always
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,62 @@
+# Waypoint navigation behaviour. Everything here is editable from the web UI
+# (page "ตั้งค่า / Settings"), no rebuild needed.
+nav:
+  cruise_speed_mps: 0.25       # normal driving speed
+  approach_speed_mps: 0.12     # speed used inside approach_distance_m
+  approach_distance_m: 1.5     # start slowing down this far from the waypoint
+  # Waypoint counts as reached inside this radius - but only after the robot has
+  # STAYED inside it for arrive_hold_s, and never inside 2.0 m whatever is set
+  # here. Measured stationary outdoors on 8 satellites at HDOP 1.3, the fix
+  # scattered 1.56 m median and 4.86 m worst, so a 1 m radius is below the
+  # receiver's own noise and arrival becomes a matter of luck.
+  arrive_radius_m: 2.5
+  arrive_hold_s: 1.5           # must stay inside the radius this long to count
+  arrive_sigma_k: 1.5          # radius also grows with the fusion's uncertainty
+  heading_tolerance_deg: 15.0  # turn on the spot until the bearing error is smaller
+
+  # A waypoint may also name a heading to be facing once the robot gets there
+  # (the "ทิศ / Face" column on the Waypoints page). When it does, the robot
+  # arrives first and then turns on the spot, because this robot steers by
+  # driving and any attempt to arrive already facing the right way costs a
+  # curved approach that lands it somewhere else.
+  #
+  # If the turn cannot be completed in this long the mission continues anyway:
+  # the robot HAS arrived, and stopping everything over the last few degrees
+  # would be the worse failure. The log says which happened.
+  align_timeout_s: 20.0
+  command_rate_hz: 5.0         # how often cmd_move is republished
+  loop_waypoints: true        # true = start again at waypoint 1 after the last one
+  waypoint_timeout_s: 180.0    # give up on a waypoint after this long and stop
+
+  # Heading discovery - the fallback when the compass is dead or disturbed.
+  # The robot cannot know which way it points while standing still without a
+  # compass, so it drives straight for a couple of metres: the GPS course then
+  # tells it exactly, and it turns towards the waypoint from there.
+  discover_heading: true
+  discover_speed_mps: 0.15
+  discover_distance_m: 2.0
+  discover_max_s: 12.0
+
+  # Navigate without GPS when there is no usable fix, using the start pose you
+  # set on the map plus IMU heading, the compass and the motor model.
+  #
+  # This is the indoor half of "indoors run on the sensors, outdoors run on
+  # GPS". It is not a mode you switch: GPS is used whenever the fix is good
+  # enough, and this takes over automatically the moment it is not, so walking
+  # the robot from a car park into a building does not need anyone to press
+  # anything. on_pose_estimate() only feeds a dead-reckoned position while the
+  # real fix is missing or stale.
+  #
+  # KNOW WHAT YOU ARE GETTING. Dead reckoning drifts - several metres per minute
+  # on this robot, because with no encoders the distance comes from a back-EMF
+  # motor model and the heading from a compass. It is fine for a room and wrong
+  # for a field. The map marks a dead-reckoned position as hollow rather than
+  # solid, and pos_sigma_m grows honestly while it coasts, so the uncertainty is
+  # visible rather than implied.
+  allow_dead_reckoning: true
+
+  # GPS quality gate - navigation refuses to drive with a bad fix
+  require_fix: true
+  min_satellites: 6
+  max_hdop: 3.0
+  fix_timeout_s: 3.0           # no NavSatFix for this long = fix lost

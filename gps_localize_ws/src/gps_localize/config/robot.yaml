@@ -1,0 +1,7 @@
+# Physical robot. Change these if you change wheels, motors or the chassis.
+# Units: metres, m/s. (แก้ค่าตามหุ่นจริง)
+robot:
+  wheel_diameter_m: 0.081      # 81 mm wheel
+  wheel_track_m: 0.300         # distance between the two wheel centres - MEASURE IT
+  max_speed_mps: 0.42          # JGA25-370-100RPM on 81 mm wheels
+  gps_antenna_offset_m: 0.0    # antenna distance in front of the wheel axle

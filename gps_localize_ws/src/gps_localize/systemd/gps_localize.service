@@ -1,0 +1,56 @@
+; Autostart the whole stack on boot (Ubuntu 22.04 + ROS 2 Humble).
+;
+;   sudo cp gps_localize.service /etc/systemd/system/
+;   sudo systemctl daemon-reload
+;   sudo systemctl enable --now gps_localize
+;   journalctl -u gps_localize -f                          # watch the log
+;
+;
+; __USER__ and __PROJECT__ are PLACEHOLDERS. setup/install.sh substitutes the
+; real values when it installs this file. They are not filled in here on
+; purpose: a unit with one machine's user and home path baked in is wrong
+; everywhere else, and this file is committed to git.
+;
+; To install by hand:
+;   sed -e "s|__USER__|$USER|g" -e "s|__PROJECT__|$PWD|g" \
+;       gps_localize_ws/src/gps_localize/systemd/gps_localize.service \
+;     | sudo tee /etc/systemd/system/gps_localize.service
+;
+; Change them only if the workspace
+; moves or another account runs the robot.
+
+[Unit]
+Description=GPS_Localize robot stack (navigation, web UI)
+After=network-online.target micro_ros_agent.service
+Wants=network-online.target
+; The agent runs as its own unit so that stopping or restarting this stack does
+; not leave the board with nothing listening on its port. Wants= rather than
+; Requires=: if the agent cannot start, the host half should still come up and
+; say so in the web UI, rather than both halves disappearing together.
+Wants=micro_ros_agent.service
+
+[Service]
+# Lets the web UI bind port 80 while still running as an ordinary user, so the
+# address is just http://gps-robot-web.local with no port after it. Ambient
+# capabilities are inherited by the children this unit spawns, which is what the
+# python process actually needs. Without it the UI still comes up on 8080 and
+# logs why - losing the short address must never cost the whole interface.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+Type=simple
+User=__USER__
+WorkingDirectory=__PROJECT__
+Environment=ROS_DOMAIN_ID=10
+# start_agent:=false because micro_ros_agent.service owns the agent now. Two
+# agents on one UDP port do not share it - the second exits, and which of the
+# two lost the race is not something you can tell from the board's side.
+# The agent workspace is still sourced: other tooling launched from here
+# expects its message types to be on the path.
+ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && [ -f $HOME/uros_ws/install/local_setup.bash ] && source $HOME/uros_ws/install/local_setup.bash; source __PROJECT__/gps_localize_ws/install/setup.bash && ros2 launch gps_localize bringup.launch.py start_agent:=false'
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target
