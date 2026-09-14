@@ -1,0 +1,18 @@
+nav:
+  cruise_speed_mps: 0.25
+  approach_speed_mps: 0.12
+  approach_distance_m: 1.5
+  arrive_radius_m: 1.0
+  heading_tolerance_deg: 15.0
+  command_rate_hz: 5.0
+  loop_waypoints: false
+  waypoint_timeout_s: 180.0
+  discover_heading: true
+  discover_speed_mps: 0.15
+  discover_distance_m: 2.0
+  discover_max_s: 12.0
+  allow_dead_reckoning: false
+  require_fix: true
+  min_satellites: 6
+  max_hdop: 3.0
+  fix_timeout_s: 3.0

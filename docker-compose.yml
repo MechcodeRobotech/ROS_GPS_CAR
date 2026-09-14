@@ -1,0 +1,49 @@
+services:
+  gps_localize:
+    build: .
+    image: gps_localize:latest
+    container_name: gps_localize
+    restart: unless-stopped
+
+    # ROS 2 discovery is multicast and the micro-ROS agent binds UDP 8888 for
+    # the robot. Bridge networking breaks both, so the container shares the
+    # host network stack.
+    network_mode: host
+
+    # Sharing the network stack is not enough on its own. FastDDS discovers
+    # peers over UDP but then moves the actual data over shared memory, and
+    # /dev/shm is per-container by default - so the host and the container find
+    # each other, agree on topics, and then no samples ever cross. `ros2 topic
+    # list` from the host shows every container topic, which makes it look like
+    # it is working right up until nothing arrives. Sharing the IPC namespace
+    # gives both sides the same shared-memory segments.
+    ipc: host
+
+    environment:
+      - ROS_DOMAIN_ID=10
+
+    # NO devices here on purpose. Docker refuses to start a container whose
+    # device is absent, and /dev/ttyUSB0 does not exist unless a board happens
+    # to be plugged in - so requiring it made the stack fail to start on any
+    # machine without the robot attached, which is the normal case. The robot
+    # connects over Wi-Fi. For USB flashing, add the serial override.
+
+    # Waypoints, runtime config and bug reports must outlive the container.
+    volumes:
+      - gps_localize_data:/root/.gps_localize
+      # PlatformIO's toolchain cache is ~1.5 GB; keeping it in a volume means
+      # it survives a rebuild instead of being downloaded again.
+      - gps_localize_pio:/root/.platformio
+      - gps_localize_build:/root/.pio_workspaces
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  gps_localize_data:
+  gps_localize_pio:
+  gps_localize_build:

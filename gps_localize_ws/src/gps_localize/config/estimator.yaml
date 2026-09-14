@@ -1,0 +1,33 @@
+# How the robot works out where it points and how fast it is going.
+# This robot has no wheel encoders, so several sensors are combined and the
+# best healthy one is used - see docs/architecture.md.
+estimator:
+  # 0 = BNO085 magnetometer only
+  # 1 = IMU gyro + GPS course only (relative until the robot moves)
+  # 2 = GPS course only
+  # 3 = IMU gyro + compass when still + GPS when moving
+  # 4 = AUTO, health checked, falls back on its own          <- recommended
+  heading_source: 4
+
+  align_min_mps: 0.25       # trust the GPS course only above this speed
+  align_tau_s: 6.0          # how fast the heading is pulled onto the GPS course
+  gps_tau_s: 1.5            # GPS speed pull-in for the speed estimate
+  model_tau_s: 2.5          # fallback pull-in when the fix is lost
+  track_m: 0.30             # splits body speed into left/right wheel speed
+
+  # QMC5883L compass inside the GPS module - this is what gives the robot an
+  # absolute heading while standing still, before the first move.
+  mag_enable: true
+  mag_tau_s: 4.0            # how fast the heading is pulled onto the compass when stopped
+  mag_still_mps: 0.10       # below this speed the compass is used
+  # Magnetic declination: the angle between magnetic north, which the compass
+  # finds, and true north, which a map uses. It is a property of WHERE the robot
+  # is, not of the sensor, so it is set from the location and not tuned.
+  #
+  # Chiang Mai (18.79 N, 98.96 E) is about +0.3 deg in 2026. The 0.6 here was
+  # Bangkok's. The difference is a third of a degree and matters far less than
+  # the compass's own error, so correcting it is tidiness rather than a fix -
+  # but a number that names the wrong city invites someone to trust it.
+  # Look yours up at https://www.ngdc.noaa.gov/geomag/calculators/magcalc.shtml
+  mag_declination_deg: 0.3
+  mag_mount_offset_deg: 0.0 # squares the GPS module to the front of the robot

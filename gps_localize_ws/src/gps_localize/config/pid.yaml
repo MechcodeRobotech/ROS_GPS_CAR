@@ -1,0 +1,22 @@
+# Controller gains running INSIDE the ESP32. Saving this file from the web UI
+# pushes the values to the firmware immediately (topic /gps_localize/config/pid),
+# no reflash, no reboot. Tuning procedure: docs/tuning.md sections 4 and 5.
+pid:
+  # heading hold: error [deg] -> differential PWM
+  heading:
+    kp: 9.0
+    ki: 0.35
+    kd: 1.2
+    kf: 0.0
+    tol: 1.5          # deadband [deg]
+    i_min: -250.0
+    i_max: 250.0
+  # speed: error [m/s] -> PWM correction on top of the feed-forward term
+  speed:
+    kp: 420.0
+    ki: 160.0
+    kd: 0.0
+    kf: 0.0
+    tol: 0.01         # deadband [m/s]
+    i_min: -400.0
+    i_max: 400.0

@@ -1,0 +1,14 @@
+.git
+_work
+_patches
+_relay
+**/.pio
+**/.pio_workspaces
+**/build
+**/install
+**/log
+**/__pycache__
+**/*.pyc
+firmware/config/network_secrets.h
+webapp/exe
+model

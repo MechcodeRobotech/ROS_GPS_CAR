@@ -1,0 +1,1140 @@
+/* =========================================================================
+   GPS_Localize control UI
+   -------------------------------------------------------------------------
+   Job of this screen, in one sentence:
+     "The operator sees whether the robot is safe and where it is, and stops
+      it in one reach."
+   Everything that does not serve that sentence is styled as secondary.
+
+   Skeleton: toolbar (identity + health + E-STOP) / tabbed body / status bar.
+   Dark first, because this is used outdoors on a phone in sunlight; the light
+   theme follows the device setting.
+
+   Rules kept here: one accent, 4px spacing scale, four type sizes, borders not
+   shadows on dark, every value from a token.
+   ========================================================================= */
+
+:root {
+  /* three surface depths: page -> card -> sunk */
+  --bg: #0e1117;
+  --card: #171b23;
+  --sunk: #10141b;
+  --line: #2b3240;
+
+  /* text: --mut is a demotion, never used for something you must read */
+  --txt: #e8edf5;
+  --mut: #9aa6b8;
+
+  /* one accent, plus semantics that only ever mean state */
+  --acc: #4da3ff;
+  --on-acc: #05121f;      /* ink on top of the accent - a token, not a guess */
+  --ok: #35c46a;
+  --warn: #ffb020;
+  --err: #ff4d4d;
+  --on-sem: #10141b;      /* ink on top of ok/warn fills */
+  --on-err: #ffffff;      /* ink on top of the error red - needs the contrast */
+
+  /* shape */
+  --r-sm: 7px;
+  --r-md: 10px;
+  --r-lg: 12px;
+  --r-pill: 999px;
+
+  /* 4px rhythm - no 7px, no 13px */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-6: 24px;
+
+  /* four type sizes; weight and colour do the rest */
+  --fs-1: 12px;   /* labels, hints, chips */
+  --fs-2: 14px;   /* body, buttons, table cells */
+  --fs-3: 15px;   /* card headings */
+  --fs-4: 18px;   /* the status headline */
+  --fs-5: 26px;   /* the numbers you read from two metres away */
+
+  /* Both palettes named once, here, so the theme rules below assign tokens
+   * rather than repeating hex values. Three copies of #ffffff scattered through
+   * the file is how a palette drifts apart one edit at a time - which is the
+   * rule tools/qc.py enforces. */
+  --l-bg: #f2f5fa;  --l-card: #ffffff; --l-sunk: #eef2f8; --l-line: #d5dce8;
+  --l-txt: #16202e; --l-mut: #5b6878;  --l-acc: #0b62c4;  --l-on-acc: #ffffff;
+  --l-ok: #1a8f4c;  --l-warn: #8a5a00; --l-err: #c62828;
+  --l-on-sem: #ffffff; --l-on-err: #ffffff;
+
+  --d-bg: #0e1117;  --d-card: #171b23; --d-sunk: #10141b; --d-line: #2b3240;
+  --d-txt: #e8edf5; --d-mut: #9aa6b8;  --d-acc: #4da3ff;  --d-on-acc: #05121f;
+  --d-ok: #35c46a;  --d-warn: #ffb020; --d-err: #ff4d4d;
+  --d-on-sem: #10141b; --d-on-err: #ffffff;
+
+  --f-ui: system-ui, -apple-system, "Segoe UI", "Noto Sans Thai", Roboto, sans-serif;
+  --f-mono: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+
+  --dur: 140ms;
+}
+
+/* Three theme states, and the order matters.
+ *
+ * The page follows the device by default, because outdoors in sunlight nobody
+ * wants to hunt for a switch. But "follow the device" is not always right: a
+ * phone set to dark is still hard to read in direct sun, and a laptop set to
+ * light is glaring in a dark workshop. So an explicit choice has to be able to
+ * beat the device setting, which means it cannot be expressed with a media
+ * query alone - a media query and an attribute rule at the same specificity
+ * are decided by source order, not by intent.
+ *
+ * Hence: the media query for "auto", and [data-theme] rules AFTER it so an
+ * explicit choice wins in both directions. Dark has to be restated rather than
+ * left to :root, or choosing dark on a light device would do nothing.
+ */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg: var(--l-bg);        --card: var(--l-card);
+    --sunk: var(--l-sunk);    --line: var(--l-line);
+    --txt: var(--l-txt);      --mut: var(--l-mut);
+    --acc: var(--l-acc);      --on-acc: var(--l-on-acc);
+    --ok: var(--l-ok);        --warn: var(--l-warn);
+    --err: var(--l-err);      --on-sem: var(--l-on-sem);
+    --on-err: var(--l-on-err);
+  }
+}
+
+:root[data-theme="light"] {
+    --bg: var(--l-bg);        --card: var(--l-card);
+    --sunk: var(--l-sunk);    --line: var(--l-line);
+    --txt: var(--l-txt);      --mut: var(--l-mut);
+    --acc: var(--l-acc);      --on-acc: var(--l-on-acc);
+    --ok: var(--l-ok);        --warn: var(--l-warn);
+    --err: var(--l-err);      --on-sem: var(--l-on-sem);
+    --on-err: var(--l-on-err);
+}
+
+:root[data-theme="dark"] {
+    --bg: var(--d-bg);        --card: var(--d-card);
+    --sunk: var(--d-sunk);    --line: var(--d-line);
+    --txt: var(--d-txt);      --mut: var(--d-mut);
+    --acc: var(--d-acc);      --on-acc: var(--d-on-acc);
+    --ok: var(--d-ok);        --warn: var(--d-warn);
+    --err: var(--d-err);      --on-sem: var(--d-on-sem);
+    --on-err: var(--d-on-err);
+}
+
+* { box-sizing: border-box; }
+
+html, body { max-width: 100%; overflow-x: hidden; }
+
+/* Reserve the scrollbar's width whether or not one is showing. Without this,
+ * the page growing past one screen makes a scrollbar appear, which narrows the
+ * viewport, which moves every centred control sideways - a shift with no
+ * obvious cause, triggered by data arriving. */
+html { scrollbar-gutter: stable; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--txt);
+  font-family: var(--f-ui);
+  font-size: var(--fs-2);
+  line-height: 1.45;
+}
+
+:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+/* ======================================================== toolbar (region 1) */
+.topbar {
+  display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-2) var(--sp-4);
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 30;
+}
+.brand { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+.logo { font-size: 26px; color: var(--acc); }
+.title { font-weight: 700; font-size: var(--fs-3); letter-spacing: .3px; }
+/* This carries the state name AND every active stop reason, so it grows from
+ * "READY" to a comma-separated list the moment anything goes wrong. Left to
+ * wrap it would make the toolbar taller and push the whole page down at the
+ * worst possible moment. One line, always, at every width - the full list is on
+ * the dashboard, which is where you read it rather than glance at it. */
+.subtitle {
+  color: var(--mut); font-size: var(--fs-1);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* A maximum alone still let a longer state widen .brand and wrap RESET. */
+  width: 22ch; max-width: 100%;
+}
+
+/* The four health pills update on every telemetry frame, and their VALUES are
+ * different lengths: "ไม่พบ" becomes "0.3 s", "8 ดาว · HDOP 1.2" becomes
+ * "12 ดาว · HDOP 10.5". A pill that changes width changes where the row wraps,
+ * a wrap changes the toolbar's height, and the toolbar's height moves every
+ * control on the page - the drive pad included, mid-drive, which is exactly
+ * when the numbers are changing fastest. This was the "the web shifts every
+ * time something changes" report.
+ *
+ * Fixed columns rather than free-flowing pills: the row wraps at the same place
+ * whatever the values say, and each value gets a reserved track wide enough for
+ * its longest form. Widths in ch so they follow the font rather than a guess in
+ * pixels. */
+/* One row, equal widths, however many pills there are.
+ *
+ * This was `repeat(5, minmax(0, 1fr))`, a hand-counted track list, and adding a
+ * sixth pill silently dropped it onto a second row - the count is invisible
+ * from the HTML, so nothing says the two have to agree. `grid-auto-flow:
+ * column` derives the count from the children instead, which cannot fall out of
+ * step. Equal widths still come from the track definition, so the stability the
+ * fixed list was there for is unchanged. */
+.pills {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: var(--sp-2);
+  align-items: center;
+}
+/* ONE LINE, label then value, the way it was. A two-line pill was stable and
+ * unreadable: the point of this row is to be glanced at from arm's length while
+ * the robot is moving, and stacking the value under the label made four small
+ * paragraphs of it. Stability comes from the fixed grid track and the reserved
+ * value width below, not from stacking. */
+.pill {
+  display: flex; flex-direction: row; align-items: baseline;
+  gap: var(--sp-2); justify-content: space-between;
+  background: var(--sunk); border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  padding: var(--sp-1) var(--sp-3); min-width: 0;
+  font-size: var(--fs-1); white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.pill b { color: var(--mut); font-weight: 600; flex: none; }
+/* The value keeps a reserved track so its width never changes the pill, and it
+ * is the half allowed to be cut short if the screen is too narrow - a label the
+ * reader already knows survives being trimmed better than the number does, so
+ * the number is what gets the room. */
+.pill > span {
+  flex: 1 1 auto; text-align: right; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis;
+}
+/* state is carried by text as well as colour - never colour alone */
+.pill.ok { border-color: var(--ok); color: var(--ok); }
+.pill.warn { border-color: var(--warn); color: var(--warn); }
+.pill.bad { border-color: var(--err); color: var(--err); }
+
+/* E-STOP is the one control that must never be behind a tab or off screen */
+.estop-group { display: flex; gap: var(--sp-2); }
+
+/* =============================================================== buttons */
+/* three kinds: primary (one per view), default, quiet (.iconbtn) */
+.btn {
+  font: inherit; font-size: var(--fs-2); font-weight: 600; color: var(--txt);
+  background: var(--sunk); border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: var(--sp-2) var(--sp-3);
+  min-height: 44px; cursor: pointer;
+  transition: border-color var(--dur), transform var(--dur);
+}
+.btn:hover { border-color: var(--acc); }
+.btn:active { transform: translateY(1px); }
+.btn small { display: block; font-weight: 400; font-size: 10px; opacity: .75; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn:disabled:hover { border-color: var(--line); }
+
+.btn.go {                                   /* primary: the thing you came to do */
+  background: var(--acc); border-color: var(--acc); color: var(--on-acc);
+}
+.btn.save { border-color: var(--acc); color: var(--acc); }
+.btn.stop { border-color: var(--warn); color: var(--warn); }
+.btn.danger { border-color: var(--err); color: var(--err); }   /* outlined, never filled */
+/* a save button that is waiting for you */
+.btn.attention { border-color: var(--warn); color: var(--warn); }
+.btn.go.attention { background: var(--warn); border-color: var(--warn); color: var(--on-sem); }
+
+.btn.armed { border-color: var(--ok); color: var(--ok); box-shadow: inset 0 0 0 1px var(--ok); }
+
+/* the emergency stop is the one deliberate exception to "danger is outlined" */
+.btn.estop {
+  background: var(--err); border-color: var(--err); color: var(--on-err);
+  font-size: var(--fs-3); padding: var(--sp-2) var(--sp-6);
+}
+.btn.estop:hover { border-color: var(--on-err); }
+.btn.reset { background: var(--sunk); }
+
+.iconbtn {
+  font: inherit; font-size: var(--fs-1);
+  background: var(--sunk); color: var(--txt);
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  padding: var(--sp-1) var(--sp-2); min-height: 36px;
+  cursor: pointer; margin-right: var(--sp-1);
+}
+.iconbtn:hover { border-color: var(--acc); }
+
+/* ====================================================== banners and states */
+/* OVERLAID, not in the flow. This banner is display:none until something goes
+ * wrong, and it used to appear at the top of the document - so the instant a
+ * warning fired, every element below it moved down the page, the drive pad
+ * included. Someone driving would press where a button had been a moment
+ * earlier and the robot would not move. Reported from the robot.
+ *
+ * Taking it out of the flow means a warning can never move a control. It also
+ * keeps the alert on screen while scrolled down. Its top follows the measured
+ * toolbar height: a fixed top of zero covered E-STOP and swallowed its taps.
+ * The toolbar also stays above the banner if it wraps during a resize. */
+.banner {
+  position: fixed; top: var(--toolbar-height, 240px); left: 0; right: 0; z-index: 20;
+  max-height: calc(100dvh - var(--toolbar-height, 240px)); overflow-y: auto;
+  padding: var(--sp-3) var(--sp-4); font-weight: 600; text-align: center;
+  background: var(--err); color: var(--on-err);
+  display: flex; gap: var(--sp-3); align-items: center; justify-content: center;
+  flex-wrap: wrap;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .35);
+}
+.banner.warn { background: var(--warn); color: var(--on-sem); }
+.banner .btn {
+  background: rgba(0, 0, 0, .25); border-color: color-mix(in srgb, var(--on-err) 55%, transparent);
+  color: var(--on-err); min-height: 36px; padding: var(--sp-1) var(--sp-3);
+}
+
+/* utility: must beat any component rule that sets display, whatever the order */
+.hidden { display: none !important; }
+
+/* Hide something WITHOUT letting the page reflow around it. Use this instead of
+ * .hidden for anything above the drive controls: a control that disappears from
+ * the flow moves everything below it, and the robot's state changes the moment
+ * you press move - so the pad would jump exactly as your thumb came down. */
+.invisible { visibility: hidden !important; }
+
+/* view-only / simulation bar */
+.viewerbar {
+  display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: center;
+  padding: var(--sp-3) var(--sp-4);
+  background: repeating-linear-gradient(45deg, #4a3a00, #4a3a00 12px, #5a4600 12px, #5a4600 24px);
+  color: #ffe9a8; border-bottom: 1px solid #7a5f00; font-size: var(--fs-1);
+}
+.viewerbar .viewer-open { display: flex; gap: var(--sp-1); margin-left: auto; }
+.viewerbar input {
+  font: inherit; font-size: var(--fs-2);
+  padding: var(--sp-1) var(--sp-2); border-radius: var(--r-sm);
+  border: 1px solid #7a5f00; background: #2a2000; color: #ffe9a8; width: 150px;
+}
+.viewerbar .btn { padding: var(--sp-1) var(--sp-3); min-height: 36px; }
+.simchip {
+  background: var(--warn); color: var(--on-sem); border-radius: var(--r-sm);
+  padding: 1px var(--sp-2); font-size: 11px; font-weight: 700; margin-left: var(--sp-2);
+}
+
+/* loading placeholder: reserves the final height so nothing jumps */
+.skeleton {
+  color: transparent !important;
+  background: linear-gradient(90deg, var(--sunk), var(--line), var(--sunk));
+  background-size: 200% 100%;
+  border-radius: var(--r-sm);
+  animation: shimmer 1.2s linear infinite;
+}
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+/* stale: data is shown but it is old - say so, never present it as live */
+[data-conn="stale"] .live-data,
+[data-conn="offline"] .live-data { opacity: .55; }
+[data-conn="stale"] .live-data,
+[data-conn="offline"] .live-data { position: relative; }
+/* One marker per region, not one per number.
+ *
+ * It is present at ALL times and merely invisible when the data is live. Giving
+ * it `content` only in the stale state added a grid row the instant the link
+ * hiccuped, which moved every card below the tiles - the drive pad among them.
+ * A reserved line costs one line of space; a moving drive pad costs a missed
+ * button while the robot is running. */
+.grid.tiles::before {
+  content: "⏱ ข้อมูลค้าง / values below are not live";
+  grid-column: 1 / -1; color: var(--warn); font-size: var(--fs-1); font-weight: 600;
+  visibility: hidden;
+}
+[data-conn="stale"] .grid.tiles::before,
+[data-conn="offline"] .grid.tiles::before { visibility: visible; }
+
+/* empty state: what belongs here + the one action that fills it */
+.empty {
+  border: 1px dashed var(--line); border-radius: var(--r-md);
+  padding: var(--sp-6) var(--sp-4); text-align: center; color: var(--mut);
+  font-size: var(--fs-2);
+}
+.empty b { display: block; color: var(--txt); margin-bottom: var(--sp-1); }
+
+/* ================================================================== tabs */
+.tabs {
+  display: flex; gap: var(--sp-1); padding: var(--sp-2) var(--sp-3) 0;
+  flex-wrap: wrap; background: var(--bg);
+  justify-content: center;      /* centred, not pinned to the left edge */
+}
+.tab {
+  font: inherit; font-size: var(--fs-2); font-weight: 600;
+  color: var(--mut); background: transparent;
+  border: 1px solid transparent; border-bottom: none;
+  border-radius: var(--r-md) var(--r-md) 0 0;
+  padding: var(--sp-2) var(--sp-4); min-height: 44px; cursor: pointer;
+}
+.tab small { display: block; font-size: 10px; font-weight: 400; opacity: .8; }
+.tab.active {                     /* border + colour + weight, not colour alone */
+  color: var(--acc); background: var(--card);
+  border-color: var(--line); border-bottom-color: var(--card);
+}
+
+main { padding: var(--sp-3); }
+.tabpage { display: none; }
+.tabpage.active { display: block; }
+
+/* ------------------------------------------------- simple / advanced view */
+/* Centred, like the tab row above it - the two read as one band across the top
+ * of the page rather than one centred strip and one pinned to the left edge. */
+.viewswitch {
+  display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap;
+  justify-content: center;
+  padding: var(--sp-2) var(--sp-3) 0;
+}
+.chipbtn.help { margin-left: 0; }
+.chipbtn {
+  font: inherit; font-size: var(--fs-1); font-weight: 600;
+  background: var(--sunk); color: var(--mut);
+  border: 1px solid var(--line); border-radius: var(--r-pill);
+  padding: var(--sp-1) var(--sp-3); min-height: 36px; cursor: pointer;
+}
+.chipbtn.active { color: var(--acc); border-color: var(--acc); }
+/* NOT margin-left:auto. That pushed the Help button to the right edge, which
+ * overrode the centring on .viewswitch and left the bar looking pinned to one
+ * side while the tab row above it was centred. The two are one band across the
+ * top of the page and should read as one. */
+.chipbtn.help { margin-left: 0; }
+/* engineering detail is present in the DOM but out of the way until asked for */
+/* The Simple view is gone - everything is always shown. This rule is kept,
+   commented, only so the .adv classes still in the markup are explained:
+   they mark detail rather than essentials, and nothing hides them now.
+   [data-view="simple"] .adv { display: none !important; } */
+
+/* ------------------------------------------------------- status headline */
+/* One sentence: what the robot is doing and the single button that follows. */
+.hero {
+  display: flex; gap: var(--sp-3); align-items: center; justify-content: space-between;
+  flex-wrap: wrap; border-left: 4px solid var(--mut);
+}
+.hero.ok { border-left-color: var(--ok); }
+.hero.busy { border-left-color: var(--acc); }
+.hero.warn { border-left-color: var(--warn); }
+.hero.bad { border-left-color: var(--err); }
+.hero-say { display: flex; gap: var(--sp-3); align-items: center; min-width: 0; width: 100%; flex: 0 0 100%; }
+.hero-text { min-width: 0; flex: 1; }
+.hero-icon { font-size: var(--fs-5); line-height: 1; flex: 0 0 1.5em; }
+/* The hero sits above the drive controls too, and its wording changes with the
+ * robot's state - "waiting for the robot" is one line, a long fault explanation
+ * can be two. That difference moved the jog pad, same as the chips did. Reserve
+ * the taller case so the text can change without the layout following it. */
+.hero-title {
+  font-size: var(--fs-4); font-weight: 700; line-height: 1.3;
+  height: calc(var(--fs-4) * 1.3 * 2); overflow: hidden;
+  overflow-wrap: anywhere; display: -webkit-box;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
+.hero-sub {
+  color: var(--mut); font-size: var(--fs-1);
+  /* Stop reasons and navigation errors are unbounded strings. Keep their full
+   * text available inside a fixed region instead of moving START or the pad. */
+  height: calc(var(--fs-1) * 1.45 * 4); overflow: auto; overflow-wrap: anywhere;
+}
+/* The invisible copies share a grid cell with the live message. Every possible
+ * message contributes its actual wrapped height, even at 320px; guessing two
+ * or three lines let calibration failures push the next card's buttons down. */
+.reserved-message { display: grid; min-width: 0; overflow-wrap: anywhere; }
+.reserved-message > span { grid-area: 1 / 1; min-width: 0; }
+.message-reserve { visibility: hidden; pointer-events: none; }
+#magHint, #imuHint { width: 100%; min-height: 1.45em; }
+.hero-actions { display: grid; gap: var(--sp-2); grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+.hero-actions .btn { min-width: 0; height: 64px; padding: var(--sp-2); }
+.hero-primary { font-size: var(--fs-3); }
+
+/* the one speed control: a big readout, three presets, fine steppers */
+.speednow {
+  display: flex; align-items: baseline; gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+.speednow output {
+  font-size: var(--fs-5); font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.speednow .unit { color: var(--mut); font-size: var(--fs-1); }
+.presets .btn.on { border-color: var(--acc); color: var(--acc); }
+.presets .btn small { display: block; font-size: 10px; opacity: .7; font-weight: 400; }
+
+/* speed presets: one tap instead of counting + presses */
+.presets { margin-top: var(--sp-3); }
+.presets .btn { flex: 1 1 auto; }
+
+/* ------------------------------------------------------------ help dialog */
+.helpdlg {
+  border: 1px solid var(--line); border-radius: var(--r-lg);
+  background: var(--card); color: var(--txt);
+  max-width: 560px; width: calc(100% - var(--sp-6)); padding: var(--sp-4);
+}
+.helpdlg::backdrop { background: rgba(0, 0, 0, .55); }
+.helpdlg h3 { margin: 0 0 var(--sp-3); color: var(--acc); font-size: var(--fs-3); }
+.helpdlg ol { margin: 0 0 var(--sp-3); padding-left: 1.2em; }
+.helpdlg li { margin-bottom: var(--sp-3); font-size: var(--fs-2); }
+.helpdlg small { color: var(--mut); }
+
+/* ================================================================= cards */
+.card {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--r-md); padding: var(--sp-4); margin-bottom: var(--sp-3);
+}
+.card h3 {
+  margin: 0 0 var(--sp-2); font-size: var(--fs-1); color: var(--acc);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.card h3 small {
+  font-weight: 400; color: var(--mut); margin-left: var(--sp-2);
+  font-size: var(--fs-1); text-transform: none; letter-spacing: 0;
+}
+
+.grid { display: grid; gap: var(--sp-3); }
+.grid.two {
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+  align-items: start;
+}
+.grid.tiles {
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
+  margin-bottom: var(--sp-3);
+}
+
+.tile {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--r-md); padding: var(--sp-3);
+}
+.tile label { display: block; color: var(--mut); font-size: var(--fs-1); }
+.tile output {
+  display: block; font-size: 22px; font-weight: 700;
+  font-variant-numeric: tabular-nums; min-height: 30px;
+}
+.tile.big output { font-size: var(--fs-5); }
+.tile span { color: var(--mut); font-size: var(--fs-1); }
+
+table.kv { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+table.kv th {
+  text-align: left; font-weight: 600; color: var(--mut);
+  padding: var(--sp-1) var(--sp-2) var(--sp-1) 0; font-size: var(--fs-1);
+}
+table.kv td { padding: var(--sp-1) var(--sp-2) var(--sp-1) 0; font-size: var(--fs-2); }
+
+/* =============================================================== mission */
+.mission-line { display: flex; gap: var(--sp-2); align-items: center; margin-bottom: var(--sp-1); flex-wrap: wrap; }
+.mission-line.small { font-size: var(--fs-1); color: var(--mut); }
+/* Empty until navigation is blocked, and it sits above the drive controls -
+ * so going from empty to one line of text would shift the pad. Hold the line
+ * whether or not there is anything in it. */
+.mission-line.warn {
+  color: var(--warn);
+  min-height: calc(var(--fs-1) * 1.4);
+}
+.badge {
+  background: var(--sunk); border: 1px solid var(--line); border-radius: var(--r-sm);
+  padding: 2px var(--sp-2); font-weight: 700; font-size: var(--fs-1); letter-spacing: .5px;
+}
+.badge.run { border-color: var(--ok); color: var(--ok); }
+.badge.stop { border-color: var(--err); color: var(--err); }
+.badge.hold { border-color: var(--warn); color: var(--warn); }
+.progress { height: var(--sp-2); background: var(--sunk); border-radius: var(--r-pill); overflow: hidden; margin: var(--sp-2) 0; }
+.progress div { height: 100%; width: 0; background: var(--acc); transition: width var(--dur) linear; }
+.row { display: flex; gap: var(--sp-2); flex-wrap: wrap; align-items: center; margin-top: var(--sp-2); }
+
+/* ================================================================= d-pad */
+/* 3-column grid: the pad shrinks with the card instead of overflowing it */
+.dpad {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-2); max-width: 320px; margin: 0 auto;
+}
+.dpad > .jog { grid-column: 2; }              /* forward and reverse, centred */
+.dpad-mid {
+  grid-column: 1 / -1; display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-2);
+}
+.jog {
+  width: auto; min-width: 0; height: 60px; font-size: 22px; font-weight: 700;
+  background: var(--sunk); color: var(--txt);
+  border: 1px solid var(--line); border-radius: var(--r-md); cursor: pointer;
+  touch-action: none; user-select: none;
+}
+.jog:active, .jog.held { background: var(--acc); color: var(--on-acc); }
+.jog.stopjog { border-color: var(--err); color: var(--err); }
+.jog:disabled { opacity: .45; }
+
+.slider { display: flex; gap: var(--sp-2); align-items: center; margin-top: var(--sp-3); font-size: var(--fs-1); }
+.slider input { flex: 1; accent-color: var(--acc); }
+.hint { color: var(--mut); font-size: var(--fs-1); }
+
+/* Hints that are EMPTY until something happens, and sit above or beside a
+ * control. Going from nothing to a line of text is a layout change like any
+ * other, and these fire exactly when the robot is doing something: a motor
+ * fault, a calibration result, a saved speed. Each one holds its line whether
+ * or not it has anything to say.
+ *
+ * The motor advice is the hard case. It is two full sentences - it explains
+ * that "open circuit" means a driver latched into protection needing a
+ * power-down, not a broken wire - and with both motors faulted it is twice
+ * that, which is four lines on a phone. Reserving the worst case leaves a
+ * hand-sized hole in the card whenever nothing is wrong; reserving one line, as
+ * it did, means the card grows by three the moment a motor faults and the drive
+ * pad moves. Neither is acceptable, so it gets a FIXED height and scrolls
+ * inside itself: identical whether it is empty or full, and every word still
+ * reachable. */
+#tMotorFaultWhy {
+  margin: var(--sp-2) 0 0;
+  height: calc(var(--fs-1) * 1.45 * 3);
+  min-height: calc(var(--fs-1) * 1.45 * 3);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+#sensorCalibHint, #speedMsg, #tCpuTempNote {
+  display: inline-block;
+  min-height: calc(var(--fs-1) * 1.45);
+}
+
+/* manual speed steppers: fixed number track so it never jitters */
+.speedbox { margin-top: var(--sp-3); display: grid; gap: var(--sp-2); }
+.speedrow {
+  display: grid; grid-template-columns: 1fr auto auto auto auto;
+  align-items: center; gap: var(--sp-2);
+}
+.speedrow:last-child { grid-template-columns: auto 1fr; }   /* save button row */
+.speedlabel { min-width: 0; font-size: var(--fs-1); }
+.speedlabel small { display: block; color: var(--mut); font-size: 11px; }
+.speedrow output {
+  min-width: 68px; text-align: center; font-size: 20px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.speedrow .unit { color: var(--mut); font-size: var(--fs-1); min-width: 32px; }
+.btn.stepbtn { min-width: 54px; font-size: 22px; line-height: 1; padding: var(--sp-2) var(--sp-3); }
+
+.subhead { margin: var(--sp-4) 0 var(--sp-1); font-size: var(--fs-1); text-transform: uppercase; letter-spacing: .06em; color: var(--acc); }
+.subhead small { font-weight: 400; color: var(--mut); font-size: var(--fs-1); margin-left: var(--sp-1); text-transform: none; letter-spacing: 0; }
+.turnrow input[type=number] {
+  width: 90px; font: inherit; font-size: var(--fs-2); padding: var(--sp-2);
+  border-radius: var(--r-sm); background: var(--sunk); color: var(--txt);
+  border: 1px solid var(--line); text-align: center;
+}
+
+/* sensor chips carry text, colour only reinforces */
+/* The status chips sit ABOVE the drive controls, so their height is part of the
+ * control layout: anything that changes it moves the jog pad down the page, and
+ * a warning appearing mid-drive shifted the buttons out from under the user's
+ * thumb. Reported from the robot.
+ *
+ * The chips WRAP - every warning has to stay visible, so scrolling them
+ * sideways was the wrong answer; it stopped the movement by hiding the thing
+ * you needed to read. Instead app.js always renders the same seven chips and
+ * only recolours them. Count alone was insufficient: healthy chips used three
+ * rows at 360px and two open circuits used four. Explicit slots now reserve
+ * the same rows, with separate label and status lines for both motors. */
+/* Seven chips, each one line, in a grid with a fixed number of columns - so the
+ * block is exactly two rows wide-screen and four on a phone, always, whatever
+ * the robot is doing.
+ *
+ * The wording used to carry the detail, which made every chip a different width
+ * as faults came and went: the row re-wrapped, the block changed height, and the
+ * drive pad below it moved under the operator's thumb. The first attempt at a
+ * fix reserved five rows of 42px instead - stable, and two hundred pixels of
+ * jumbled chips that looked far worse than the problem. This is the version
+ * that is both: a constant label, a status glyph in its own fixed track, and
+ * the detail moved to the rows that already explain it. */
+.sensors {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: 26px;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-2);
+}
+.sensors > span {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--sp-1); min-width: 0;
+  border: 1px solid var(--line); border-radius: var(--r-pill);
+  padding: 0 var(--sp-2); font-size: var(--fs-1); background: var(--sunk);
+}
+/* The label is allowed to be cut short; the glyph never is. Which of the two
+ * has to survive a narrow screen is not a close call. */
+.sensors > span > b {
+  font-weight: 600; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sensors > span > i { font-style: normal; flex: none; width: 1.2em; text-align: center; }
+.sensors > span.ok { border-color: var(--ok); color: var(--ok); }
+.sensors > span.bad { border-color: var(--err); color: var(--err); }
+.sensors > span.warn { border-color: var(--warn); color: var(--warn); }
+
+/* =================================================================== map */
+.mapwrap { position: relative; }
+canvas#map {
+  width: 100%; height: auto; background: var(--sunk);
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  touch-action: none; cursor: grab; display: block;
+}
+.maphud {
+  position: absolute; left: var(--sp-2); top: var(--sp-2);
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  color: var(--txt); border: 1px solid var(--line); border-radius: var(--r-sm);
+  padding: var(--sp-1) var(--sp-2); font-size: var(--fs-1);
+  font-variant-numeric: tabular-nums; pointer-events: none;
+  white-space: pre-line; max-width: 60%;
+}
+.mapmenu {
+  position: absolute; z-index: 5; min-width: 210px;
+  background: var(--card); border: 1px solid var(--acc); border-radius: var(--r-md);
+  padding: var(--sp-2); display: flex; flex-direction: column; gap: var(--sp-1);
+}
+.mapmenu .btn { width: 100%; min-height: 40px; padding: var(--sp-2) var(--sp-3); font-size: var(--fs-2); }
+.mapmenu-head {
+  font-size: var(--fs-1); color: var(--mut); font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid var(--line); padding-bottom: var(--sp-1); white-space: pre-line;
+}
+
+/* ============================================================= waypoints */
+table.wptable { width: 100%; border-collapse: collapse; }
+table.wptable th, table.wptable td {
+  padding: var(--sp-1); border-bottom: 1px solid var(--line);
+  text-align: left; font-size: var(--fs-1);
+}
+table.wptable th { color: var(--mut); font-weight: 600; }
+table.wptable input {
+  width: 100%; font: inherit; font-size: var(--fs-2); padding: var(--sp-2);
+  border-radius: var(--r-sm); background: var(--sunk); color: var(--txt);
+  border: 1px solid var(--line);
+}
+table.wptable input:focus { border-color: var(--acc); }
+table.wptable tr.active { background: color-mix(in srgb, var(--acc) 12%, transparent); }
+
+/* ============================================================== settings */
+.cfg-tabs { display: flex; gap: var(--sp-1); flex-wrap: wrap; margin-bottom: var(--sp-3); }
+.cfg-tabs button {
+  font: inherit; font-size: var(--fs-2); background: var(--sunk); color: var(--mut);
+  border: 1px solid var(--line); border-radius: var(--r-pill);
+  padding: var(--sp-1) var(--sp-3); min-height: 36px; cursor: pointer;
+}
+.cfg-tabs button.active { color: var(--acc); border-color: var(--acc); font-weight: 600; }
+.cfg-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: var(--sp-2); }
+.cfg-item { background: var(--sunk); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-2) var(--sp-3); }
+.cfg-item label { display: block; font-size: var(--fs-1); font-weight: 600; }
+.cfg-item .en { color: var(--mut); font-weight: 400; font-size: 11px; }
+.cfg-item .desc { color: var(--mut); font-size: 11px; margin-top: 2px; }
+.cfg-item input, .cfg-item select {
+  width: 100%; margin-top: var(--sp-1); font: inherit; font-size: var(--fs-2);
+  padding: var(--sp-2); background: var(--card); color: var(--txt);
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+}
+.cfg-item input:focus { border-color: var(--acc); }
+.cfg-item input[type=checkbox] { width: auto; min-width: 24px; min-height: 24px; }
+.cfg-section { grid-column: 1 / -1; font-weight: 700; color: var(--acc); margin-top: var(--sp-1); font-size: var(--fs-1); text-transform: uppercase; letter-spacing: .06em; }
+
+/* =================================================================== log */
+.logbox {
+  height: 60vh; overflow-y: auto; background: var(--sunk);
+  border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-2);
+  font-family: var(--f-mono); font-size: var(--fs-1);
+}
+.logbox div { padding: 2px 0; border-bottom: 1px dotted color-mix(in srgb, var(--mut) 25%, transparent); }
+.logbox .t { color: var(--mut); margin-right: var(--sp-2); }
+.logbox .src { color: var(--acc); margin-right: var(--sp-2); }
+
+/* =========================================================== status bar */
+footer {
+  padding: var(--sp-2) var(--sp-4) var(--sp-6);
+  color: var(--mut); font-size: var(--fs-1); text-align: center;
+  display: flex; gap: var(--sp-2); align-items: center; justify-content: center;
+  flex-wrap: wrap;
+}
+/* the address to type on a phone - people read this one out loud */
+.lanurl {
+  color: var(--acc); text-decoration: none; font-variant-numeric: tabular-nums;
+  border: 1px solid var(--line); border-radius: var(--r-pill);
+  padding: 2px var(--sp-2);
+}
+.lanurl:hover { border-color: var(--acc); }
+
+/* The connection dot. These four rules were each written as
+ *     [data-conn="live"] <comment> .lanurl { ... }
+ *     .live-dot { background: var(--ok); }
+ * by a find-and-replace that pasted the .lanurl block between the state
+ * selector and its own rule. A CSS comment does not separate a selector from
+ * its declarations, so the state selector attached itself to .lanurl and every
+ * .live-dot rule was left UNSCOPED - all four applied to every page, the last
+ * one won, and the dot was permanently blue and permanently pulsing whatever
+ * the connection was doing. The one indicator whose entire job is to say
+ * "these numbers are live" said "connecting" forever. */
+.live-dot {
+  width: 8px; height: 8px; border-radius: var(--r-pill);
+  background: var(--mut); flex: none;
+}
+[data-conn="live"] .live-dot { background: var(--ok); }
+[data-conn="stale"] .live-dot { background: var(--warn); }
+[data-conn="offline"] .live-dot { background: var(--err); }
+[data-conn="connecting"] .live-dot {
+  background: var(--acc); animation: pulse 1s ease-in-out infinite;
+}
+@keyframes pulse { 50% { opacity: .3; } }
+
+/* ============================================ every screen this is used on
+ *
+ * Four real cases, not one "mobile" guess: a phone held one-handed beside the
+ * robot, a tablet propped on a bench, a laptop, and a desktop across the room.
+ * The layout is fluid between them; these tiers only change the things a fluid
+ * rule cannot decide on its own - how many columns a fixed-count grid gets, and
+ * how big a touch target has to be.
+ *
+ * Every one of these grids has a FIXED column count on purpose. An auto-fitting
+ * grid re-flows when its content changes width, and content here changes width
+ * ten times a second - which is the whole layout-shift problem this file spends
+ * so many words on. Fixed columns per tier, fluid widths within the tier. */
+
+/* phone, portrait - the narrowest thing this has to work on */
+@media (max-width: 560px) {
+  .sensors { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid.tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hero { flex-direction: column; align-items: stretch; }
+  .hero-actions { width: 100%; }
+  .hero-actions .btn { flex: 1 1 auto; }
+  .dpad { max-width: 100%; }
+}
+
+/* large phone and small tablet */
+@media (min-width: 561px) and (max-width: 820px) {
+  .sensors { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* tablet, and a laptop with the window not maximised */
+@media (min-width: 821px) and (max-width: 1200px) {
+  .sensors { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .grid.tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+/* desktop: stop the content stretching to the full width of a wide monitor.
+ * A dashboard read from across the room is worse when a row of numbers is two
+ * feet apart - the eye has to travel between things that belong together. */
+@media (min-width: 1201px) {
+  main { max-width: 1500px; margin: 0 auto; }
+  /* Four across, not seven. Seven columns squeezed every chip until its label
+   * was an ellipsis - "I... ✕" - which is a status row that cannot be read,
+   * and a chip nobody can read is worse than one that moves. */
+  .sensors { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .grid.tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+/* ====================================================== phones / tablets */
+@media (max-width: 820px) {
+  main { padding: var(--sp-2); }
+  .topbar { padding: var(--sp-2) var(--sp-3); }
+  .brand .subtitle { width: 22ch; max-width: 60vw; }
+  /* Two fixed rows of two rather than four across: four pills with reserved
+   * value tracks do not fit a phone's width, and letting them find their own
+   * wrap point would put back exactly the moving toolbar this replaced. A fixed
+   * count of columns wraps in the same place whatever the values say. */
+  /* Five pills, so three columns rather than two: at two the last one sat
+   * alone on a third row and the toolbar grew for no reason. */
+  /* On a phone one row of six is unreadable, so here they wrap: three per row,
+   * which needs the flow put back to rows - the desktop rule above forces a
+   * single column-flow line that would otherwise scroll off the screen. */
+  .pills { order: 3; width: 100%;
+           grid-auto-flow: row; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .pill { justify-content: space-between; }
+  .estop-group { flex: 1; }
+  .btn.estop { flex: 2; }
+  .btn.reset { flex: 1; }
+
+  .tabs { padding: var(--sp-1) var(--sp-1) 0; gap: 2px; overflow-x: auto; flex-wrap: nowrap; }
+  .tab { padding: var(--sp-2) var(--sp-3); white-space: nowrap; }
+
+  .grid.tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-2); }
+  .tile { padding: var(--sp-2); }
+  .tile output { font-size: 20px; }
+  .tile.big output { font-size: 24px; }
+  .card { padding: var(--sp-3) var(--sp-2); }
+
+  .jog { height: 68px; font-size: 26px; }
+  .row .btn { flex: 1 1 auto; min-width: 44%; }
+  .turnrow .btn { min-width: 30%; }
+
+  .logbox { height: 50vh; }
+  .cfg-form { grid-template-columns: 1fr; }
+  .viewerbar .viewer-open { margin-left: 0; width: 100%; }
+  .viewerbar input { flex: 1; width: auto; }
+}
+
+/* keep the emergency stop reachable in landscape too */
+@media (max-height: 480px) and (orientation: landscape) {
+  .jog { height: 52px; font-size: 20px; }
+  .dpad { max-width: 280px; }
+  .logbox { height: 40vh; }
+  .tabs { padding-top: var(--sp-1); }
+}
+
+/* wide content scrolls inside itself, the page never scrolls sideways */
+.card table.kv, .wptable { display: block; overflow-x: auto; max-width: 100%; }
+@media (min-width: 821px) { .card table.kv { display: table; } }
+
+@media (pointer: coarse) {
+  .btn, .tab, .iconbtn, .cfg-tabs button { min-height: 44px; }
+  .iconbtn { padding: var(--sp-2) var(--sp-3); }
+  table.wptable input, .cfg-item input { min-height: 40px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* no accidental text selection or double-tap zoom while driving */
+.jog, .btn, .tab { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+button { touch-action: manipulation; }
+
+/* ------------------------------- topics ---------------------------------
+   The ROS graph, shown in the browser because there is no ros2 CLI on
+   Windows and the graph is not reachable from the host inside Docker. Built
+   only from the existing tokens, so it follows the theme like everything
+   else. */
+.tablewrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-top: var(--sp-2);
+}
+table.topics {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-2);
+}
+table.topics th,
+table.topics td {
+  text-align: left;
+  padding: var(--sp-1) var(--sp-2);
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  white-space: nowrap;
+}
+table.topics th {
+  color: var(--mut);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  background: var(--card);
+}
+table.topics tr:last-child td { border-bottom: none; }
+.topicrow td:first-child { font-family: ui-monospace, Menlo, Consolas, monospace; }
+.topicvalue {
+  margin: 0;
+  padding: var(--sp-2);
+  background: var(--sunk);
+  border-radius: 6px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: var(--fs-1);
+  color: var(--txt);
+  white-space: pre;
+  max-height: 40vh;
+  overflow: auto;
+}
+.chk {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  color: var(--mut);
+  font-size: var(--fs-2);
+}
+#topicsFilter {
+  flex: 1 1 12ch;
+  min-width: 12ch;
+}
+.mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
+.mut { color: var(--mut); }
+
+
+/* ------------------------------------------------------- help / connect --
+   The QR sits beside its addresses on a laptop and above them on a phone,
+   which is the width where someone is most likely to be reading it. */
+.qrwrap { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.qrbox { flex: 0 0 auto; background: #fff; padding: 10px; border-radius: 10px;
+         line-height: 0; border: 1px solid var(--line); }
+.qrbox svg { width: 190px; height: 190px; display: block; }
+.qrside { flex: 1 1 260px; min-width: 0; }
+.qrside .kv { display: flex; justify-content: space-between; gap: 12px;
+              padding: 7px 0; border-bottom: 1px solid var(--line); }
+.qrside .kv span { color: var(--mut); font-size: var(--fs-1); }
+.qrside .kv code { font-size: var(--fs-1); word-break: break-all;
+                   text-align: right; }
+.steps { margin: 8px 0 0; padding-left: 20px; line-height: 1.65; }
+.steps li { margin-bottom: 10px; }
+.steps .muted { display: block; margin-top: 3px; font-size: var(--fs-1); }
+table.help { width: 100%; border-collapse: collapse; font-size: var(--fs-2); }
+table.help th, table.help td { text-align: left; padding: 8px 10px;
+                               border-bottom: 1px solid var(--line);
+                               vertical-align: top; }
+table.help th { color: var(--mut); font-weight: 600; font-size: var(--fs-1); }
+table.help td:first-child { white-space: nowrap; }
+@media (max-width: 560px) {
+  .qrbox svg { width: 150px; height: 150px; }
+  table.help td:first-child { white-space: normal; }
+}
+
+
+/* Board-parameter browser. 23 values in one scroll is a list you hunt through;
+   grouped and filterable it is a list you use. */
+.cfg-filter {
+  width: 100%; box-sizing: border-box; margin: var(--sp-2) 0;
+  padding: var(--sp-2); font-size: var(--fs-2);
+  background: var(--sunk); color: var(--txt);
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+}
+
+/* ------------------------------------------------------- calibration ---
+ * Two progress indicators, both showing the same thing in the shape that
+ * suits it: the compass sweep is continuous, so it gets a bar; the BNO085's
+ * accuracy is four discrete steps, so it gets four pips. Both exist because
+ * the calibrations used to run with no feedback at all - you pressed a button
+ * and found out whether it had worked by pressing the next one.
+ */
+.calib-meter {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin: var(--sp-3) 0;
+}
+.calib-meter > b {
+  min-width: 3.5em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.calib-bar {
+  flex: 1;
+  height: 10px;
+  border-radius: var(--r-pill);
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.calib-bar > span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--mut);
+  transition: width var(--dur) linear, background var(--dur);
+}
+/* Amber while the sweep is short of what the board will accept, green once it
+   is enough. Saying "keep turning" after the fact is too late. */
+.calib-bar > span.busy { background: var(--warn); }
+.calib-bar > span.ok { background: var(--ok); }
+
+.calib-pips {
+  display: flex;
+  flex: 1;
+  gap: var(--sp-1);
+}
+.calib-pips > span {
+  flex: 1;
+  height: 10px;
+  border-radius: var(--r-sm);
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  transition: background var(--dur);
+}
+.calib-pips > span.lit.warn { background: var(--warn); }
+.calib-pips > span.lit.ok { background: var(--ok); }
+
+
+/* --------------------------------------------------- big action buttons ---
+ * The calibration buttons are pressed while holding the robot, often one
+ * handed and outdoors, and the default button is sized for a mouse. A target
+ * that is hard to hit reads as a button that does not work.
+ */
+.btn.big {
+  min-height: 48px;
+  padding: var(--sp-3) var(--sp-4);
+  font-size: var(--fs-3);
+  font-weight: 600;
+}
+@media (pointer: coarse) {
+  .btn.big { min-height: 56px; flex: 1 1 45%; }
+}
+
+
+/* ------------------------------------------------ position source ---
+ * Which position the robot is steering on. GPS and dead reckoning differ by
+ * metres, and the switch between them is automatic - so the driver has to be
+ * told, not left to infer it from a map that looks the same either way.
+ */
+/* It sits directly above the START button and it appears, disappears and
+ * changes between short and long messages as the robot moves in and
+ * out of GPS cover. Toggled with the `hidden` attribute it dropped out of the
+ * flow entirely and START jumped up the card. The banner now always occupies
+ * its space: `.off` only makes it invisible, and the height is reserved for the
+ * longest of the two messages so switching between them moves nothing. */
+.posmode {
+  margin: var(--sp-2) 0 0;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-1);
+  border: 1px solid var(--line);
+  /* Auto flex sizing also changed the hero's wrapping. Pin the whole row. */
+  width: 100%; flex: 0 0 100%; min-width: 0;
+  /* The height comes from the sizer twin in index.html, not from a line count.
+   * A count is a guess about how the text wraps, and it was wrong at 320px
+   * where the Thai and English halves wrap differently: three lines were
+   * reserved and the dead-reckoning message needed more, so START moved. The
+   * twin holds the longest possible message and the live text is laid over it,
+   * so the space reserved is measured rather than estimated. The floor below is
+   * only for the moment before the fonts load. */
+  display: grid;
+  min-height: calc(var(--fs-1) * 1.45 * 3 + var(--sp-2) * 2 + 2px);
+}
+.posmode > * { grid-area: 1 / 1; }
+.posmode-sizer { visibility: hidden; pointer-events: none; user-select: none; }
+.posmode.off { visibility: hidden; }
+.posmode.ok { border-color: var(--ok); color: var(--ok); }
+.posmode.warn { border-color: var(--warn); color: var(--warn); }
+
+
+/* ------------------------------------------------------------- joystick ---
+ * Forward and turn are one gesture. The arrow pad can only send one at a time,
+ * so an arc had to be driven by alternating two buttons, which produces a
+ * zig-zag rather than a curve - and the firmware had always accepted both in
+ * the same command.
+ *
+ * Sized for a thumb and given `touch-action: none` so dragging drives the robot
+ * instead of scrolling the page, which is the difference between a control and
+ * a frustration on a phone.
+ */
+.joywrap {
+  display: flex; align-items: center; gap: var(--sp-4);
+  margin-top: var(--sp-3); flex-wrap: wrap;
+}
+.joypad {
+  position: relative; flex: none;
+  width: 160px; height: 160px; border-radius: 50%;
+  background: var(--sunk); border: 1px solid var(--line);
+  touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+}
+.joypad:active { cursor: grabbing; }
+/* The ring is the full-scale edge, so how far the knob has been pushed reads as
+ * a proportion rather than a guess. */
+.joyring {
+  position: absolute; inset: 14px; border-radius: 50%;
+  border: 1px dashed color-mix(in srgb, var(--mut) 45%, transparent);
+  pointer-events: none;
+}
+.joyknob {
+  position: absolute; left: 50%; top: 50%;
+  width: 54px; height: 54px; margin: -27px 0 0 -27px;
+  border-radius: 50%; background: var(--acc); border: 2px solid var(--acc);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
+  pointer-events: none;
+  transition: transform 90ms ease-out;
+}
+/* No easing while a thumb is on it - the knob must sit under the finger, not
+ * chase it. The transition is only there to spring back on release. */
+.joypad.active .joyknob { transition: none; }
+.joyread { min-width: 0; font-size: var(--fs-1); }
+.joyread b { font-size: var(--fs-3); font-variant-numeric: tabular-nums; }
+@media (max-width: 560px) {
+  .joywrap { justify-content: center; }
+}

@@ -1,0 +1,6 @@
+# USB device access for flashing. Add serial-transport.yml for runtime serial.
+# Linux, or Docker Engine running inside the WSL distribution owning the USB.
+services:
+  gps_localize:
+    devices:
+      - "${SERIAL_DEVICE:-/dev/ttyUSB0}:/dev/ttyUSB0"

@@ -1,0 +1,4 @@
+# Use together with docker-compose.serial.yml after flashing env:serial.
+services:
+  gps_localize:
+    command: ["ros2", "launch", "gps_localize", "bringup.launch.py", "transport:=serial", "serial_device:=/dev/ttyUSB0"]

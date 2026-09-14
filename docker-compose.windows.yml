@@ -1,0 +1,10 @@
+# Docker Desktop Wi-Fi, or published browser ports for WSL Docker Engine USB.
+# All ROS nodes and the agent remain inside one container.
+# No Desktop host-networking feature is required.
+services:
+  gps_localize:
+    network_mode: "bridge"
+    ipc: "private"
+    ports:
+      - "${WEB_PORT:-8080}:8080/tcp"
+      - "${AGENT_PORT:-8888}:8888/udp"
