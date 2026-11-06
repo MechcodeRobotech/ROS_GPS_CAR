@@ -17,12 +17,10 @@ stutters the robot keeps driving straight instead of swerving, and if the link
 stays down the firmware brakes by itself.
 
 State machine: IDLE -> RUNNING -> (PAUSED | BLOCKED | ALIGN) -> FINISHED
-  BLOCKED   the GPS fix is missing or too poor to navigate on; it clears itself
+  BLOCKED   a required GPS, heading or target input is unavailable; retry while stopped
   PAUSED    the operator (or the safety watchdog) stopped the mission
   ALIGN     arrived at a waypoint that names a heading, turning on the spot to
             face it before the next leg starts
-  DISCOVER  no absolute heading yet, driving straight to learn one from the
-            GPS course
 """
 
 import json
@@ -75,7 +73,7 @@ RUNNING = 'RUNNING'
 PAUSED = 'PAUSED'
 BLOCKED = 'BLOCKED'
 FINISHED = 'FINISHED'
-DISCOVER = 'DISCOVER'      # driving straight on purpose, to learn which way it points
+DISCOVER = 'DISCOVER'      # legacy state; immediately returns to the readiness gate
 ALIGN = 'ALIGN'            # arrived, now turning on the spot to the waypoint's own heading
 
 
@@ -122,12 +120,13 @@ class WaypointNav(Node):
         self.hdop = 99.9
         self.heading_deg = 0.0
         self.speed_mps = 0.0
-        self.heading_ref = 0          # 0 relative, 1 compass, 2 GPS course, 3 IMU mag
+        self.heading_ref = 0          # 0 relative, 1 compass, 2 GPS, 3 IMU, 4 manual
+        self.telemetry_time = None
+        self.blocked_since = None
+        self.blocked_resume_state = RUNNING
         self.estop = False
         self.block_reason = ''
         self.dead_reckon = None       # pose estimate when there is no GPS
-        self.discover_start = 0.0
-        self.discover_from = None
         # The turn-on-the-spot that happens after arriving at a waypoint that
         # names a heading. None means the robot is not aligning.
         self.align_target = None
@@ -152,8 +151,10 @@ class WaypointNav(Node):
         self.create_subscription(Bool, NS + '/estop', self.on_estop, latched_qos())
         self.create_subscription(String, NS + '/nav/cmd', self.on_cmd, 10)
         self.create_subscription(String, NS + '/config/updated', self.on_config_updated, 5)
+        # A retained pose can be arbitrarily old after a navigator restart.
+        # Consume only live estimates; gps_odom publishes them every 0.5 s.
         self.create_subscription(String, NS + '/pose/estimate', self.on_pose_estimate,
-                                 latched_qos())
+                                 stream_qos(1))
 
         self.create_timer(1.0 / max(1.0, self.command_rate), self.tick)
         self.create_timer(0.5, self.publish_status)
@@ -195,18 +196,13 @@ class WaypointNav(Node):
         self.min_satellites = int(cfg.get('min_satellites', 6))
         self.max_hdop = float(cfg.get('max_hdop', 3.0))
         self.fix_timeout = float(cfg.get('fix_timeout_s', 3.0))
-
-        # heading discovery: what to do when the robot has no absolute heading
-        # (compass missing or disturbed, GPS course not yet valid)
-        self.discover_enabled = bool(cfg.get('discover_heading', True))
-        self.discover_speed = float(cfg.get('discover_speed_mps', 0.15))
-        self.discover_max_s = float(cfg.get('discover_max_s', 12.0))
+        safety = self.store.load('safety').get('safety', {})
+        self.telemetry_timeout = float(safety.get('esp_telemetry_timeout_s', 1.0))
 
         # Backup for testing without GPS: after the operator sets a start pose on
         # the map, navigate on the dead-reckoned position instead of a fix.
         # OFF by default - dead reckoning drifts metres per minute.
         self.allow_dead_reckoning = bool(cfg.get('allow_dead_reckoning', False))
-        self.discover_distance = float(cfg.get('discover_distance_m', 2.0))
 
     def _load_waypoints(self):
         raw = self.store.load('waypoints').get('waypoints', []) or []
@@ -237,19 +233,23 @@ class WaypointNav(Node):
             self._load_config()
             self.log('navigation settings reloaded')
         if group in ('waypoints', 'all'):
-            was_running = self.state == RUNNING
+            was_active = self.state in (RUNNING, BLOCKED, ALIGN, DISCOVER)
             self._load_waypoints()
             if self.index >= len(self.waypoints):
                 self.index = 0
-            if was_running and not self.waypoints:
-                self.set_state(IDLE)
+            if was_active and self.temp_target is None:
+                self.publish_stop()
+                self.align_target = None
+                self.set_state(RUNNING)
+                self.start_leg()
             self.log('waypoint list reloaded (%d points)' % len(self.waypoints))
 
     # -------------------------------------------------------------- inputs
     def on_fix(self, msg):
-        if msg.status.status == NavSatStatus.STATUS_NO_FIX:
-            return
-        if not math.isfinite(msg.latitude) or not math.isfinite(msg.longitude):
+        if (msg.status.status == NavSatStatus.STATUS_NO_FIX
+                or not math.isfinite(msg.latitude) or not math.isfinite(msg.longitude)
+                or not (-90 <= msg.latitude <= 90 and -180 <= msg.longitude <= 180)):
+            self.gps_fix_time = 0.0
             return
         now = self.now()
         self.gps_fix_time = now            # freshness, always, whoever steers
@@ -315,7 +315,16 @@ class WaypointNav(Node):
             self.fix_source = 'dead_reckoning'
 
     def on_telemetry(self, msg):
-        data = tel.unpack(msg)
+        try:
+            data = tel.unpack(msg)
+            if not all(math.isfinite(data[k]) for k in
+                       ('heading_deg', 'speed_mps', 'gps_fix_quality',
+                        'gps_satellites', 'gps_hdop', 'heading_ref')):
+                raise ValueError('non-finite navigation telemetry')
+        except (TypeError, ValueError, OverflowError, KeyError, IndexError, AttributeError):
+            self.telemetry_time = None
+            return
+        self.telemetry_time = self.now()
         self.heading_deg = data['heading_deg']
         self.speed_mps = data['speed_mps']
         self.fix_quality = int(data['gps_fix_quality'])
@@ -343,6 +352,9 @@ class WaypointNav(Node):
             if self.estop:
                 self.log('cannot start: emergency stop is active, press RESET first')
                 return
+            if self.state in (RUNNING, BLOCKED, ALIGN, DISCOVER):
+                self.publish_stop()
+            self.align_target = None
             self.temp_target = None          # a normal mission clears a map pick
             index = command.get('index')
             if index is not None:
@@ -351,10 +363,7 @@ class WaypointNav(Node):
                 self.index = 0
             self.start_leg()
             self.log('mission started at waypoint %d/%d' % (self.index + 1, len(self.waypoints)))
-            if self.needs_discovery():
-                self.start_discovery()
-            else:
-                self.set_state(RUNNING)
+            self.set_state(RUNNING)
         elif action in ('pause', 'stop'):
             if action == 'stop':
                 # Keep what it was driving to, then forget it as a target.
@@ -390,6 +399,10 @@ class WaypointNav(Node):
             index = int(command.get('index', 0))
             if 0 <= index < len(self.waypoints):
                 self.index = index
+                if self.state in (RUNNING, BLOCKED, ALIGN, DISCOVER):
+                    self.publish_stop()
+                    self.align_target = None
+                    self.set_state(RUNNING)
                 self.start_leg()
                 self.log('target set to waypoint %d' % (index + 1))
         elif action == 'goto_point':
@@ -406,6 +419,9 @@ class WaypointNav(Node):
             if self.estop:
                 self.log('cannot drive there: emergency stop is active, press RESET first')
                 return
+            if self.state in (RUNNING, BLOCKED, ALIGN, DISCOVER):
+                self.publish_stop()
+            self.align_target = None
             self.temp_target = {'name': str(command.get('name', 'จุดที่เลือก / picked'))[:32],
                                 'lat': lat, 'lon': lon}
             heading = parse_heading(command.get('heading_deg'))
@@ -413,10 +429,7 @@ class WaypointNav(Node):
                 self.temp_target['heading_deg'] = heading
             self.start_leg()
             self.log('driving to the point picked on the map: %.7f, %.7f' % (lat, lon))
-            if self.needs_discovery():
-                self.start_discovery()
-            else:
-                self.set_state(RUNNING)
+            self.set_state(RUNNING)
         elif action == 'reload':
             self._load_config()
             self._load_waypoints()
@@ -424,56 +437,62 @@ class WaypointNav(Node):
 
     # ---------------------------------------------------------------- loop
     def tick(self):
-        if self.state == DISCOVER:
-            self.tick_discover()
-            return
-
-        if self.state == ALIGN:
-            self.tick_align()
-            return
-
-        if self.state != RUNNING and self.state != BLOCKED:
-            # Send the stop ONCE on entering an idle state, then say nothing.
-            #
-            # Republishing a zero command every tick is worse than useless: it
-            # is a second command source competing with manual driving, and it
-            # was doing exactly that - a jog held down on the web UI ramped up,
-            # got zeroed by the next idle tick, and sawtoothed instead of
-            # driving. It is also the wrong SHAPE of safety. A stop that must
-            # arrive to be obeyed fails silently when the message is the thing
-            # that goes missing; the firmware already stops itself when no
-            # command has arrived for CMD_TIMEOUT_MS, so silence is the safe
-            # state and absence does the work. Keeping quiet is therefore both
-            # safer and less intrusive.
+        if self.state not in (RUNNING, BLOCKED, ALIGN, DISCOVER):
+            # Keep manual driving available while the automatic mission is idle.
             self.publish_stop_once()
             return
 
-        if self.temp_target is None and self.index >= len(self.waypoints):
-            # the list was edited while driving
-            self.set_state(IDLE)
+        if self.estop:
+            self.set_state(PAUSED)
             self.publish_stop()
-            self.log('waypoint list is empty or shorter than before - mission stopped')
             return
 
-        ok, reason = self.fix_usable()
+        # DISCOVER must never command movement: an unknown heading is a reason
+        # to wait for a stationary absolute reference, not to drive to learn it.
+        if self.state == DISCOVER:
+            self.set_state(RUNNING)
+
+        ok, reason = self.navigation_ready()
         if not ok:
             if self.state != BLOCKED:
+                self.blocked_resume_state = self.state
+                self.blocked_since = self.now()
                 self.set_state(BLOCKED)
+                self.inside_since = None
                 self.log('navigation blocked: %s' % reason)
+            elif self.blocked_since is None:
+                self.blocked_since = self.now()
             self.block_reason = reason
             self.publish_stop()
             return
 
         if self.state == BLOCKED:
-            self.set_state(RUNNING)
+            waited = max(0.0, self.now() - self.blocked_since) if self.blocked_since is not None else 0.0
+            self.leg_start_time += waited
+            resume = self.blocked_resume_state
+            if resume == ALIGN:
+                self.align_start += waited
+            self.blocked_since = None
+            self.set_state(resume)
             self.block_reason = ''
-            self.log('fix recovered, navigation continues')
-            self.leg_start_time = self.now()   # do not count the blocked time
+            self.log('navigation inputs recovered, recalculating')
+
+        if self.state == ALIGN:
+            self.tick_align()
+            return
 
         target = self.current_target()
         lat, lon = self.fix
         distance = geo.haversine_m(lat, lon, target['lat'], target['lon'])
         bearing = geo.bearing_deg(lat, lon, target['lat'], target['lon'])
+        if not (math.isfinite(distance) and math.isfinite(bearing)):
+            self.blocked_resume_state = RUNNING
+            self.blocked_since = self.now()
+            self.set_state(BLOCKED)
+            self.block_reason = 'could not calculate waypoint bearing'
+            self.inside_since = None
+            self.publish_stop()
+            return
         self.last_distance = distance
         self.last_bearing = bearing
 
@@ -512,76 +531,6 @@ class WaypointNav(Node):
         cmd = Twist()
         cmd.linear.x = float(speed)
         cmd.angular.z = float(bearing)
-        self.pub_cmd.publish(cmd)
-
-    # ------------------------------------------------- heading discovery
-    def needs_discovery(self):
-        """True when the robot has no absolute heading and could learn one by driving."""
-        return (self.discover_enabled
-                and self.heading_ref == 0        # relative only: no compass, no GPS course
-                and self.fix is not None
-                # A position that is stale or too poor to navigate on cannot
-                # teach a heading either: the GPS course never arrives, the
-                # travelled distance never grows, and the robot drives blind
-                # for the whole discover_max_s. Ask the same question the
-                # normal navigation asks before it moves.
-                and self.fix_usable()[0])
-
-    def start_discovery(self):
-        self.discover_start = self.now()
-        self.discover_from = self.fix
-        self.set_state(DISCOVER)
-        self.log('heading unknown (no compass) - driving straight to learn it from the GPS course')
-
-    def tick_discover(self):
-        """Drive straight ahead at a crawl until the GPS course gives us a heading.
-
-        This is the fallback for a dead or disturbed compass: the robot cannot
-        know which way it points while standing still, but two metres of motion
-        tell it exactly. After that the normal navigation turns it towards the
-        waypoint - the firmware spins on the spot when the bearing error is
-        large, so no distance is wasted going the wrong way.
-        """
-        if self.estop:
-            self.set_state(PAUSED)
-            self.publish_stop()
-            return
-
-        # tick() dispatches DISCOVER before its own fix_usable() gate, so this
-        # is the only place that check can happen for a discovery drive. GPS
-        # can go stale after the drive has started, and the robot would carry
-        # on forward with nothing watching where it is.
-        ok, reason = self.fix_usable()
-        if not ok:
-            self.set_state(BLOCKED)
-            self.block_reason = reason
-            self.publish_stop()
-            self.log('heading discovery stopped: %s' % reason)
-            return
-
-        elapsed = self.now() - self.discover_start
-        travelled = 0.0
-        if self.fix and self.discover_from:
-            travelled = geo.haversine_m(self.discover_from[0], self.discover_from[1],
-                                        self.fix[0], self.fix[1])
-
-        if self.heading_ref in (1, 2, 3):
-            self.log('heading found (%s) after %.1f m' % (
-                tel.HEADING_REF_NAMES.get(self.heading_ref, '?'), travelled))
-            self.set_state(RUNNING)
-            self.start_leg()
-            return
-
-        if elapsed > self.discover_max_s or travelled > self.discover_distance:
-            self.log('could not establish a heading after %.1f s / %.1f m - continuing anyway, '
-                     'the robot will correct itself once it moves' % (elapsed, travelled))
-            self.set_state(RUNNING)
-            self.start_leg()
-            return
-
-        cmd = Twist()
-        cmd.linear.x = float(self.discover_speed)
-        cmd.angular.z = float(self.heading_deg)     # straight ahead, whatever that is
         self.pub_cmd.publish(cmd)
 
     def current_target(self):
@@ -695,30 +644,60 @@ class WaypointNav(Node):
         # one, or a waypoint placed close behind the previous one is declared
         # reached the moment the leg starts.
         self.inside_since = None
+        self.blocked_since = None
+        self.blocked_resume_state = RUNNING
+
+    @staticmethod
+    def valid_coordinates(lat, lon):
+        try:
+            return (math.isfinite(lat) and math.isfinite(lon)
+                    and -90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0)
+        except (TypeError, ValueError):
+            return False
 
     def fix_usable(self):
-        if not self.require_fix:
-            return True, ''
-        # opt-in backup: a hand-set start pose + IMU odometry, for indoor tests
-        if self.allow_dead_reckoning and self.dead_reckon is not None:
-            return True, ''
-        if self.fix is None:
-            return False, 'no GPS fix yet'
-        age = self.now() - self.fix_time
-        if age > self.fix_timeout:
-            return False, 'GPS fix is %.1f s old' % age
+        # GPS is required for automatic motion even if an old runtime config
+        # enables dead reckoning or disables the historical require_fix flag.
+        if self.fix is None or self.fix_source != 'gps' or not self.gps_fix_time:
+            return False, 'no current GPS fix'
+        try:
+            if not self.valid_coordinates(*self.fix):
+                return False, 'invalid GPS position'
+        except (TypeError, ValueError):
+            return False, 'invalid GPS position'
+        now = self.now()
+        gps_age = now - self.gps_fix_time
+        pose_age = now - self.fix_time
+        if gps_age < 0 or pose_age < 0 or max(gps_age, pose_age) > self.fix_timeout:
+            return False, 'GPS fix or position is stale'
         if self.fix_quality <= 0:
             return False, 'GPS reports no fix'
         if self.satellites < self.min_satellites:
             return False, 'only %d satellites (need %d)' % (self.satellites, self.min_satellites)
-        if self.hdop > self.max_hdop:
-            return False, 'HDOP %.1f is worse than %.1f' % (self.hdop, self.max_hdop)
+        if not math.isfinite(self.hdop) or self.hdop < 0 or self.hdop > self.max_hdop:
+            return False, 'GPS HDOP is invalid or too high'
+        return True, ''
+
+    def navigation_ready(self):
+        target = self.current_target()
+        if not isinstance(target, dict) or not self.valid_coordinates(target.get('lat'), target.get('lon')):
+            return False, 'waypoint is missing or invalid'
+        if self.telemetry_time is None:
+            return False, 'waiting for robot telemetry'
+        age = self.now() - self.telemetry_time
+        if age < 0 or age > self.telemetry_timeout:
+            return False, 'robot telemetry is stale'
+        ok, reason = self.fix_usable()
+        if not ok:
+            return ok, reason
+        if self.heading_ref not in (1, 2, 3, 4) or not math.isfinite(self.heading_deg):
+            return False, 'no usable absolute heading'
         return True, ''
 
     def publish_stop(self):
         cmd = Twist()
         cmd.linear.x = 0.0
-        cmd.angular.z = float(self.heading_deg)   # hold the current heading
+        cmd.angular.z = float(self.heading_deg) if math.isfinite(self.heading_deg) else 0.0
         self.pub_cmd.publish(cmd)
         self._stop_sent = True
 
@@ -886,10 +865,15 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        node.publish_stop()
-        node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        try:
+            # SIGINT may already have shut down the ROS context. In that case
+            # publishing is impossible; the firmware command watchdog stops it.
+            if rclpy.ok():
+                node.publish_stop()
+        finally:
+            node.destroy_node()
+            if rclpy.ok():
+                rclpy.shutdown()
 
 
 if __name__ == '__main__':
